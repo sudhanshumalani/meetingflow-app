@@ -11,6 +11,10 @@
   "functions": {
     "app/api/**/*.js": {
       "runtime": "nodejs18.x"
+    },
+    "api/claude-proxy.js": {
+      "runtime": "nodejs18.x",
+      "maxDuration": 30
     }
   },
   "rewrites": [

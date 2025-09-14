@@ -346,112 +346,51 @@ export class SimpleOCRService {
     return insights
   }
 
-  // Claude API implementation with CORS proxy fallback
+  // Claude AI via serverless proxy (solves CORS issues)
   async callClaudeAPI(text, meetingContext = {}) {
-    const endpoints = [
-      // Try direct API first
-      'https://api.anthropic.com/v1/messages',
-      // Fallback to CORS proxy if direct fails
-      'https://cors-anywhere.herokuapp.com/https://api.anthropic.com/v1/messages'
-    ]
-
     try {
-      for (const endpoint of endpoints) {
-        try {
-        console.log(`Trying Claude API endpoint: ${endpoint}`)
-          const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': this.claudeApiKey,
-              'anthropic-version': '2023-06-01'
-            },
-            body: JSON.stringify({
-              model: 'claude-3-sonnet-20240229',
-              max_tokens: 2000,
-              messages: [{
-                role: 'user',
-                content: `I will provide you with rough meeting notes. Your task is to carefully review them and produce an organized output with the following three sections:
+      console.log('🚀 Calling Claude API via serverless proxy...')
 
-**Summary** – Write a concise overview (3–5 sentences) capturing the overall purpose of the meeting and the main outcomes.
+      // Determine the correct API endpoint based on environment
+      const isLocal = window.location.hostname === 'localhost'
+      const baseUrl = isLocal
+        ? 'http://localhost:3000' // For local development
+        : window.location.origin // For production (Vercel deployment)
 
-**Key Discussion Points** – List the most important topics discussed during the meeting in bullet points. Group related points together if appropriate.
+      const proxyUrl = `${baseUrl}/api/claude-proxy`
+      console.log(`📡 Using proxy endpoint: ${proxyUrl}`)
 
-**Action Items** – Provide a clear, numbered list of action items. Each action item should specify:
-• What needs to be done
-• Who is responsible (if identifiable from the notes)
-• Any deadlines or timelines (if mentioned or implied)
+      const response = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          text: text,
+          meetingContext: meetingContext,
+          apiKey: this.claudeApiKey
+        })
+      })
 
-Format the response cleanly with headers for each section. Do not include extraneous information or rephrase in a vague way—keep it clear, concise, and actionable.
-
-Meeting Notes:
-"""${text}"""
-
-Meeting Context: ${JSON.stringify(meetingContext, null, 2)}
-
-Please provide a JSON response with:
-{
-  "summary": "Concise 3-5 sentence overview capturing the overall purpose and main outcomes",
-  "keyDiscussionPoints": ["Important topic discussed", "Key decision or insight", "Challenge or concern raised", ...],
-  "actionItems": [
-    {
-      "task": "Clear description of what needs to be done",
-      "assignee": "person responsible or 'Unassigned'",
-      "priority": "high/medium/low",
-      "dueDate": "deadline if mentioned or null"
-    }
-  ],
-  "sentiment": "positive/neutral/negative"
-}`
-              }]
-            })
-          })
-
-          if (!response.ok) {
-            throw new Error(`Claude API failed: ${response.status}`)
-          }
-
-          const data = await response.json()
-          const content = data.content[0]?.text
-
-          if (!content) {
-            throw new Error('No response from Claude')
-          }
-
-          console.log(`✅ Got response from ${endpoint}`)
-
-          // Try to parse JSON from Claude's response
-          try {
-            const jsonMatch = content.match(/\{[\s\S]*\}/)
-            if (jsonMatch) {
-              const parsed = JSON.parse(jsonMatch[0])
-              console.log('📋 Successfully parsed Claude JSON response')
-              return parsed
-            }
-          } catch (parseError) {
-            console.warn('Could not parse Claude JSON response:', parseError)
-          }
-
-          // Return structured fallback if JSON parsing fails
-          console.log('📄 Using fallback parsing for Claude response')
-          return {
-            summary: content.substring(0, 200),
-            keyDiscussionPoints: [content],
-            actionItems: [],
-            sentiment: 'neutral'
-          }
-
-        } catch (error) {
-          console.warn(`❌ Failed with ${endpoint}:`, error.message)
-          // Continue to next endpoint
-        }
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        throw new Error(`Proxy failed: ${response.status} - ${errorData.error || errorData.message}`)
       }
 
-      // All endpoints failed
-      throw new Error('All Claude API endpoints failed')
+      const data = await response.json()
+
+      if (!data.success) {
+        throw new Error(`Proxy error: ${data.error || 'Unknown error'}`)
+      }
+
+      console.log('✅ Successfully got response from Claude via proxy')
+      console.log('📋 Claude response data:', data.data)
+
+      return data.data
+
     } catch (error) {
-      console.error('Claude API processing failed:', error)
-      return null
+      console.error('❌ Claude proxy call failed:', error)
+      throw error
     }
   }
 }

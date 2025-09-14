@@ -27,7 +27,7 @@ import {
 import { format } from 'date-fns'
 import { mockStakeholders, getCategoryDisplayName, STAKEHOLDER_CATEGORIES } from '../utils/mockData'
 import { getTemplateForCategory, getColorClasses, PRIORITY_LEVELS } from '../utils/meetingTemplates'
-import { processImageForMeeting } from '../utils/ocrSimulator'
+import { processImageForMeeting, validateImageFile } from '../utils/ocrService'
 import { 
   OCRImageUpload, 
   AIProcessingStatus, 
@@ -86,7 +86,11 @@ export default function Meeting() {
   const [capturedImage, setCapturedImage] = useState(null)
   const [ocrResult, setOcrResult] = useState(null)
   const [isProcessingOCR, setIsProcessingOCR] = useState(false)
+  const [ocrProgress, setOcrProgress] = useState(0)
+  const [ocrStatus, setOcrStatus] = useState('')
   const [uploadedFiles, setUploadedFiles] = useState([])
+  const [extractedText, setExtractedText] = useState('')
+  const [isEditingExtractedText, setIsEditingExtractedText] = useState(false)
   
   // AI processing state
   const [isSaving, setIsSaving] = useState(false)
@@ -156,32 +160,100 @@ export default function Meeting() {
 
   // OCR Processing
   const processImage = async (file) => {
+    // Validate image file first
+    const validation = validateImageFile(file)
+    if (!validation.valid) {
+      alert(validation.error)
+      return
+    }
+
     setIsProcessingOCR(true)
+    setOcrProgress(0)
+    setOcrStatus('Initializing OCR...')
+    setExtractedText('')
+
     try {
       const result = await processImageForMeeting(file, {
         meetingId: id,
         stakeholder: formData.selectedStakeholder,
         template: formData.template
+      }, {
+        onProgress: (progress) => {
+          setOcrProgress(progress)
+          if (progress < 30) {
+            setOcrStatus('Loading OCR engine...')
+          } else if (progress < 60) {
+            setOcrStatus('Analyzing image...')
+          } else if (progress < 90) {
+            setOcrStatus('Extracting text...')
+          } else {
+            setOcrStatus('Processing results...')
+          }
+        }
       })
-      
+
       if (result.success) {
         setOcrResult(result)
+        setExtractedText(result.ocrResult.text)
+        setOcrStatus('OCR completed successfully!')
+
         // Auto-populate digital notes with OCR results
         if (result.ocrResult.extractedSections) {
           const sections = result.ocrResult.extractedSections
           setDigitalNotes(prev => ({
             topLeft: prev.topLeft || (sections.agenda?.join('\n• ') || ''),
-            topRight: prev.topRight || (sections.decisions?.join('\n• ') || sections.feedback?.join('\n• ') || ''),
-            bottomLeft: prev.bottomLeft || (sections.blockers?.join('\n• ') || sections.concerns?.join('\n• ') || ''),
-            bottomRight: prev.bottomRight || (sections.actionItems?.join('\n• ') || sections.nextSteps?.join('\n• ') || '')
+            topRight: prev.topRight || (sections.decisions?.join('\n• ') || sections.notes?.join('\n• ') || ''),
+            bottomLeft: prev.bottomLeft || (sections.actionItems?.join('\n• ') || ''),
+            bottomRight: prev.bottomRight || (sections.attendees?.join('\n• ') || '')
           }))
         }
+
+        // Show success notification
+        setTimeout(() => {
+          setOcrStatus('')
+          setOcrProgress(0)
+        }, 2000)
+
+      } else {
+        console.error('OCR processing failed:', result.error)
+        setOcrStatus(`Error: ${result.error}`)
+        alert(`OCR failed: ${result.error}`)
+
+        setTimeout(() => {
+          setOcrStatus('')
+          setOcrProgress(0)
+        }, 3000)
       }
     } catch (error) {
-      console.error('OCR processing failed:', error)
+      console.error('Error processing image:', error)
+      setOcrStatus('OCR processing failed')
+      alert('Failed to process image. Please try again.')
+
+      setTimeout(() => {
+        setOcrStatus('')
+        setOcrProgress(0)
+      }, 3000)
     } finally {
       setIsProcessingOCR(false)
     }
+  }
+
+  const handleTextEdit = (newText) => {
+    setExtractedText(newText)
+    // Update the OCR result with the edited text
+    if (ocrResult) {
+      setOcrResult(prev => ({
+        ...prev,
+        ocrResult: {
+          ...prev.ocrResult,
+          text: newText
+        }
+      }))
+    }
+  }
+
+  const toggleTextEditing = () => {
+    setIsEditingExtractedText(!isEditingExtractedText)
   }
 
   // AI Processing functions
@@ -813,11 +885,31 @@ export default function Meeting() {
                 {/* OCR Processing Results */}
                 {isProcessingOCR && (
                   <div className="bg-white rounded-lg shadow-md p-6">
-                    <div className="flex items-center gap-3">
-                      <Loader2 size={24} className="animate-spin text-blue-600" />
-                      <div>
-                        <h3 className="font-semibold">Processing Image...</h3>
-                        <p className="text-sm text-gray-600">Extracting text with AI-powered OCR</p>
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3">
+                        <Loader2 size={20} className="animate-spin text-blue-600" />
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-gray-900">Processing Image with OCR</h3>
+                          <p className="text-sm text-gray-600">{ocrStatus || 'Extracting text from your image...'}</p>
+                        </div>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="w-full">
+                        <div className="flex justify-between text-xs text-gray-600 mb-1">
+                          <span>Progress</span>
+                          <span>{ocrProgress}%</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div
+                            className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
+                            style={{ width: `${ocrProgress}%` }}
+                          ></div>
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-gray-500 bg-gray-50 rounded-lg p-3">
+                        <p><strong>Pro Tip:</strong> For best results, ensure your image has good lighting and clear text.</p>
                       </div>
                     </div>
                   </div>
@@ -825,37 +917,130 @@ export default function Meeting() {
 
                 {ocrResult && (
                   <div className="bg-white rounded-lg shadow-md p-6">
-                    <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                      <Sparkles size={20} />
-                      OCR Results
-                      <span className="text-sm font-normal text-green-600">
-                        ({Math.round(ocrResult.ocrResult.confidence * 100)}% confidence)
-                      </span>
-                    </h3>
-                    
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold flex items-center gap-2">
+                        <Sparkles size={20} className="text-blue-600" />
+                        OCR Results
+                        <span className="text-sm font-normal text-green-600">
+                          ({Math.round(ocrResult.ocrResult.confidence * 100)}% confidence)
+                        </span>
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={toggleTextEditing}
+                          className="flex items-center gap-1 px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          <Edit3 size={14} />
+                          {isEditingExtractedText ? 'Save' : 'Edit'}
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="space-y-4">
                       <div className="bg-gray-50 rounded-lg p-4">
-                        <h4 className="font-medium mb-2">Extracted Text:</h4>
-                        <pre className="text-sm text-gray-700 whitespace-pre-wrap">
-                          {ocrResult.ocrResult.text}
-                        </pre>
+                        <h4 className="font-medium mb-2 flex items-center justify-between">
+                          <span>Extracted Text:</span>
+                          <span className="text-xs text-gray-500">
+                            {(extractedText || ocrResult.ocrResult.text).length} characters • {(extractedText || ocrResult.ocrResult.text).split(/\s+/).length} words
+                          </span>
+                        </h4>
+
+                        {isEditingExtractedText ? (
+                          <div className="space-y-2">
+                            <textarea
+                              value={extractedText || ocrResult.ocrResult.text}
+                              onChange={(e) => handleTextEdit(e.target.value)}
+                              className="w-full h-48 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
+                              placeholder="Edit the extracted text here..."
+                            />
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => setIsEditingExtractedText(false)}
+                                className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={toggleTextEditing}
+                                className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                              >
+                                Save Changes
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <pre className="text-sm text-gray-700 whitespace-pre-wrap bg-white border border-gray-200 rounded p-3 max-h-64 overflow-y-auto">
+                              {extractedText || ocrResult.ocrResult.text}
+                            </pre>
+                            <div className="absolute top-2 right-2">
+                              <button
+                                onClick={() => {
+                                  if (!extractedText) setExtractedText(ocrResult.ocrResult.text)
+                                  setIsEditingExtractedText(true)
+                                }}
+                                className="p-1 text-gray-400 hover:text-gray-600 bg-white rounded shadow-sm"
+                                title="Click to edit text"
+                              >
+                                <Edit3 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      
+
                       {ocrResult.actionItems && ocrResult.actionItems.length > 0 && (
                         <div className="bg-blue-50 rounded-lg p-4">
-                          <h4 className="font-medium mb-2 text-blue-900">Auto-detected Action Items:</h4>
-                          <ul className="space-y-1">
+                          <h4 className="font-medium mb-2 text-blue-900 flex items-center gap-2">
+                            <Target size={16} />
+                            Auto-detected Action Items:
+                          </h4>
+                          <ul className="space-y-2">
                             {ocrResult.actionItems.map((item, index) => (
-                              <li key={index} className="text-sm text-blue-800 flex items-start gap-2">
-                                <CheckCircle size={14} className="mt-0.5 flex-shrink-0" />
-                                {item.text} {item.assignee !== 'Unassigned' && (
-                                  <span className="text-blue-600">({item.assignee})</span>
-                                )}
+                              <li key={index} className="text-sm bg-white rounded p-2 border border-blue-200">
+                                <div className="flex items-start gap-2">
+                                  <CheckCircle size={14} className="mt-0.5 flex-shrink-0 text-blue-600" />
+                                  <div className="flex-1">
+                                    <span className="text-gray-800">{item.text}</span>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      {item.assignee !== 'Unassigned' && (
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">
+                                          {item.assignee}
+                                        </span>
+                                      )}
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${
+                                        item.priority === 'high' ? 'bg-red-100 text-red-800' :
+                                        item.priority === 'low' ? 'bg-gray-100 text-gray-800' :
+                                        'bg-yellow-100 text-yellow-800'
+                                      }`}>
+                                        {item.priority} priority
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
                               </li>
                             ))}
                           </ul>
                         </div>
                       )}
+
+                      {/* OCR Metadata */}
+                      <div className="text-xs text-gray-500 bg-gray-50 rounded-lg p-3 space-y-1">
+                        <div className="flex justify-between">
+                          <span>Processing time:</span>
+                          <span>{ocrResult.processedAt ? new Date(ocrResult.processedAt).toLocaleTimeString() : 'Unknown'}</span>
+                        </div>
+                        {ocrResult.words && (
+                          <div className="flex justify-between">
+                            <span>Words detected:</span>
+                            <span>{ocrResult.words}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between">
+                          <span>File:</span>
+                          <span>{ocrResult.fileName} ({(ocrResult.fileSize / 1024).toFixed(1)} KB)</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}

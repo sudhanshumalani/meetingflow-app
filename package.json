@@ -33,6 +33,7 @@
     "react-dropzone": "^14.3.8",
     "react-router-dom": "^7.9.1",
     "react-webcam": "^7.2.0",
+    "tesseract.js": "^6.0.1",
     "uuid": "^13.0.0"
   },
   "devDependencies": {

@@ -85,7 +85,7 @@ export function MobileNavDrawer({ isOpen, onClose, navigation }) {
 }
 
 // Mobile-Optimized Header
-export function MobileHeader({ title, subtitle, actions, onMenuClick, onBack, showMenu = true }) {
+export function MobileHeader({ title, subtitle, actions, rightContent, onMenuClick, onBack, showMenu = true }) {
   return (
     <header className="bg-white shadow-sm border-b sticky top-0 z-30">
       <div className="flex items-center justify-between p-4">
@@ -119,9 +119,9 @@ export function MobileHeader({ title, subtitle, actions, onMenuClick, onBack, sh
           </div>
         </div>
         
-        {actions && (
+        {(actions || rightContent) && (
           <div className="flex items-center gap-2 flex-shrink-0">
-            {actions}
+            {actions || rightContent}
           </div>
         )}
       </div>

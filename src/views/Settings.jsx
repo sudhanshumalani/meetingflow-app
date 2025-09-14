@@ -34,7 +34,16 @@ import {
 } from '../utils/stakeholderManager'
 
 export default function Settings() {
-  const { stakeholders, addStakeholder, updateStakeholder, deleteStakeholder } = useApp()
+  const {
+    stakeholders,
+    stakeholderCategories,
+    addStakeholder,
+    updateStakeholder,
+    deleteStakeholder,
+    addStakeholderCategory,
+    updateStakeholderCategory,
+    deleteStakeholderCategory
+  } = useApp()
   const [activeTab, setActiveTab] = useState('stakeholders')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
@@ -42,6 +51,10 @@ export default function Settings() {
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingStakeholder, setEditingStakeholder] = useState(null)
   const [importData, setImportData] = useState('')
+
+  // Category management state
+  const [showAddCategoryForm, setShowAddCategoryForm] = useState(false)
+  const [editingCategory, setEditingCategory] = useState(null)
 
   // Filter stakeholders based on search and filters
   const filteredStakeholders = stakeholders.filter(stakeholder => {
@@ -131,6 +144,19 @@ export default function Settings() {
                 Stakeholder Management
               </div>
             </button>
+            <button
+              onClick={() => setActiveTab('categories')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'categories'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4" />
+                Category Management
+              </div>
+            </button>
           </nav>
         </div>
 
@@ -161,7 +187,7 @@ export default function Settings() {
                       className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">All Categories</option>
-                      {Object.values(STAKEHOLDER_CATEGORIES).map(category => (
+                      {stakeholderCategories.map(category => (
                         <option key={category.key} value={category.key}>
                           {category.label}
                         </option>
@@ -321,6 +347,61 @@ export default function Settings() {
           </div>
         )}
 
+        {/* Category Management Tab */}
+        {activeTab === 'categories' && (
+          <div className="space-y-8">
+            {/* Category Controls */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">Stakeholder Categories</h3>
+                  <p className="text-sm text-gray-600">Manage the categories used to organize your stakeholders</p>
+                </div>
+                <button
+                  onClick={() => setShowAddCategoryForm(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Category
+                </button>
+              </div>
+            </div>
+
+            {/* Category List */}
+            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900">Categories</h3>
+              </div>
+
+              <div className="divide-y divide-gray-200">
+                {stakeholderCategories.length === 0 ? (
+                  <div className="p-8 text-center">
+                    <Tag className="mx-auto h-12 w-12 text-gray-400" />
+                    <h3 className="mt-2 text-sm font-medium text-gray-900">No categories found</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Get started by adding your first category.
+                    </p>
+                  </div>
+                ) : (
+                  stakeholderCategories.map((category) => (
+                    <CategoryRow
+                      key={category.key}
+                      category={category}
+                      stakeholders={stakeholders}
+                      onEdit={setEditingCategory}
+                      onDelete={(categoryKey) => {
+                        if (window.confirm('Are you sure you want to delete this category? All stakeholders using this category will be moved to the default category.')) {
+                          deleteStakeholderCategory(categoryKey)
+                        }
+                      }}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Add/Edit Stakeholder Modal */}
         {(showAddForm || editingStakeholder) && (
           <StakeholderModal
@@ -340,6 +421,26 @@ export default function Settings() {
             }}
           />
         )}
+
+        {/* Add/Edit Category Modal */}
+        {(showAddCategoryForm || editingCategory) && (
+          <CategoryModal
+            category={editingCategory}
+            onSave={(categoryData) => {
+              if (editingCategory) {
+                updateStakeholderCategory({ ...editingCategory, ...categoryData })
+                setEditingCategory(null)
+              } else {
+                addStakeholderCategory(categoryData)
+                setShowAddCategoryForm(false)
+              }
+            }}
+            onCancel={() => {
+              setEditingCategory(null)
+              setShowAddCategoryForm(false)
+            }}
+          />
+        )}
       </div>
     </div>
   )
@@ -347,7 +448,8 @@ export default function Settings() {
 
 // Stakeholder Row Component
 function StakeholderRow({ stakeholder, onEdit, onDelete }) {
-  const categoryInfo = Object.values(STAKEHOLDER_CATEGORIES).find(cat => cat.key === stakeholder.category)
+  const { stakeholderCategories } = useApp()
+  const categoryInfo = stakeholderCategories.find(cat => cat.key === stakeholder.category)
 
   return (
     <div className="p-6 hover:bg-gray-50 transition-colors">
@@ -407,6 +509,7 @@ function StakeholderRow({ stakeholder, onEdit, onDelete }) {
 
 // Stakeholder Modal Component
 function StakeholderModal({ stakeholder, onSave, onCancel }) {
+  const { stakeholderCategories } = useApp()
   const [formData, setFormData] = useState({
     name: stakeholder?.name || '',
     email: stakeholder?.email || '',
@@ -518,7 +621,7 @@ function StakeholderModal({ stakeholder, onSave, onCancel }) {
                   onChange={(e) => handleChange('category', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
-                  {Object.values(STAKEHOLDER_CATEGORIES).map(category => (
+                  {stakeholderCategories.map(category => (
                     <option key={category.key} value={category.key}>
                       {category.label} - {category.description}
                     </option>
@@ -654,6 +757,190 @@ function StakeholderModal({ stakeholder, onSave, onCancel }) {
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
               {stakeholder ? 'Update' : 'Add'} Stakeholder
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// Category Row Component
+function CategoryRow({ category, stakeholders, onEdit, onDelete }) {
+  const stakeholderCount = stakeholders.filter(s => s.category === category.key).length
+
+  return (
+    <div className="p-6 hover:bg-gray-50 transition-colors">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-4 flex-1">
+          {/* Category Color */}
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center bg-${category.color || 'gray'}-100`}>
+            <Tag className={`w-5 h-5 text-${category.color || 'gray'}-600`} />
+          </div>
+
+          {/* Info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-3 mb-1">
+              <h4 className="text-sm font-medium text-gray-900">{category.label}</h4>
+              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                {stakeholderCount} stakeholder{stakeholderCount !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <div className="text-sm text-gray-600">
+              <span>{category.description}</span>
+              {category.defaultPriority && (
+                <span className="ml-2">• Default priority: {category.defaultPriority}</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onEdit(category)}
+            className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+            title="Edit category"
+          >
+            <Edit3 className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => onDelete(category.key)}
+            className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+            title="Delete category"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Category Modal Component
+function CategoryModal({ category, onSave, onCancel }) {
+  const [formData, setFormData] = useState({
+    label: category?.label || '',
+    description: category?.description || '',
+    color: category?.color || 'blue',
+    defaultPriority: category?.defaultPriority || 'medium'
+  })
+
+  const availableColors = [
+    'blue', 'green', 'purple', 'red', 'yellow', 'indigo', 'pink', 'gray'
+  ]
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    onSave({
+      ...formData,
+      key: category?.key || formData.label.toLowerCase().replace(/\s+/g, '-')
+    })
+  }
+
+  const handleChange = (field, value) => {
+    setFormData(prev => ({ ...prev, [field]: value }))
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 rounded-t-xl">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-gray-900">
+              {category ? 'Edit Category' : 'Add New Category'}
+            </h2>
+            <button
+              onClick={onCancel}
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {/* Basic Information */}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Category Name *
+              </label>
+              <input
+                type="text"
+                required
+                value={formData.label}
+                onChange={(e) => handleChange('label', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="e.g., External Partners"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Description
+              </label>
+              <textarea
+                value={formData.description}
+                onChange={(e) => handleChange('description', e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Brief description of this category..."
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Color Theme
+              </label>
+              <div className="grid grid-cols-4 gap-2">
+                {availableColors.map(color => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => handleChange('color', color)}
+                    className={`w-10 h-10 rounded-lg bg-${color}-100 border-2 transition-colors ${
+                      formData.color === color ? `border-${color}-500` : 'border-transparent'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 bg-${color}-500 rounded-full mx-auto`}></div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Default Priority
+              </label>
+              <select
+                value={formData.defaultPriority}
+                onChange={(e) => handleChange('defaultPriority', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              {category ? 'Update' : 'Add'} Category
             </button>
           </div>
         </form>

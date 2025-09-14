@@ -2,12 +2,14 @@ import { createContext, useContext, useReducer, useEffect } from 'react'
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
 import notionService from '../services/notionService'
+import { STAKEHOLDER_CATEGORIES as DEFAULT_CATEGORIES } from '../utils/stakeholderManager'
 
 const AppContext = createContext()
 
 const initialState = {
   meetings: [],
   stakeholders: [],
+  stakeholderCategories: Object.values(DEFAULT_CATEGORIES),
   currentMeeting: null,
   isLoading: false,
   error: null,
@@ -31,6 +33,7 @@ function appReducer(state, action) {
         ...state,
         meetings: action.payload.meetings || [],
         stakeholders: action.payload.stakeholders || [],
+        stakeholderCategories: action.payload.stakeholderCategories || Object.values(DEFAULT_CATEGORIES),
         isLoading: false
       }
     
@@ -98,7 +101,45 @@ function appReducer(state, action) {
         ...state,
         stakeholders: state.stakeholders.filter(stakeholder => stakeholder.id !== action.payload)
       }
-    
+
+    case 'ADD_STAKEHOLDER_CATEGORY':
+      const newCategory = {
+        key: action.payload.key || action.payload.label.toLowerCase().replace(/\s+/g, '-'),
+        ...action.payload,
+        id: uuidv4(),
+        createdAt: new Date().toISOString()
+      }
+      return {
+        ...state,
+        stakeholderCategories: [...state.stakeholderCategories, newCategory]
+      }
+
+    case 'UPDATE_STAKEHOLDER_CATEGORY':
+      return {
+        ...state,
+        stakeholderCategories: state.stakeholderCategories.map(category =>
+          category.key === action.payload.key || category.id === action.payload.id
+            ? { ...category, ...action.payload, updatedAt: new Date().toISOString() }
+            : category
+        )
+      }
+
+    case 'DELETE_STAKEHOLDER_CATEGORY':
+      const categoryToDelete = action.payload
+      // Also update any stakeholders using this category to use a default category
+      const updatedStakeholders = state.stakeholders.map(stakeholder =>
+        stakeholder.category === categoryToDelete
+          ? { ...stakeholder, category: 'external' } // fallback to external category
+          : stakeholder
+      )
+      return {
+        ...state,
+        stakeholderCategories: state.stakeholderCategories.filter(category =>
+          category.key !== categoryToDelete && category.id !== categoryToDelete
+        ),
+        stakeholders: updatedStakeholders
+      }
+
     case 'ADD_NOTE_TO_MEETING':
       const { meetingId, note } = action.payload
       const noteWithId = {
@@ -201,16 +242,17 @@ export function AppProvider({ children }) {
     if (!state.isLoading) {
       saveData()
     }
-  }, [state.meetings, state.stakeholders, state.isLoading])
+  }, [state.meetings, state.stakeholders, state.stakeholderCategories, state.isLoading])
 
   const loadData = async () => {
     try {
       dispatch({ type: 'SET_LOADING', payload: true })
       
       // Load local data first
-      const [meetings, localStakeholders] = await Promise.all([
+      const [meetings, localStakeholders, localCategories] = await Promise.all([
         localforage.getItem('meetingflow_meetings'),
-        localforage.getItem('meetingflow_stakeholders')
+        localforage.getItem('meetingflow_stakeholders'),
+        localforage.getItem('meetingflow_stakeholder_categories')
       ])
       
       // Load local data immediately
@@ -218,7 +260,8 @@ export function AppProvider({ children }) {
         type: 'LOAD_DATA',
         payload: {
           meetings: meetings || [],
-          stakeholders: localStakeholders || []
+          stakeholders: localStakeholders || [],
+          stakeholderCategories: localCategories || Object.values(DEFAULT_CATEGORIES)
         }
       })
       
@@ -267,7 +310,8 @@ export function AppProvider({ children }) {
     try {
       await Promise.all([
         localforage.setItem('meetingflow_meetings', state.meetings),
-        localforage.setItem('meetingflow_stakeholders', state.stakeholders)
+        localforage.setItem('meetingflow_stakeholders', state.stakeholders),
+        localforage.setItem('meetingflow_stakeholder_categories', state.stakeholderCategories)
       ])
     } catch (error) {
       console.error('Failed to save data:', error)
@@ -403,7 +447,11 @@ export function AppProvider({ children }) {
     addStakeholder: (stakeholder) => dispatch({ type: 'ADD_STAKEHOLDER', payload: stakeholder }),
     updateStakeholder: (stakeholder) => dispatch({ type: 'UPDATE_STAKEHOLDER', payload: stakeholder }),
     deleteStakeholder: (stakeholderId) => dispatch({ type: 'DELETE_STAKEHOLDER', payload: stakeholderId }),
-    
+
+    addStakeholderCategory: (category) => dispatch({ type: 'ADD_STAKEHOLDER_CATEGORY', payload: category }),
+    updateStakeholderCategory: (category) => dispatch({ type: 'UPDATE_STAKEHOLDER_CATEGORY', payload: category }),
+    deleteStakeholderCategory: (categoryKey) => dispatch({ type: 'DELETE_STAKEHOLDER_CATEGORY', payload: categoryKey }),
+
     addNoteToMeeting: (meetingId, note) => dispatch({ type: 'ADD_NOTE_TO_MEETING', payload: { meetingId, note } }),
     updateNoteInMeeting: (meetingId, noteId, updatedNote) => 
       dispatch({ type: 'UPDATE_NOTE_IN_MEETING', payload: { meetingId, noteId, updatedNote } }),

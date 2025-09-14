@@ -397,47 +397,8 @@ export class OCRService {
   }
 }
 
-// Singleton instance
-const ocrService = new OCRService()
-
-// Main function to process images for meetings (maintaining compatibility)
-export const processImageForMeeting = async (imageFile, meetingContext, options = {}) => {
-  try {
-    const result = await ocrService.extractText(imageFile, {
-      onProgress: options.onProgress || (() => {}),
-      ...options
-    })
-
-    if (result.success) {
-      return {
-        success: true,
-        ocrResult: {
-          text: result.text,
-          confidence: result.confidence,
-          extractedSections: result.extractedSections
-        },
-        actionItems: result.actionItems,
-        processedAt: result.processedAt,
-        fileName: result.fileName,
-        fileSize: result.fileSize,
-        words: result.words
-      }
-    } else {
-      return {
-        success: false,
-        error: result.error,
-        fileName: result.fileName
-      }
-    }
-  } catch (error) {
-    console.error('Error processing image:', error)
-    return {
-      success: false,
-      error: 'Failed to process image for OCR',
-      fileName: imageFile?.name || 'unknown'
-    }
-  }
-}
+// Legacy OCR service instance (kept for compatibility, but not used)
+const legacyOcrService = new OCRService()
 
 // Utility function to validate image files
 export const validateImageFile = (file) => {

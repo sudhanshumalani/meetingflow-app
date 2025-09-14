@@ -1,46 +1,14 @@
-import { createWorker } from 'tesseract.js'
-
-// Multi-tier OCR Service with TextDetector API, OCR.space, and Tesseract.js fallbacks
+// Clean OCR Service using only OCR.space API
 export class OCRService {
   constructor() {
-    this.tesseractWorker = null
-    this.isInitialized = false
-    this.userApiKey = null // User-configured OCR.space API key
-    this.ocrSpaceUrl = 'https://api.ocr.space/parse/image'
-  }
-
-  async initialize() {
-    // Try to initialize Tesseract.js as a fallback option
-    if (!this.isInitialized && !this.tesseractWorker) {
-      try {
-        console.log('Initializing Tesseract.js as OCR fallback...')
-        this.tesseractWorker = await createWorker('eng', 1, {
-          logger: () => {} // Silent logging
-        })
-        this.isInitialized = true
-        console.log('Tesseract.js fallback ready')
-      } catch (error) {
-        console.log('Tesseract.js initialization failed, will use manual fallback only')
-      }
-    }
-  }
-
-  async cleanup() {
-    if (this.tesseractWorker) {
-      try {
-        await this.tesseractWorker.terminate()
-      } catch (error) {
-        // Silent cleanup
-      }
-      this.tesseractWorker = null
-    }
-    this.isInitialized = false
+    this.userApiKey = localStorage.getItem('ocrApiKey') || null
+    this.apiUrl = 'https://api.ocr.space/parse/image'
+    console.log('OCR Service initialized with API key:', this.userApiKey ? 'present' : 'missing')
   }
 
   setUserApiKey(apiKey) {
     this.userApiKey = apiKey?.trim() || null
     console.log('OCR.space API key', this.userApiKey ? `configured: ${this.userApiKey.substring(0, 8)}...` : 'removed')
-    console.log('OCR service userApiKey is now:', this.userApiKey ? 'set' : 'null')
   }
 
   async extractText(imageFile, options = {}) {
@@ -48,107 +16,29 @@ export class OCRService {
 
     try {
       onProgress(5)
-      console.log('Starting OCR extraction with multi-tier approach...')
-      console.log('Current OCR capabilities:', {
-        textDetector: 'TextDetector' in window,
-        ocrSpace: !!this.userApiKey,
-        tesseract: !!this.tesseractWorker,
-        apiKeyLength: this.userApiKey ? this.userApiKey.length : 0
-      })
+      console.log('Starting OCR extraction...')
+      console.log('API key available:', !!this.userApiKey)
 
-      // Tier 1: Try experimental TextDetector API (Chrome only, experimental)
-      try {
-        if ('TextDetector' in window) {
-          console.log('Attempting TextDetector API...')
-          onProgress(15)
-          const result = await this._extractWithTextDetector(imageFile, onProgress)
-          if (result && result.success) {
-            console.log('TextDetector API successful!')
-            return result
-          }
-        }
-      } catch (error) {
-        console.log('TextDetector API failed:', error.message)
+      if (!this.userApiKey) {
+        console.log('No OCR.space API key configured, using fallback')
+        return await this._extractWithFallback(imageFile, onProgress)
       }
 
-      // Tier 2: Try OCR.space with user API key
-      if (this.userApiKey) {
-        try {
-          console.log('Attempting OCR.space with user API key:', this.userApiKey.substring(0, 8) + '...')
-          onProgress(25)
-          const result = await this._extractWithOCRSpace(imageFile, onProgress)
-          if (result && result.success) {
-            console.log('OCR.space API successful!')
-            return result
-          }
-        } catch (error) {
-          console.error('OCR.space API failed with error:', error)
-          console.error('Full error details:', error.message)
-        }
+      // Try OCR.space API
+      console.log('Attempting OCR.space with API key:', this.userApiKey.substring(0, 8) + '...')
+      onProgress(25)
+      const result = await this._extractWithOCRSpace(imageFile, onProgress)
+
+      if (result && result.success) {
+        console.log('OCR.space API successful!')
+        return result
       } else {
-        console.log('Skipping OCR.space - no API key configured')
+        throw new Error('OCR.space returned unsuccessful result')
       }
-
-      // Tier 3: Try Tesseract.js fallback
-      if (this.tesseractWorker && this.isInitialized) {
-        try {
-          console.log('Attempting Tesseract.js fallback...')
-          onProgress(40)
-          const result = await this._extractWithTesseract(imageFile, onProgress)
-          if (result && result.success) {
-            console.log('Tesseract.js successful!')
-            return result
-          }
-        } catch (error) {
-          console.log('Tesseract.js failed:', error.message)
-        }
-      }
-
-      // Final fallback: Manual entry mode
-      console.log('All OCR methods failed, using manual fallback')
-      return await this._extractWithFallback(imageFile, onProgress)
 
     } catch (error) {
-      console.error('OCR extraction error:', error)
+      console.error('OCR.space API failed:', error.message)
       return await this._extractWithFallback(imageFile, onProgress)
-    }
-  }
-
-  async _extractWithTextDetector(imageFile, onProgress) {
-    try {
-      // Create bitmap from image file
-      const bitmap = await createImageBitmap(imageFile)
-      onProgress(20)
-
-      const detector = new TextDetector()
-      const textBlocks = await detector.detect(bitmap)
-
-      if (textBlocks && textBlocks.length > 0) {
-        // Combine all detected text
-        const text = textBlocks.map(block => block.rawValue).join(' ')
-
-        if (text.trim().length < 3) {
-          throw new Error('No meaningful text detected')
-        }
-
-        console.log('TextDetector extracted:', text.length, 'characters')
-
-        const processedResult = this.processOCRResult({
-          text: text.trim(),
-          confidence: 80 // TextDetector doesn't provide confidence, estimate
-        })
-
-        processedResult.debug = {
-          method: 'TextDetector API',
-          blocksFound: textBlocks.length
-        }
-
-        return processedResult
-      } else {
-        throw new Error('No text blocks detected')
-      }
-    } catch (error) {
-      throw new Error(`TextDetector failed: ${error.message}`)
     }
   }
 
@@ -168,11 +58,10 @@ export class OCRService {
       formData.append('file', imageFile)
 
       onProgress(35)
-
-      console.log('OCR.space: Sending request to:', this.ocrSpaceUrl)
+      console.log('OCR.space: Sending request to:', this.apiUrl)
 
       // Make API call to OCR.space
-      const response = await fetch(this.ocrSpaceUrl, {
+      const response = await fetch(this.apiUrl, {
         method: 'POST',
         body: formData
       })
@@ -186,7 +75,7 @@ export class OCRService {
       }
 
       const result = await response.json()
-      console.log('OCR.space: API result:', result)
+      console.log('OCR.space: Full API result:', result)
       onProgress(50)
 
       if (!result.IsErroredOnProcessing && result.ParsedResults && result.ParsedResults.length > 0) {
@@ -197,6 +86,7 @@ export class OCRService {
         }
 
         console.log('OCR.space extraction successful:', text.length, 'characters')
+        console.log('Extracted text:', text)
 
         const processedResult = this.processOCRResult({
           text: text,
@@ -208,6 +98,7 @@ export class OCRService {
           processingTime: result.ProcessingTimeInMilliseconds
         }
 
+        onProgress(100)
         return processedResult
 
       } else {
@@ -219,62 +110,16 @@ export class OCRService {
 
     } catch (error) {
       console.error('OCR.space: Exception in _extractWithOCRSpace:', error)
-      throw error // Don't wrap the error again
-    }
-  }
-
-  async _extractWithTesseract(imageFile, onProgress) {
-    try {
-      // Create object URL for Tesseract
-      const imageUrl = URL.createObjectURL(imageFile)
-
-      onProgress(60)
-
-      // Use Tesseract with basic configuration
-      const result = await this.tesseractWorker.recognize(imageUrl, {}, {
-        hocr: false,
-        tsv: false,
-        boxes: false,
-        unlv: false,
-        osd: false,
-      })
-
-      URL.revokeObjectURL(imageUrl)
-
-      if (result.data && result.data.text) {
-        const text = result.data.text.trim()
-
-        if (!text || text.length < 3) {
-          throw new Error('No meaningful text extracted from Tesseract')
-        }
-
-        console.log('Tesseract extraction successful:', text.length, 'characters')
-
-        const processedResult = this.processOCRResult({
-          text: text,
-          confidence: result.data.confidence || 70
-        })
-
-        processedResult.debug = {
-          method: 'Tesseract.js',
-          confidence: result.data.confidence
-        }
-
-        onProgress(90)
-        return processedResult
-
-      } else {
-        throw new Error('Tesseract returned no text data')
-      }
-
-    } catch (error) {
-      throw new Error(`Tesseract failed: ${error.message}`)
+      throw error
     }
   }
 
   async _extractWithFallback(imageFile, onProgress) {
+    console.log('Using fallback mode for:', imageFile.name)
     // Simulate processing time for better UX
-    onProgress(70)
+    onProgress(25)
+    await new Promise(resolve => setTimeout(resolve, 500))
+    onProgress(50)
     await new Promise(resolve => setTimeout(resolve, 500))
     onProgress(90)
 
@@ -302,20 +147,13 @@ The image has been saved and will be included in your meeting record.`
         agenda: [],
         decisions: [],
         actionItems: [],
-        notes: [], // Don't auto-populate fallback text
-        attendees: []
+        notes: [] // Don't auto-populate fallback text
       },
       actionItems: [],
       debug: {
         isFallback: true,
-        reason: 'All OCR methods failed or unavailable',
-        timestamp: new Date().toISOString(),
-        methods: ['TextDetector', 'OCR.space', 'Tesseract.js'].filter(method => {
-          if (method === 'TextDetector') return 'TextDetector' in window
-          if (method === 'OCR.space') return !!this.userApiKey
-          if (method === 'Tesseract.js') return !!this.tesseractWorker
-          return false
-        }).join(', ') || 'None available'
+        reason: 'OCR.space API unavailable or no API key configured',
+        timestamp: new Date().toISOString()
       }
     }
   }
@@ -328,56 +166,42 @@ The image has been saved and will be included in your meeting record.`
       throw new Error('No meaningful text extracted')
     }
 
-    // Check for gibberish patterns
-    const qualityScore = this._calculateTextQuality(text)
-    console.log(`OCR text quality score: ${qualityScore}%`)
+    console.log('Processing OCR result with text:', text.substring(0, 100) + '...')
 
-    if (qualityScore < 30) {
-      console.warn('Low quality OCR text detected, may contain errors')
+    // Always distribute text across quadrants for better user experience
+    const lines = text.split('\n').filter(line => line.trim().length > 0)
+    console.log('Split into', lines.length, 'lines')
+
+    // Smart distribution - try to extract sections, but always populate quadrants
+    const sections = this.extractSections(text)
+    console.log('Extracted sections:', sections)
+
+    // If sections are mostly empty, distribute raw text
+    const hasContentInSections = sections.agenda.length > 0 || sections.decisions.length > 0 ||
+                                 sections.actionItems.length > 0 || sections.attendees.length > 0
+
+    if (!hasContentInSections && lines.length > 0) {
+      // Distribute all lines across the notes section so Meeting.jsx can handle it
+      sections.notes = lines
+      console.log('No specific sections found, putting all text in notes section')
     }
 
-    // Extract structured information from OCR text
-    const sections = this.extractSections(text)
     const actionItems = this.extractActionItems(text)
 
     return {
       success: true,
-      confidence: data.confidence || 75,
-      qualityScore: qualityScore,
+      confidence: data.confidence || 85,
       text: text,
       words: text.split(/\s+/).length,
       processedAt: new Date().toISOString(),
       extractedSections: sections,
-      actionItems: actionItems
+      actionItems: actionItems,
+      debug: {
+        method: 'OCR.space API',
+        linesCount: lines.length,
+        hasContentInSections: hasContentInSections
+      }
     }
-  }
-
-  _calculateTextQuality(text) {
-    let score = 100
-
-    // Check for excessive special characters (sign of poor OCR)
-    const specialCharRatio = (text.match(/[^a-zA-Z0-9\s.,!?;:()\'""-]/g) || []).length / text.length
-    if (specialCharRatio > 0.3) score -= 40
-
-    // Check for reasonable word length distribution
-    const words = text.split(/\s+/)
-    const veryLongWords = words.filter(word => word.length > 20).length
-    if (veryLongWords / words.length > 0.1) score -= 30
-
-    // Check for reasonable character distribution
-    const alphaRatio = (text.match(/[a-zA-Z]/g) || []).length / text.length
-    if (alphaRatio < 0.3) score -= 25 // Too few letters suggests poor recognition
-
-    // Check for excessive repetition (common OCR error)
-    const uniqueWords = new Set(words.map(w => w.toLowerCase()))
-    const repetitionRatio = 1 - (uniqueWords.size / Math.max(words.length, 1))
-    if (repetitionRatio > 0.6) score -= 20
-
-    // Check for reasonable sentence structure
-    const sentenceCount = (text.match(/[.!?]+/g) || []).length
-    if (sentenceCount === 0 && text.length > 50) score -= 15
-
-    return Math.max(0, score)
   }
 
   extractSections(text) {
@@ -397,7 +221,7 @@ The image has been saved and will be included in your meeting record.`
     lines.forEach(line => {
       const lower = line.toLowerCase()
 
-      // Detect section headers
+      // Detect section headers (but don't add the headers themselves)
       if (lower.includes('agenda') || lower.includes('topics')) {
         currentSection = 'agenda'
         return
@@ -412,8 +236,8 @@ The image has been saved and will be included in your meeting record.`
         return
       }
 
-      // Add line to current section
-      if (line.length > 5) { // Filter out very short lines
+      // Add line to current section if it's substantial
+      if (line.length > 2) {
         sections[currentSection].push(line)
       }
     })
@@ -423,7 +247,6 @@ The image has been saved and will be included in your meeting record.`
 
   extractActionItems(text) {
     const actionItems = []
-    const lines = text.split('\n')
 
     const actionPatterns = [
       /(?:action|todo|task|follow.?up):\s*(.+)/gi,
@@ -457,28 +280,20 @@ The image has been saved and will be included in your meeting record.`
 // Create singleton instance
 const ocrService = new OCRService()
 
-// Load saved API key from localStorage
-const savedApiKey = localStorage.getItem('ocrApiKey')
-if (savedApiKey) {
-  ocrService.setUserApiKey(savedApiKey)
-  console.log('OCR.space API key loaded from localStorage')
-}
-
-// Initialize on first load
-ocrService.initialize().catch(() => {
-  console.log('OCR service initialization completed with fallback only')
-})
-
 // Main function to process images for meetings
 export const processImageForMeeting = async (imageFile, meetingContext, options = {}) => {
   try {
+    console.log('processImageForMeeting called with:', imageFile.name)
+
     const result = await ocrService.extractText(imageFile, {
       onProgress: options.onProgress || (() => {}),
       ...options
     })
 
+    console.log('OCR service returned:', result)
+
     if (result.success) {
-      return {
+      const finalResult = {
         success: true,
         ocrResult: {
           text: result.text,
@@ -492,6 +307,9 @@ export const processImageForMeeting = async (imageFile, meetingContext, options 
         words: result.words,
         debug: result.debug
       }
+
+      console.log('Final result being returned to Meeting.jsx:', finalResult)
+      return finalResult
     } else {
       return {
         success: false,
@@ -513,15 +331,16 @@ export const processImageForMeeting = async (imageFile, meetingContext, options 
 // Function to configure user's OCR.space API key
 export const setOCRApiKey = (apiKey) => {
   ocrService.setUserApiKey(apiKey)
+  localStorage.setItem('ocrApiKey', apiKey || '')
 }
 
 // Function to get current OCR capabilities
 export const getOCRCapabilities = () => {
   return {
-    textDetector: 'TextDetector' in window,
-    tesseract: !!ocrService.tesseractWorker,
+    textDetector: false, // Removed
+    tesseract: false,    // Removed
     ocrSpace: !!ocrService.userApiKey,
-    initialized: ocrService.isInitialized
+    initialized: true
   }
 }
 
@@ -547,7 +366,7 @@ export const validateImageFile = (file) => {
   return { valid: true }
 }
 
-// Cleanup function for app shutdown
+// Cleanup function (no longer needed but kept for compatibility)
 export const cleanupOCR = () => {
-  return ocrService.cleanup()
+  return Promise.resolve()
 }

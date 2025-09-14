@@ -211,41 +211,59 @@ export default function Meeting() {
         setOcrStatus('OCR completed successfully!')
 
         // Auto-populate digital notes with OCR results
-        if (result.ocrResult && result.ocrResult.extractedSections && !result.debug?.isFallback) {
-          const sections = result.ocrResult.extractedSections
-          console.log('Populating quadrants with extracted sections:', sections)
+        if (result.ocrResult && result.ocrResult.text && !result.debug?.isFallback) {
+          console.log('Populating quadrants with OCR result:', result.ocrResult)
 
-          // Populate each quadrant with extracted content
-          const newNotes = {
-            topLeft: sections.agenda && sections.agenda.length > 0
-              ? '• ' + sections.agenda.join('\n• ')
-              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(0, Math.ceil(sections.notes.length/4)).join('\n') : digitalNotes.topLeft),
-            topRight: sections.decisions && sections.decisions.length > 0
-              ? '• ' + sections.decisions.join('\n• ')
-              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(sections.notes.length/4), Math.ceil(sections.notes.length/2)).join('\n') : digitalNotes.topRight),
-            bottomLeft: sections.actionItems && sections.actionItems.length > 0
-              ? '• ' + sections.actionItems.join('\n• ')
-              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(sections.notes.length/2), Math.ceil(3*sections.notes.length/4)).join('\n') : digitalNotes.bottomLeft),
-            bottomRight: sections.attendees && sections.attendees.length > 0
-              ? '• ' + sections.attendees.join('\n• ')
-              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(3*sections.notes.length/4)).join('\n') : digitalNotes.bottomRight)
+          const sections = result.ocrResult.extractedSections || {}
+          const text = result.ocrResult.text
+
+          // Smart quadrant population
+          let newNotes = {
+            topLeft: digitalNotes.topLeft,    // Agenda / Meeting Topics
+            topRight: digitalNotes.topRight,  // Key Discussion Points
+            bottomLeft: digitalNotes.bottomLeft,  // Action Items
+            bottomRight: digitalNotes.bottomRight // Decisions Made
           }
 
-          console.log('Setting digital notes:', newNotes)
-          setDigitalNotes(newNotes)
-        } else if (result.ocrResult && result.ocrResult.text && !result.debug?.isFallback) {
-          // If no sections but we have text, distribute it across quadrants
-          console.log('No sections found, distributing raw text across quadrants')
-          const text = result.ocrResult.text
-          const lines = text.split('\n').filter(line => line.trim())
-          const quarterLength = Math.ceil(lines.length / 4)
+          // Try to populate with extracted sections first
+          if (sections.agenda && sections.agenda.length > 0) {
+            newNotes.topLeft = sections.agenda.join('\n')
+          }
 
-          setDigitalNotes({
-            topLeft: lines.slice(0, quarterLength).join('\n'),
-            topRight: lines.slice(quarterLength, 2 * quarterLength).join('\n'),
-            bottomLeft: lines.slice(2 * quarterLength, 3 * quarterLength).join('\n'),
-            bottomRight: lines.slice(3 * quarterLength).join('\n')
-          })
+          if (sections.decisions && sections.decisions.length > 0) {
+            newNotes.bottomRight = sections.decisions.join('\n')
+          }
+
+          if (sections.actionItems && sections.actionItems.length > 0) {
+            newNotes.bottomLeft = sections.actionItems.join('\n')
+          }
+
+          if (sections.attendees && sections.attendees.length > 0) {
+            newNotes.topRight = sections.attendees.join('\n')
+          }
+
+          // If we have notes section or no specific sections were found, distribute text
+          if (sections.notes && sections.notes.length > 0) {
+            const notes = sections.notes
+            const quarterLength = Math.ceil(notes.length / 4)
+
+            // Only populate empty quadrants
+            if (!newNotes.topLeft || newNotes.topLeft === digitalNotes.topLeft) {
+              newNotes.topLeft = notes.slice(0, quarterLength).join('\n')
+            }
+            if (!newNotes.topRight || newNotes.topRight === digitalNotes.topRight) {
+              newNotes.topRight = notes.slice(quarterLength, 2 * quarterLength).join('\n')
+            }
+            if (!newNotes.bottomLeft || newNotes.bottomLeft === digitalNotes.bottomLeft) {
+              newNotes.bottomLeft = notes.slice(2 * quarterLength, 3 * quarterLength).join('\n')
+            }
+            if (!newNotes.bottomRight || newNotes.bottomRight === digitalNotes.bottomRight) {
+              newNotes.bottomRight = notes.slice(3 * quarterLength).join('\n')
+            }
+          }
+
+          console.log('Setting digital notes to:', newNotes)
+          setDigitalNotes(newNotes)
         }
 
         // Handle fallback message display

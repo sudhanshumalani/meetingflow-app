@@ -756,7 +756,7 @@ export const setClaudeApiKey = (key) => {
 export const getCapabilities = () => {
   return {
     ocrSpace: !!ocrService.apiKey,
-    claude: !!ocrService.claudeApiKey,
+    claude: true, // Always enable Claude workflow (copy-paste + enhanced local analysis)
     manual: true
   }
 }

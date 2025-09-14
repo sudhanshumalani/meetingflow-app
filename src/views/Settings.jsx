@@ -36,6 +36,7 @@ import {
   getCategoryColor
 } from '../utils/stakeholderManager'
 import { setOCRApiKey, getOCRCapabilities } from '../utils/ocrService'
+import { setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
 
 export default function Settings() {
   const {
@@ -65,6 +66,11 @@ export default function Settings() {
   const [ocrCapabilities, setOcrCapabilities] = useState(getOCRCapabilities())
   const [ocrKeySaved, setOcrKeySaved] = useState(false)
 
+  // Claude AI configuration state
+  const [claudeApiKey, setClaudeApiKey] = useState(localStorage.getItem('claudeApiKey') || '')
+  const [claudeKeySaved, setClaudeKeySaved] = useState(false)
+  const [capabilities, setCapabilities] = useState(getCapabilities())
+
   // Initialize OCR API key on component mount
   useEffect(() => {
     const savedKey = localStorage.getItem('ocrApiKey')
@@ -88,6 +94,21 @@ export default function Settings() {
     localStorage.removeItem('ocrApiKey')
     setOCRApiKey('')
     setOcrCapabilities(getOCRCapabilities())
+  }
+
+  const handleSaveClaudeKey = () => {
+    localStorage.setItem('claudeApiKey', claudeApiKey)
+    setClaudeApiKey(claudeApiKey)
+    setCapabilities(getCapabilities())
+    setClaudeKeySaved(true)
+    setTimeout(() => setClaudeKeySaved(false), 3000)
+  }
+
+  const handleClearClaudeKey = () => {
+    setClaudeApiKey('')
+    localStorage.removeItem('claudeApiKey')
+    setClaudeApiKey('')
+    setCapabilities(getCapabilities())
   }
 
   // Filter stakeholders based on search and filters

@@ -4,6 +4,7 @@ import { AppProvider } from './contexts/AppContext'
 import Home from './views/Home'
 import Meeting from './views/Meeting'
 import Settings from './views/Settings'
+import SimpleMeetingNotes from './components/SimpleMeetingNotes'
 import ErrorBoundary, { ErrorToast } from './components/ErrorBoundary'
 import LoadingSpinner from './components/LoadingSpinner'
 import accessibility, { a11y } from './utils/accessibility'
@@ -168,6 +169,7 @@ function AppContent() {
             <Route path="/" element={<Home />} />
             <Route path="/meeting/:id" element={<Meeting />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/test-notes" element={<SimpleMeetingNotes />} />
           </Routes>
         </PageTransition>
       </main>

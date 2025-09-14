@@ -28,6 +28,15 @@ export default defineConfig(({ command, mode }) => {
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico'],
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        navigateFallback: null // Disable for GitHub Pages
+      },
+      ...(isGitHubPages && {
+        base: base,
+        scope: base,
+        injectRegister: 'inline'
+      }),
       manifest: {
         name: 'MeetingFlow - AI Meeting Management',
         short_name: 'MeetingFlow',
@@ -51,9 +60,6 @@ export default defineConfig(({ command, mode }) => {
           }
         ],
         categories: ['business', 'productivity']
-      },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}']
       },
       devOptions: {
         enabled: true

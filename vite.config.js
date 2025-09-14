@@ -7,11 +7,22 @@ export default defineConfig(({ command, mode }) => {
   // Load env file based on `mode` in the current working directory.
   const env = loadEnv(mode, process.cwd(), '')
 
-  // Vercel-specific optimizations
+  // Load GitHub Pages specific env if building for GitHub Pages
+  if (process.env.GITHUB_PAGES || env.GITHUB_PAGES) {
+    Object.assign(env, loadEnv('github-pages', process.cwd(), ''))
+  }
+
+  // Platform-specific optimizations
   const isVercel = process.env.VERCEL || env.VERCEL
+  const isGitHubPages = process.env.GITHUB_PAGES || env.GITHUB_PAGES
   const isProduction = mode === 'production'
 
+  // GitHub Pages base path (repository name)
+  const repoName = 'meetingflow-app'
+  const base = isGitHubPages ? `/${repoName}/` : '/'
+
   return {
+  base,
   plugins: [
     react(),
     VitePWA({
@@ -25,8 +36,8 @@ export default defineConfig(({ command, mode }) => {
         background_color: '#f9fafb',
         display: 'standalone',
         orientation: 'portrait',
-        scope: '/',
-        start_url: '/',
+        scope: base,
+        start_url: base,
         icons: [
           {
             src: 'pwa-icon.svg',

@@ -243,10 +243,15 @@ function AppContent() {
 }
 
 function App() {
+  // GitHub Pages base path configuration
+  const basename = import.meta.env.MODE === 'production' && import.meta.env.VITE_GITHUB_PAGES
+    ? '/meetingflow-app'
+    : ''
+
   return (
     <ErrorBoundary>
       <AppProvider>
-        <Router>
+        <Router basename={basename}>
           <div className="App">
             <AppContent />
           </div>

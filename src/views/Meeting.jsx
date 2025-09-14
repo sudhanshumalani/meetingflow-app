@@ -75,10 +75,8 @@ export default function Meeting() {
   
   // Digital notes state (4-quadrant)
   const [digitalNotes, setDigitalNotes] = useState({
-    topLeft: '',
-    topRight: '',
-    bottomLeft: '',
-    bottomRight: ''
+    keyDiscussionPoints: '',
+    actionItems: ''
   })
   
   // Photo/OCR state
@@ -151,8 +149,8 @@ export default function Meeting() {
     })
   }
 
-  const handleQuadrantChange = (quadrant, value) => {
-    setDigitalNotes(prev => ({ ...prev, [quadrant]: value }))
+  const handleSectionChange = (section, value) => {
+    setDigitalNotes(prev => ({ ...prev, [section]: value }))
   }
 
 
@@ -218,70 +216,70 @@ export default function Meeting() {
           const sections = result.ocrResult.extractedSections || {}
           const text = result.ocrResult.text
 
-          // Smart quadrant population
+          // Smart 2-section population
           let newNotes = {
-            topLeft: digitalNotes.topLeft,    // Key Discussion Points
-            topRight: digitalNotes.topRight,  // Decisions Made
-            bottomLeft: digitalNotes.bottomLeft,  // Challenges & Blockers
-            bottomRight: digitalNotes.bottomRight // Action Items
+            keyDiscussionPoints: digitalNotes.keyDiscussionPoints,
+            actionItems: digitalNotes.actionItems
           }
 
-          // Try to populate with extracted sections first
-          if (sections.agenda && sections.agenda.length > 0) {
-            newNotes.topLeft = sections.agenda.join('\n')
-          }
-
-          if (sections.decisions && sections.decisions.length > 0) {
-            newNotes.bottomRight = sections.decisions.join('\n')
+          // Try to populate with Claude AI analysis first
+          if (sections.keyDiscussionPoints && sections.keyDiscussionPoints.length > 0) {
+            newNotes.keyDiscussionPoints = sections.keyDiscussionPoints.join('\n')
           }
 
           if (sections.actionItems && sections.actionItems.length > 0) {
-            newNotes.bottomLeft = sections.actionItems.join('\n')
-          }
-
-          if (sections.attendees && sections.attendees.length > 0) {
-            newNotes.topRight = sections.attendees.join('\n')
+            // Format action items properly
+            const formattedActionItems = sections.actionItems.map(item => {
+              if (typeof item === 'string') {
+                return `• ${item}`
+              } else {
+                let formatted = `• ${item.task}`
+                if (item.assignee && item.assignee !== 'Unassigned') {
+                  formatted += ` (${item.assignee})`
+                }
+                if (item.priority && item.priority !== 'medium') {
+                  formatted += ` [${item.priority.toUpperCase()}]`
+                }
+                if (item.dueDate) {
+                  formatted += ` - Due: ${item.dueDate}`
+                }
+                return formatted
+              }
+            })
+            newNotes.actionItems = formattedActionItems.join('\n')
           }
 
           // If we have notes section or no specific sections were found, distribute text
           if (sections.notes && sections.notes.length > 0) {
-            console.log('Distributing notes across quadrants:', sections.notes.length, 'lines')
+            console.log('Distributing notes across 2 sections:', sections.notes.length, 'lines')
             const notes = sections.notes
-            const quarterLength = Math.ceil(notes.length / 4)
+            const halfLength = Math.ceil(notes.length / 2)
 
-            // Only populate empty quadrants
-            if (!newNotes.topLeft || newNotes.topLeft === digitalNotes.topLeft) {
-              newNotes.topLeft = notes.slice(0, quarterLength).join('\n')
-              console.log('Populated topLeft with', quarterLength, 'lines')
+            // Only populate empty sections
+            if (!newNotes.keyDiscussionPoints || newNotes.keyDiscussionPoints === digitalNotes.keyDiscussionPoints) {
+              newNotes.keyDiscussionPoints = notes.slice(0, halfLength).join('\n')
+              console.log('Populated keyDiscussionPoints with', halfLength, 'lines')
             }
-            if (!newNotes.topRight || newNotes.topRight === digitalNotes.topRight) {
-              newNotes.topRight = notes.slice(quarterLength, 2 * quarterLength).join('\n')
-              console.log('Populated topRight with', quarterLength, 'lines')
+            if (!newNotes.actionItems || newNotes.actionItems === digitalNotes.actionItems) {
+              const actionLines = notes.slice(halfLength).map(line => `• ${line}`)
+              newNotes.actionItems = actionLines.join('\n')
+              console.log('Populated actionItems with', notes.length - halfLength, 'lines')
             }
-            if (!newNotes.bottomLeft || newNotes.bottomLeft === digitalNotes.bottomLeft) {
-              newNotes.bottomLeft = notes.slice(2 * quarterLength, 3 * quarterLength).join('\n')
-              console.log('Populated bottomLeft with', quarterLength, 'lines')
-            }
-            if (!newNotes.bottomRight || newNotes.bottomRight === digitalNotes.bottomRight) {
-              newNotes.bottomRight = notes.slice(3 * quarterLength).join('\n')
-              console.log('Populated bottomRight with remaining lines')
-            }
-          } else if (!sections.agenda?.length && !sections.decisions?.length && !sections.actionItems?.length && !sections.attendees?.length) {
-            // No sections found at all, distribute raw text lines
-            console.log('No sections found, distributing raw text across quadrants')
+          } else if (!sections.keyDiscussionPoints?.length && !sections.actionItems?.length) {
+            // No sections found at all, distribute raw text lines across 2 sections
+            console.log('No sections found, distributing raw text across 2 sections')
             const lines = text.split('\n').filter(line => line.trim().length > 0)
-            const quarterLength = Math.ceil(lines.length / 4)
+            const halfLength = Math.ceil(lines.length / 2)
 
             if (lines.length > 0) {
-              newNotes.topLeft = lines.slice(0, quarterLength).join('\n')
-              newNotes.topRight = lines.slice(quarterLength, 2 * quarterLength).join('\n')
-              newNotes.bottomLeft = lines.slice(2 * quarterLength, 3 * quarterLength).join('\n')
-              newNotes.bottomRight = lines.slice(3 * quarterLength).join('\n')
-              console.log('Distributed', lines.length, 'lines across all quadrants')
+              newNotes.keyDiscussionPoints = lines.slice(0, halfLength).join('\n')
+              const actionLines = lines.slice(halfLength).map(line => `• ${line}`)
+              newNotes.actionItems = actionLines.join('\n')
+              console.log('Distributed', lines.length, 'lines across 2 sections')
             }
           }
 
-          console.log('Final quadrant assignment:', newNotes)
+          console.log('Final 2-section assignment:', newNotes)
           setDigitalNotes(newNotes)
         } else if (result.debug?.isFallback) {
           console.log('OCR FALLBACK - Not populating quadrants, user needs to configure API key')
@@ -889,19 +887,17 @@ export default function Meeting() {
                         </h3>
                         <textarea
                           value={digitalNotes[key]}
-                          onChange={(e) => handleQuadrantChange(key, e.target.value)}
+                          onChange={(e) => handleSectionChange(key, e.target.value)}
                           placeholder={quadrant.placeholder}
                           className="w-full h-full resize-none border-none focus:outline-none text-sm"
                         />
                       </div>
                     ))
                   ) : (
-                    // Default quadrants
+                    // Default sections
                     [
-                      { key: 'topLeft', title: 'Key Discussion Points', icon: '💬' },
-                      { key: 'topRight', title: 'Decisions Made', icon: '✅' },
-                      { key: 'bottomLeft', title: 'Challenges & Blockers', icon: '⚠️' },
-                      { key: 'bottomRight', title: 'Action Items', icon: '📋' }
+                      { key: 'keyDiscussionPoints', title: 'Key Discussion Points', icon: '💬' },
+                      { key: 'actionItems', title: 'Action Items', icon: '📋' }
                     ].map(({ key, title, icon }) => (
                       <div key={key} className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors group">
                         <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
@@ -911,7 +907,7 @@ export default function Meeting() {
                         </h3>
                         <textarea
                           value={digitalNotes[key]}
-                          onChange={(e) => handleQuadrantChange(key, e.target.value)}
+                          onChange={(e) => handleSectionChange(key, e.target.value)}
                           placeholder={`Add ${title.toLowerCase()}...`}
                           className="w-full h-full resize-none border-none focus:outline-none text-sm hover:bg-gray-50 focus:bg-white transition-colors"
                         />

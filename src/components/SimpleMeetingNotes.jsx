@@ -5,10 +5,8 @@ import { extractTextFromImage, processWithClaude, setOCRApiKey, setClaudeApiKey,
 export default function SimpleMeetingNotes() {
   // Core state
   const [notes, setNotes] = useState({
-    topLeft: '',
-    topRight: '',
-    bottomLeft: '',
-    bottomRight: ''
+    keyDiscussionPoints: '',
+    actionItems: ''
   })
 
   const [extractedText, setExtractedText] = useState('')
@@ -18,20 +16,18 @@ export default function SimpleMeetingNotes() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [claudeResult, setClaudeResult] = useState(null)
 
-  // Quadrant definitions
-  const quadrants = [
-    { key: 'topLeft', title: 'Key Discussion Points', icon: '💬', color: 'blue' },
-    { key: 'topRight', title: 'Decisions Made', icon: '✅', color: 'green' },
-    { key: 'bottomLeft', title: 'Challenges & Blockers', icon: '⚠️', color: 'yellow' },
-    { key: 'bottomRight', title: 'Action Items', icon: '📋', color: 'purple' }
+  // Section definitions
+  const sections = [
+    { key: 'keyDiscussionPoints', title: 'Key Discussion Points', icon: '💬', color: 'blue' },
+    { key: 'actionItems', title: 'Action Items', icon: '📋', color: 'purple' }
   ]
 
-  // Handle quadrant editing
-  const updateQuadrant = (quadrantKey, value) => {
-    console.log('Updating quadrant:', quadrantKey, 'with value:', value.substring(0, 50) + '...')
+  // Handle section editing
+  const updateSection = (sectionKey, value) => {
+    console.log('Updating section:', sectionKey, 'with value:', value.substring(0, 50) + '...')
     setNotes(prev => ({
       ...prev,
-      [quadrantKey]: value
+      [sectionKey]: value
     }))
   }
 
@@ -72,7 +68,7 @@ export default function SimpleMeetingNotes() {
             await processTextWithClaude(result.text)
           } else {
             console.log('No Claude AI available, using simple distribution')
-            distributeTextToQuadrants(result.text)
+            distributeTextToSections(result.text)
           }
         }
       } else {
@@ -90,21 +86,19 @@ export default function SimpleMeetingNotes() {
     }
   }
 
-  // Distribute text across quadrants
-  const distributeTextToQuadrants = (text) => {
-    console.log('Distributing text to quadrants:', text.length, 'characters')
+  // Distribute text across sections
+  const distributeTextToSections = (text) => {
+    console.log('Distributing text to sections:', text.length, 'characters')
 
     const lines = text.split('\n').filter(line => line.trim().length > 0)
-    const quarterLength = Math.ceil(lines.length / 4)
+    const halfLength = Math.ceil(lines.length / 2)
 
     setNotes({
-      topLeft: lines.slice(0, quarterLength).join('\n'),
-      topRight: lines.slice(quarterLength, quarterLength * 2).join('\n'),
-      bottomLeft: lines.slice(quarterLength * 2, quarterLength * 3).join('\n'),
-      bottomRight: lines.slice(quarterLength * 3).join('\n')
+      keyDiscussionPoints: lines.slice(0, halfLength).join('\n'),
+      actionItems: lines.slice(halfLength).map(line => `• ${line}`).join('\n')
     })
 
-    console.log('Text distributed across quadrants')
+    console.log('Text distributed across 2 sections')
   }
 
   // Process with Claude AI
@@ -120,50 +114,54 @@ export default function SimpleMeetingNotes() {
         setClaudeResult(result)
         setOcrStatus('AI analysis complete!')
 
-        // Populate quadrants with AI-structured data
+        // Populate sections with AI-structured data
         const newNotes = {
-          topLeft: '', // Key Discussion Points
-          topRight: '', // Decisions Made
-          bottomLeft: '', // Challenges & Blockers
-          bottomRight: '' // Action Items
+          keyDiscussionPoints: '',
+          actionItems: ''
         }
 
-        // Map Claude AI results to quadrants
-        if (result.keyPoints && result.keyPoints.length > 0) {
-          newNotes.topLeft = result.keyPoints.join('\n')
-        }
-
-        if (result.decisions && result.decisions.length > 0) {
-          newNotes.topRight = result.decisions.join('\n')
-        }
-
-        if (result.challenges && result.challenges.length > 0) {
-          newNotes.bottomLeft = result.challenges.join('\n')
+        // Map Claude AI results to sections
+        if (result.keyDiscussionPoints && result.keyDiscussionPoints.length > 0) {
+          newNotes.keyDiscussionPoints = result.keyDiscussionPoints.join('\n')
         }
 
         if (result.actionItems && result.actionItems.length > 0) {
-          newNotes.bottomRight = result.actionItems.map(item =>
-            typeof item === 'string' ? item : `${item.task} (${item.assignee || 'Unassigned'})`
-          ).join('\n')
+          newNotes.actionItems = result.actionItems.map(item => {
+            if (typeof item === 'string') {
+              return `• ${item}`
+            } else {
+              let formatted = `• ${item.task}`
+              if (item.assignee && item.assignee !== 'Unassigned') {
+                formatted += ` (${item.assignee})`
+              }
+              if (item.priority && item.priority !== 'medium') {
+                formatted += ` [${item.priority.toUpperCase()}]`
+              }
+              if (item.dueDate) {
+                formatted += ` - Due: ${item.dueDate}`
+              }
+              return formatted
+            }
+          }).join('\n')
         }
 
         // If no specific AI categorization, fall back to simple distribution
-        if (!newNotes.topLeft && !newNotes.topRight && !newNotes.bottomLeft && !newNotes.bottomRight) {
+        if (!newNotes.keyDiscussionPoints && !newNotes.actionItems) {
           console.log('No AI categorization available, using simple distribution')
-          distributeTextToQuadrants(text)
+          distributeTextToSections(text)
         } else {
-          console.log('Using AI-categorized content for quadrants')
+          console.log('Using AI-categorized content for sections')
           setNotes(newNotes)
         }
       } else {
         console.log('No Claude AI result, falling back to simple distribution')
-        distributeTextToQuadrants(text)
+        distributeTextToSections(text)
       }
     } catch (error) {
       console.error('Claude processing failed:', error)
       setOcrStatus('AI processing failed, using simple distribution')
       // Fallback to simple distribution
-      distributeTextToQuadrants(text)
+      distributeTextToSections(text)
     }
   }
 
@@ -227,7 +225,7 @@ export default function SimpleMeetingNotes() {
               🧠 Analyze with AI
             </button>
             <button
-              onClick={() => distributeTextToQuadrants(extractedText)}
+              onClick={() => distributeTextToSections(extractedText)}
               disabled={!extractedText.trim()}
               className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -305,7 +303,7 @@ export default function SimpleMeetingNotes() {
           <h2 className="text-lg font-semibold text-gray-900">Meeting Notes</h2>
           <div className="flex gap-2">
             <button
-              onClick={() => distributeTextToQuadrants(extractedText)}
+              onClick={() => distributeTextToSections(extractedText)}
               disabled={!extractedText}
               className="px-3 py-1 text-sm bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -322,7 +320,7 @@ export default function SimpleMeetingNotes() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-96">
-          {quadrants.map(({ key, title, icon, color }) => (
+          {sections.map(({ key, title, icon, color }) => (
             <div key={key} className={`border-2 border-gray-200 rounded-lg p-4 hover:border-${color}-300 transition-colors`}>
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-lg">{icon}</span>
@@ -332,7 +330,7 @@ export default function SimpleMeetingNotes() {
 
               <textarea
                 value={notes[key]}
-                onChange={(e) => updateQuadrant(key, e.target.value)}
+                onChange={(e) => updateSection(key, e.target.value)}
                 placeholder={`Add ${title.toLowerCase()}...`}
                 className="w-full h-full resize-none border-none focus:outline-none focus:ring-2 focus:ring-blue-500 p-2 rounded text-sm"
                 style={{ minHeight: '200px' }}
@@ -353,10 +351,8 @@ export default function SimpleMeetingNotes() {
           {claudeResult && (
             <div className="mt-2 p-2 bg-white rounded border">
               <div>AI Analysis Summary: {claudeResult.summary}</div>
-              <div>Key Points: {claudeResult.keyPoints?.length || 0}</div>
-              <div>Decisions: {claudeResult.decisions?.length || 0}</div>
+              <div>Key Discussion Points: {claudeResult.keyDiscussionPoints?.length || 0}</div>
               <div>Action Items: {claudeResult.actionItems?.length || 0}</div>
-              <div>Challenges: {claudeResult.challenges?.length || 0}</div>
               <div>Sentiment: {claudeResult.sentiment}</div>
             </div>
           )}

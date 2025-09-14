@@ -137,47 +137,34 @@ export class SimpleOCRService {
     console.log('📄 Processing', lines.length, 'lines:', lines)
 
     const result = {
-      summary: '',
-      keyPoints: [],
-      decisions: [],
+      keyDiscussionPoints: [],
       actionItems: [],
-      challenges: [],
-      sentiment: 'neutral',
-      insights: [],
-      relationships: []
+      summary: '',
+      sentiment: 'neutral'
     }
 
     // Generate summary
-    result.summary = `AI Analysis: Found ${lines.length} text segments with intelligent categorization applied.`
+    result.summary = `AI Analysis: Found ${lines.length} text segments categorized into discussion points and action items.`
 
-    // Intelligent categorization based on keywords and patterns
+    // Intelligent categorization - simplified to 2 categories
     lines.forEach((line, index) => {
       const lowerLine = line.toLowerCase()
       console.log(`\n🔍 Analyzing line ${index + 1}: "${line}"`)
 
-      // Action items detection
+      // Action items detection (enhanced patterns)
       if (this.isActionItem(lowerLine)) {
         const actionItem = {
           task: line.trim(),
           assignee: this.extractAssignee(line) || 'Unassigned',
-          priority: this.determinePriority(lowerLine)
+          priority: this.determinePriority(lowerLine),
+          dueDate: this.extractDueDate(line) || null
         }
         result.actionItems.push(actionItem)
         console.log('✅ Categorized as ACTION ITEM:', actionItem)
       }
-      // Decisions detection
-      else if (this.isDecision(lowerLine)) {
-        result.decisions.push(line.trim())
-        console.log('🎯 Categorized as DECISION:', line.trim())
-      }
-      // Challenges detection
-      else if (this.isChallenge(lowerLine)) {
-        result.challenges.push(line.trim())
-        console.log('⚠️ Categorized as CHALLENGE:', line.trim())
-      }
-      // Key discussion points (everything else)
+      // Everything else goes to key discussion points
       else if (line.trim().length > 5) {
-        result.keyPoints.push(line.trim())
+        result.keyDiscussionPoints.push(line.trim())
         console.log('💬 Categorized as DISCUSSION POINT:', line.trim())
       } else {
         console.log('⏭️ Skipped (too short):', line.trim())
@@ -185,10 +172,8 @@ export class SimpleOCRService {
     })
 
     console.log('\n📊 Final AI Analysis Results:')
-    console.log('- Key Points:', result.keyPoints.length)
-    console.log('- Decisions:', result.decisions.length)
+    console.log('- Key Discussion Points:', result.keyDiscussionPoints.length)
     console.log('- Action Items:', result.actionItems.length)
-    console.log('- Challenges:', result.challenges.length)
 
     // Sentiment analysis
     result.sentiment = this.analyzeSentiment(text)
@@ -202,28 +187,54 @@ export class SimpleOCRService {
 
   // Helper methods for intelligent text analysis
   isActionItem(text) {
-    const actionKeywords = ['todo', 'action', 'task', 'need to', 'should', 'must', 'will', 'follow up', 'next step', 'next action']
-    const actionPatterns = [/\d+\./, /•/, /^\s*-/, /^\s*\*/]
+    // Enhanced action keywords for better detection
+    const actionKeywords = [
+      'todo', 'action', 'task', 'need to', 'should', 'must', 'will', 'follow up',
+      'next step', 'next action', 'assign', 'responsible for', 'take care of',
+      'complete', 'finish', 'deliver', 'send', 'email', 'call', 'contact',
+      'schedule', 'book', 'arrange', 'organize', 'prepare', 'draft', 'review',
+      'update', 'create', 'implement', 'fix', 'resolve', 'investigate',
+      'research', 'coordinate', 'confirm', 'check', 'verify', 'monitor'
+    ]
+
+    // Action patterns (bullets, numbers, dashes)
+    const actionPatterns = [/^\s*\d+[\.)]\s/, /^\s*[•*-]\s/, /^\s*\[\s*\]\s/]
+
+    // Verb patterns at start of sentence
+    const verbPatterns = [
+      /^(will|should|must|need to|have to|going to)\s/,
+      /^(send|email|call|contact|schedule|book|arrange)\s/,
+      /^(prepare|draft|review|update|create|implement)\s/,
+      /^(fix|resolve|investigate|research|coordinate)\s/
+    ]
 
     const hasKeyword = actionKeywords.some(keyword => text.includes(keyword))
     const hasPattern = actionPatterns.some(pattern => pattern.test(text))
+    const hasVerb = verbPatterns.some(pattern => pattern.test(text))
 
-    console.log(`Testing action item for "${text.substring(0, 50)}": keyword=${hasKeyword}, pattern=${hasPattern}`)
-    return hasKeyword || hasPattern
+    console.log(`Testing action item for "${text.substring(0, 50)}": keyword=${hasKeyword}, pattern=${hasPattern}, verb=${hasVerb}`)
+    return hasKeyword || hasPattern || hasVerb
   }
 
-  isDecision(text) {
-    const decisionKeywords = ['decided', 'agreed', 'approved', 'resolved', 'conclusion', 'final', 'determined', 'move forward']
-    const hasKeyword = decisionKeywords.some(keyword => text.includes(keyword))
-    console.log(`Testing decision for "${text.substring(0, 50)}": ${hasKeyword}`)
-    return hasKeyword
-  }
+  extractDueDate(text) {
+    // Enhanced due date patterns
+    const datePatterns = [
+      /by\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
+      /by\s+(tomorrow|next week|end of week|eow)/i,
+      /by\s+(\d{1,2}\/\d{1,2}\/?\d{0,4})/,
+      /due\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
+      /deadline\s+(\d{1,2}\/\d{1,2}\/?\d{0,4})/,
+      /(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+deadline/i
+    ]
 
-  isChallenge(text) {
-    const challengeKeywords = ['problem', 'issue', 'challenge', 'blocker', 'concern', 'risk', 'difficulty', 'obstacle', 'concerns about']
-    const hasKeyword = challengeKeywords.some(keyword => text.includes(keyword))
-    console.log(`Testing challenge for "${text.substring(0, 50)}": ${hasKeyword}`)
-    return hasKeyword
+    for (const pattern of datePatterns) {
+      const match = text.match(pattern)
+      if (match) {
+        console.log(`Found due date "${match[1]}" in "${text.substring(0, 50)}"`)
+        return match[1]
+      }
+    }
+    return null
   }
 
   extractAssignee(text) {
@@ -318,22 +329,37 @@ export class SimpleOCRService {
           max_tokens: 2000,
           messages: [{
             role: 'user',
-            content: `Please analyze this meeting text and extract structured information:
+            content: `I will provide you with rough meeting notes. Your task is to carefully review them and produce an organized output with the following three sections:
 
-Text: """${text}"""
+**Summary** – Write a concise overview (3–5 sentences) capturing the overall purpose of the meeting and the main outcomes.
+
+**Key Discussion Points** – List the most important topics discussed during the meeting in bullet points. Group related points together if appropriate.
+
+**Action Items** – Provide a clear, numbered list of action items. Each action item should specify:
+• What needs to be done
+• Who is responsible (if identifiable from the notes)
+• Any deadlines or timelines (if mentioned or implied)
+
+Format the response cleanly with headers for each section. Do not include extraneous information or rephrase in a vague way—keep it clear, concise, and actionable.
+
+Meeting Notes:
+"""${text}"""
 
 Meeting Context: ${JSON.stringify(meetingContext, null, 2)}
 
 Please provide a JSON response with:
 {
-  "summary": "Brief 2-3 sentence summary",
-  "keyPoints": ["point1", "point2", ...],
-  "decisions": ["decision1", "decision2", ...],
-  "actionItems": [{"task": "description", "assignee": "person", "priority": "high/medium/low"}],
-  "challenges": ["challenge1", "challenge2", ...],
-  "sentiment": "positive/neutral/negative",
-  "insights": ["insight1", "insight2", ...],
-  "relationships": [{"stakeholder1": "name", "stakeholder2": "name", "interaction": "description"}]
+  "summary": "Concise 3-5 sentence overview capturing the overall purpose and main outcomes",
+  "keyDiscussionPoints": ["Important topic discussed", "Key decision or insight", "Challenge or concern raised", ...],
+  "actionItems": [
+    {
+      "task": "Clear description of what needs to be done",
+      "assignee": "person responsible or 'Unassigned'",
+      "priority": "high/medium/low",
+      "dueDate": "deadline if mentioned or null"
+    }
+  ],
+  "sentiment": "positive/neutral/negative"
 }`
           }]
         })

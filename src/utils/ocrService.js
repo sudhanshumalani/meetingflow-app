@@ -11,17 +11,37 @@ export class OCRService {
     if (this.isInitialized) return
 
     try {
+      console.log('=== OCR INITIALIZATION DEBUG ===')
+      console.log('Tesseract object:', typeof Tesseract, Tesseract)
+
+      // Check if running in browser environment
+      console.log('Environment check:', {
+        isBrowser: typeof window !== 'undefined',
+        hasNavigator: typeof navigator !== 'undefined',
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A'
+      })
+
+      console.log('Creating Tesseract worker...')
       this.worker = await Tesseract.createWorker({
+        corePath: 'https://unpkg.com/tesseract.js-core@4.0.6/tesseract-core-simd.js',
+        workerPath: 'https://unpkg.com/tesseract.js@4.1.1/dist/worker.min.js',
         logger: (m) => {
+          console.log('Tesseract initialization logger:', m)
           // Optional: log progress for debugging
           if (m.status === 'recognizing text') {
             console.log(`OCR Progress: ${Math.round(m.progress * 100)}%`)
           }
         }
       })
+      console.log('Worker created successfully:', this.worker)
 
+      console.log('Loading language...')
       await this.worker.loadLanguage('eng')
+      console.log('Language loaded')
+
+      console.log('Initializing worker...')
       await this.worker.initialize('eng')
+      console.log('Worker initialized')
 
       // Optimize for better text recognition
       await this.worker.setParameters({
@@ -38,6 +58,15 @@ export class OCRService {
 
   async extractText(imageFile, options = {}) {
     try {
+      console.log('=== OCR EXTRACTION DEBUG START ===')
+      console.log('Starting OCR extraction for:', imageFile.name)
+      console.log('Image file details:', {
+        name: imageFile.name,
+        size: imageFile.size,
+        type: imageFile.type,
+        lastModified: imageFile.lastModified
+      })
+
       await this.initialize()
 
       const {
@@ -47,23 +76,64 @@ export class OCRService {
 
       // Convert file to image URL for Tesseract
       const imageUrl = URL.createObjectURL(imageFile)
+      console.log('Created image URL for Tesseract:', imageUrl)
+
+      // Verify the worker is properly initialized
+      if (!this.worker) {
+        throw new Error('OCR worker not properly initialized')
+      }
 
       // Run OCR with progress callback
+      console.log('Calling worker.recognize with image URL...')
+      onProgress(10) // Initial progress
       const { data } = await this.worker.recognize(imageUrl, {
         logger: (m) => {
+          console.log('Tesseract recognition logger:', m)
           if (m.status === 'recognizing text' && m.progress) {
+            console.log(`Recognition progress: ${Math.round(m.progress * 100)}%`)
             onProgress(Math.round(m.progress * 100))
           }
         }
       })
 
+      console.log('=== RAW TESSERACT RESULT ===')
+      console.log('Full data object:', data)
+
+      console.log('Tesseract raw result:', {
+        text: data.text.substring(0, 100) + '...',
+        confidence: data.confidence,
+        wordCount: data.words?.length
+      })
+
       // Clean up object URL
       URL.revokeObjectURL(imageUrl)
+
+      // Validate that we got real OCR results
+      if (!data.text || data.text.trim().length < 5) {
+        throw new Error('OCR extracted very little or no text from the image')
+      }
+
+      // Check if the text looks like mock data (basic sanity check)
+      const suspiciousPhrases = [
+        'proceed with mobile development',
+        'postpone desktop app',
+        'Meeting Notes - Q4 Planning',
+        'Sprint Review Meeting',
+        'Client Check-in Meeting'
+      ]
+
+      const isSuspicious = suspiciousPhrases.some(phrase =>
+        data.text.toLowerCase().includes(phrase.toLowerCase())
+      )
+
+      if (isSuspicious) {
+        console.warn('OCR result contains suspicious mock-like content')
+      }
 
       // Process and structure the results
       const processedResult = this.processOCRResult(data)
 
-      return {
+      const result = {
         success: true,
         confidence: data.confidence / 100, // Convert to 0-1 scale
         text: data.text.trim(),
@@ -72,15 +142,37 @@ export class OCRService {
         fileName: imageFile.name,
         fileSize: imageFile.size,
         extractedSections: processedResult.sections,
-        actionItems: processedResult.actionItems
+        actionItems: processedResult.actionItems,
+        // Add debug info
+        debug: {
+          rawConfidence: data.confidence,
+          originalTextLength: data.text.length,
+          tesseractVersion: 'v4',
+          processingMethod: 'tesseract.js'
+        }
       }
+
+      console.log('Final OCR result:', {
+        textLength: result.text.length,
+        confidence: result.confidence,
+        actionItemsCount: result.actionItems.length
+      })
+
+      return result
 
     } catch (error) {
       console.error('OCR extraction failed:', error)
+      console.error('Error stack:', error.stack)
+
+      // Don't fall back to mock data - return clear error
       return {
         success: false,
-        error: error.message || 'Failed to extract text from image',
-        fileName: imageFile.name
+        error: `OCR processing failed: ${error.message || 'Unknown error'}`,
+        fileName: imageFile.name,
+        debug: {
+          errorType: error.constructor.name,
+          timestamp: new Date().toISOString()
+        }
       }
     }
   }

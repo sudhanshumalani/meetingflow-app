@@ -1,44 +1,58 @@
 import { format, differenceInDays, addDays } from 'date-fns'
+import { processImageForMeeting } from './ocrService'
 
-// Simulated OCR Text Extraction Service
+// Real OCR Text Extraction Service (Tesseract.js wrapper for AI services)
 export class OCRService {
   constructor() {
     this.isProcessing = false
-    this.confidence = 0.95 // Simulated confidence level
+    this.confidence = 0.95 // Default confidence level
   }
 
   async extractTextFromImage(imageFile) {
+    console.log('=== AI SERVICES OCR WRAPPER ===')
+    console.log('Using real Tesseract.js OCR service via wrapper')
+
     this.isProcessing = true
-    
-    // Simulate processing time
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    // Simulate OCR results based on image characteristics
-    const simulatedTexts = [
-      "Meeting Notes - Q4 Planning\n• Increase user engagement by 25%\n• Launch mobile app by December\n• Hire 3 new engineers\n• Budget allocation: $250K",
-      "Action Items:\n1. Sarah to review API specs by Friday\n2. Marcus to create user journey map\n3. David to implement authentication\n4. Elena to design onboarding flow",
-      "Whiteboard Session Results:\n- User feedback: 4.2/5 rating\n- Performance improvements needed\n- Integration with Slack required\n- Security audit scheduled for next month",
-      "Meeting Summary:\nAttendees: 8 people\nDuration: 45 minutes\nKey decisions made:\n• Proceed with mobile development\n• Postpone desktop app\n• Focus on core features first",
-      "Project Timeline:\nPhase 1: Research (2 weeks)\nPhase 2: Design (3 weeks)\nPhase 3: Development (8 weeks)\nPhase 4: Testing (2 weeks)\nPhase 5: Launch (1 week)"
-    ]
-    
-    const randomText = simulatedTexts[Math.floor(Math.random() * simulatedTexts.length)]
-    
-    this.isProcessing = false
-    
-    return {
-      success: true,
-      text: randomText,
-      confidence: this.confidence,
-      language: 'en',
-      processingTime: 2000,
-      wordCount: randomText.split(' ').length,
-      extractedElements: {
-        actionItems: this.extractActionItemsFromText(randomText),
-        dates: this.extractDatesFromText(randomText),
-        people: this.extractPeopleFromText(randomText),
-        numbers: this.extractNumbersFromText(randomText)
+
+    try {
+      // Use the real Tesseract.js OCR service
+      const result = await processImageForMeeting(imageFile, {}, {
+        onProgress: (progress) => {
+          console.log(`AI Services OCR Progress: ${progress}%`)
+        }
+      })
+
+      this.isProcessing = false
+
+      if (result.success) {
+        console.log('AI Services OCR Success:', {
+          textLength: result.ocrResult.text.length,
+          confidence: result.ocrResult.confidence,
+          actionItemsCount: result.actionItems.length
+        })
+
+        return {
+          success: true,
+          text: result.ocrResult.text,
+          confidence: result.ocrResult.confidence,
+          language: 'en',
+          processingTime: 2000,
+          wordCount: result.words,
+          extractedElements: {
+            actionItems: result.actionItems.map(item => item.text),
+            dates: this.extractDatesFromText(result.ocrResult.text),
+            people: result.actionItems.map(item => item.assignee).filter(name => name !== 'Unassigned'),
+            numbers: this.extractNumbersFromText(result.ocrResult.text)
+          }
+        }
+      } else {
+        console.error('AI Services OCR failed:', result.error)
+        throw new Error(result.error)
       }
+    } catch (error) {
+      console.error('AI Services OCR wrapper error:', error)
+      this.isProcessing = false
+      throw error
     }
   }
 

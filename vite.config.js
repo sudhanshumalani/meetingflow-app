@@ -1,12 +1,14 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
 // Simplified GitHub Pages configuration
 export default defineConfig({
   base: '/meetingflow-app/',
   plugins: [
     react(),
+    basicSsl(),
     VitePWA({
       registerType: 'autoUpdate',
       workbox: {
@@ -41,5 +43,15 @@ export default defineConfig({
     outDir: 'dist',
     assetsDir: 'assets',
     sourcemap: false
+  },
+  server: {
+    https: true,
+    host: '0.0.0.0', // Allow external connections
+    port: 5173
+  },
+  preview: {
+    https: true,
+    host: '0.0.0.0', // Allow external connections
+    port: 4173
   }
 })

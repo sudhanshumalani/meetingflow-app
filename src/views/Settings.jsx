@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Settings as SettingsIcon,
   Users,
@@ -40,6 +41,7 @@ import { setOCRApiKey, getOCRCapabilities } from '../utils/ocrService'
 import { setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
 
 export default function Settings() {
+  const navigate = useNavigate()
   const {
     stakeholders,
     stakeholderCategories,
@@ -821,13 +823,13 @@ export default function Settings() {
               <p className="text-sm text-gray-600 mb-4">
                 Try the new simplified meeting notes interface with enhanced editing and Claude AI integration.
               </p>
-              <a
-                href="/test-notes"
+              <button
+                onClick={() => navigate('/test-notes')}
                 className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
                 <Sparkles className="w-4 h-4" />
                 Test New Meeting Notes
-              </a>
+              </button>
             </div>
           </div>
         )}

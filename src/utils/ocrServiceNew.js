@@ -130,10 +130,11 @@ export class SimpleOCRService {
 
   // Simulate Claude AI processing with intelligent text analysis
   simulateClaudeProcessing(text, meetingContext = {}) {
-    console.log('Running intelligent text analysis simulation...')
+    console.log('🧠 Running intelligent text analysis simulation...')
+    console.log('📝 Input text:', text)
 
     const lines = text.split('\n').filter(line => line.trim().length > 0)
-    const words = text.toLowerCase()
+    console.log('📄 Processing', lines.length, 'lines:', lines)
 
     const result = {
       summary: '',
@@ -147,33 +148,47 @@ export class SimpleOCRService {
     }
 
     // Generate summary
-    result.summary = `Meeting discussion covering ${lines.length} key topics with focus on ${this.getMainTopics(text).join(', ')}.`
+    result.summary = `AI Analysis: Found ${lines.length} text segments with intelligent categorization applied.`
 
     // Intelligent categorization based on keywords and patterns
-    lines.forEach(line => {
+    lines.forEach((line, index) => {
       const lowerLine = line.toLowerCase()
+      console.log(`\n🔍 Analyzing line ${index + 1}: "${line}"`)
 
       // Action items detection
       if (this.isActionItem(lowerLine)) {
-        result.actionItems.push({
+        const actionItem = {
           task: line.trim(),
           assignee: this.extractAssignee(line) || 'Unassigned',
           priority: this.determinePriority(lowerLine)
-        })
+        }
+        result.actionItems.push(actionItem)
+        console.log('✅ Categorized as ACTION ITEM:', actionItem)
       }
       // Decisions detection
       else if (this.isDecision(lowerLine)) {
         result.decisions.push(line.trim())
+        console.log('🎯 Categorized as DECISION:', line.trim())
       }
       // Challenges detection
       else if (this.isChallenge(lowerLine)) {
         result.challenges.push(line.trim())
+        console.log('⚠️ Categorized as CHALLENGE:', line.trim())
       }
       // Key discussion points (everything else)
-      else if (line.trim().length > 10) {
+      else if (line.trim().length > 5) {
         result.keyPoints.push(line.trim())
+        console.log('💬 Categorized as DISCUSSION POINT:', line.trim())
+      } else {
+        console.log('⏭️ Skipped (too short):', line.trim())
       }
     })
+
+    console.log('\n📊 Final AI Analysis Results:')
+    console.log('- Key Points:', result.keyPoints.length)
+    console.log('- Decisions:', result.decisions.length)
+    console.log('- Action Items:', result.actionItems.length)
+    console.log('- Challenges:', result.challenges.length)
 
     // Sentiment analysis
     result.sentiment = this.analyzeSentiment(text)
@@ -187,33 +202,43 @@ export class SimpleOCRService {
 
   // Helper methods for intelligent text analysis
   isActionItem(text) {
-    const actionKeywords = ['todo', 'action', 'task', 'need to', 'should', 'must', 'will', 'follow up', 'next step']
-    const actionPatterns = ['\\d+\\.', '•', '-', '*']
+    const actionKeywords = ['todo', 'action', 'task', 'need to', 'should', 'must', 'will', 'follow up', 'next step', 'next action']
+    const actionPatterns = [/\d+\./, /•/, /^\s*-/, /^\s*\*/]
 
-    return actionKeywords.some(keyword => text.includes(keyword)) ||
-           actionPatterns.some(pattern => text.match(new RegExp(pattern)))
+    const hasKeyword = actionKeywords.some(keyword => text.includes(keyword))
+    const hasPattern = actionPatterns.some(pattern => pattern.test(text))
+
+    console.log(`Testing action item for "${text.substring(0, 50)}": keyword=${hasKeyword}, pattern=${hasPattern}`)
+    return hasKeyword || hasPattern
   }
 
   isDecision(text) {
-    const decisionKeywords = ['decided', 'agreed', 'approved', 'resolved', 'conclusion', 'final', 'determined']
-    return decisionKeywords.some(keyword => text.includes(keyword))
+    const decisionKeywords = ['decided', 'agreed', 'approved', 'resolved', 'conclusion', 'final', 'determined', 'move forward']
+    const hasKeyword = decisionKeywords.some(keyword => text.includes(keyword))
+    console.log(`Testing decision for "${text.substring(0, 50)}": ${hasKeyword}`)
+    return hasKeyword
   }
 
   isChallenge(text) {
-    const challengeKeywords = ['problem', 'issue', 'challenge', 'blocker', 'concern', 'risk', 'difficulty', 'obstacle']
-    return challengeKeywords.some(keyword => text.includes(keyword))
+    const challengeKeywords = ['problem', 'issue', 'challenge', 'blocker', 'concern', 'risk', 'difficulty', 'obstacle', 'concerns about']
+    const hasKeyword = challengeKeywords.some(keyword => text.includes(keyword))
+    console.log(`Testing challenge for "${text.substring(0, 50)}": ${hasKeyword}`)
+    return hasKeyword
   }
 
   extractAssignee(text) {
     const assigneePatterns = [
-      /by\\s+([A-Za-z]+)/i,
-      /([A-Za-z]+)\\s+will/i,
-      /assigned\\s+to\\s+([A-Za-z]+)/i
+      /by\s+([A-Za-z]+)/i,
+      /([A-Za-z]+)\s+will/i,
+      /assigned\s+to\s+([A-Za-z]+)/i
     ]
 
     for (const pattern of assigneePatterns) {
       const match = text.match(pattern)
-      if (match) return match[1]
+      if (match) {
+        console.log(`Found assignee "${match[1]}" in "${text.substring(0, 50)}"`)
+        return match[1]
+      }
     }
     return null
   }
@@ -225,7 +250,7 @@ export class SimpleOCRService {
   }
 
   getMainTopics(text) {
-    const words = text.toLowerCase().split(/\\s+/)
+    const words = text.toLowerCase().split(/\s+/)
     const commonWords = new Set(['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'must', 'shall', 'a', 'an', 'this', 'that', 'these', 'those'])
 
     const wordFreq = {}
@@ -246,7 +271,7 @@ export class SimpleOCRService {
     const positiveWords = ['good', 'great', 'excellent', 'positive', 'success', 'achieve', 'progress', 'solution']
     const negativeWords = ['bad', 'problem', 'issue', 'fail', 'difficult', 'challenge', 'concern', 'risk']
 
-    const words = text.toLowerCase().split(/\\s+/)
+    const words = text.toLowerCase().split(/\s+/)
     let positiveCount = 0
     let negativeCount = 0
 

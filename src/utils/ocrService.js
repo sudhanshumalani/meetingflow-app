@@ -10,53 +10,114 @@ export class OCRService {
   async initialize() {
     if (this.isInitialized) return
 
-    try {
-      console.log('=== OCR INITIALIZATION DEBUG ===')
-      console.log('Tesseract object:', typeof Tesseract, Tesseract)
+    // Try initialization with multiple fallback strategies
+    const initStrategies = [
+      { name: 'default', config: {} },
+      { name: 'minimal', config: { cachePath: './' } },
+      { name: 'basic', config: { cacheMethod: 'none' } }
+    ]
 
-      // Check if running in browser environment
-      console.log('Environment check:', {
-        isBrowser: typeof window !== 'undefined',
-        hasNavigator: typeof navigator !== 'undefined',
-        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A'
-      })
+    let lastError = null
 
-      console.log('Creating Tesseract worker...')
-      this.worker = await Tesseract.createWorker({
-        corePath: 'https://unpkg.com/tesseract.js-core@4.0.6/tesseract-core-simd.js',
-        workerPath: 'https://unpkg.com/tesseract.js@4.1.1/dist/worker.min.js',
-        logger: (m) => {
-          console.log('Tesseract initialization logger:', m)
-          // Optional: log progress for debugging
-          if (m.status === 'recognizing text') {
-            console.log(`OCR Progress: ${Math.round(m.progress * 100)}%`)
-          }
+    for (const strategy of initStrategies) {
+      try {
+        console.log(`=== OCR INITIALIZATION (${strategy.name.toUpperCase()}) ===`)
+        console.log('Tesseract object:', typeof Tesseract, Tesseract)
+
+        // Check if running in browser environment
+        console.log('Environment check:', {
+          isBrowser: typeof window !== 'undefined',
+          hasNavigator: typeof navigator !== 'undefined',
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A'
+        })
+
+        console.log(`Creating Tesseract worker with ${strategy.name} strategy...`)
+
+        // Add timeout wrapper for worker creation
+        const workerPromise = Tesseract.createWorker({
+          logger: (m) => {
+            console.log('Tesseract initialization logger:', m)
+            // Optional: log progress for debugging
+            if (m.status === 'recognizing text') {
+              console.log(`OCR Progress: ${Math.round(m.progress * 100)}%`)
+            }
+          },
+          ...strategy.config
+        })
+
+        // Create timeout promise
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`Worker creation timeout after 30 seconds (${strategy.name})`)), 30000)
+        })
+
+        // Race between worker creation and timeout
+        this.worker = await Promise.race([workerPromise, timeoutPromise])
+        console.log('Worker created successfully:', this.worker)
+
+        console.log('Loading language...')
+        const loadLanguagePromise = this.worker.loadLanguage('eng')
+        const loadTimeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Language loading timeout after 30 seconds')), 30000)
+        })
+        await Promise.race([loadLanguagePromise, loadTimeoutPromise])
+        console.log('Language loaded')
+
+        console.log('Initializing worker...')
+        const initPromise = this.worker.initialize('eng')
+        const initTimeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Worker initialization timeout after 20 seconds')), 20000)
+        })
+        await Promise.race([initPromise, initTimeoutPromise])
+        console.log('Worker initialized')
+
+        // Try to set parameters, but don't fail if this doesn't work
+        try {
+          console.log('Setting parameters...')
+          const paramsPromise = this.worker.setParameters({
+            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,!?;:()[]{}"-•√×÷°@#$%&*+=<>/\\|~`^_',
+            preserve_interword_spaces: '1',
+          })
+          const paramsTimeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Parameter setting timeout after 10 seconds')), 10000)
+          })
+          await Promise.race([paramsPromise, paramsTimeoutPromise])
+          console.log('Parameters set successfully')
+        } catch (paramError) {
+          console.warn('Failed to set OCR parameters, continuing without:', paramError.message)
         }
-      })
-      console.log('Worker created successfully:', this.worker)
 
-      console.log('Loading language...')
-      await this.worker.loadLanguage('eng')
-      console.log('Language loaded')
+        this.isInitialized = true
+        console.log(`OCR successfully initialized with ${strategy.name} strategy`)
+        return
 
-      console.log('Initializing worker...')
-      await this.worker.initialize('eng')
-      console.log('Worker initialized')
+      } catch (error) {
+        console.error(`Failed to initialize OCR worker with ${strategy.name} strategy:`, error)
+        lastError = error
 
-      // Optimize for better text recognition
-      await this.worker.setParameters({
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,!?;:()[]{}"-•√×÷°@#$%&*+=<>/\\|~`^_',
-        preserve_interword_spaces: '1',
-      })
+        // Clean up failed worker
+        if (this.worker) {
+          try {
+            await this.worker.terminate()
+          } catch (cleanupError) {
+            console.warn('Failed to cleanup worker:', cleanupError)
+          }
+          this.worker = null
+        }
 
-      this.isInitialized = true
-    } catch (error) {
-      console.error('Failed to initialize OCR worker:', error)
-      throw new Error('OCR initialization failed')
+        // Continue to next strategy
+        if (strategy !== initStrategies[initStrategies.length - 1]) {
+          console.log('Trying next initialization strategy...')
+          continue
+        }
+      }
     }
+
+    // If we get here, all strategies failed
+    throw new Error(`OCR initialization failed with all strategies. Last error: ${lastError?.message}`)
   }
 
   async extractText(imageFile, options = {}) {
+    let imageUrl = null
     try {
       console.log('=== OCR EXTRACTION DEBUG START ===')
       console.log('Starting OCR extraction for:', imageFile.name)
@@ -75,7 +136,7 @@ export class OCRService {
       } = options
 
       // Convert file to image URL for Tesseract
-      const imageUrl = URL.createObjectURL(imageFile)
+      imageUrl = URL.createObjectURL(imageFile)
       console.log('Created image URL for Tesseract:', imageUrl)
 
       // Verify the worker is properly initialized
@@ -83,10 +144,11 @@ export class OCRService {
         throw new Error('OCR worker not properly initialized')
       }
 
-      // Run OCR with progress callback
+      // Run OCR with progress callback and timeout
       console.log('Calling worker.recognize with image URL...')
       onProgress(10) // Initial progress
-      const { data } = await this.worker.recognize(imageUrl, {
+
+      const recognizePromise = this.worker.recognize(imageUrl, {
         logger: (m) => {
           console.log('Tesseract recognition logger:', m)
           if (m.status === 'recognizing text' && m.progress) {
@@ -95,6 +157,13 @@ export class OCRService {
           }
         }
       })
+
+      // Add timeout for recognition (2 minutes max)
+      const recognizeTimeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('OCR recognition timeout after 120 seconds')), 120000)
+      })
+
+      const { data } = await Promise.race([recognizePromise, recognizeTimeoutPromise])
 
       console.log('=== RAW TESSERACT RESULT ===')
       console.log('Full data object:', data)
@@ -164,6 +233,29 @@ export class OCRService {
       console.error('OCR extraction failed:', error)
       console.error('Error stack:', error.stack)
 
+      // Clean up object URL if it was created
+      try {
+        if (imageUrl) {
+          URL.revokeObjectURL(imageUrl)
+        }
+      } catch (urlCleanupError) {
+        console.warn('Failed to cleanup image URL:', urlCleanupError)
+      }
+
+      // Try to recover by reinitializing if this looks like a worker issue
+      if (error.message.includes('timeout') || error.message.includes('Worker') || !this.worker) {
+        console.log('Attempting to recover OCR worker...')
+        this.isInitialized = false
+        this.worker = null
+
+        try {
+          await this.initialize()
+          console.log('OCR worker recovery successful')
+        } catch (recoveryError) {
+          console.error('OCR worker recovery failed:', recoveryError)
+        }
+      }
+
       // Don't fall back to mock data - return clear error
       return {
         success: false,
@@ -171,7 +263,9 @@ export class OCRService {
         fileName: imageFile.name,
         debug: {
           errorType: error.constructor.name,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          workerState: this.worker ? 'exists' : 'null',
+          isInitialized: this.isInitialized
         }
       }
     }

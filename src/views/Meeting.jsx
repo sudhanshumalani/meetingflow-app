@@ -2,14 +2,14 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import { useApp } from '../contexts/AppContext'
-import { 
-  ArrowLeft, 
-  Save, 
-  Plus, 
-  Users, 
-  Calendar, 
-  FileText, 
-  Camera, 
+import {
+  ArrowLeft,
+  Save,
+  Plus,
+  Users,
+  Calendar,
+  FileText,
+  Camera,
   Upload,
   BookOpen,
   Image,
@@ -22,7 +22,8 @@ import {
   Target,
   Brain,
   Zap,
-  Eye
+  Eye,
+  Edit3
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { mockStakeholders, getCategoryDisplayName, STAKEHOLDER_CATEGORIES } from '../utils/mockData'

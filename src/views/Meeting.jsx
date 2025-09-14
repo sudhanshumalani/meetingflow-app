@@ -36,7 +36,6 @@ import {
   PredictiveNotificationsDisplay,
   AIProcessingSummary
 } from '../components/AIProcessing'
-import { OCRControls } from '../components/OCRControls'
 import { aiCoordinator } from '../utils/aiServices'
 import { 
   MobileHeader,
@@ -875,9 +874,6 @@ export default function Meeting() {
                     )}
                   </div>
                 </div>
-
-                {/* OCR Controls */}
-                <OCRControls />
 
                 {/* AI-Powered OCR Upload */}
                 <div className="bg-white rounded-lg shadow-md p-6">

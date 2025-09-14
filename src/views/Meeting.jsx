@@ -137,7 +137,12 @@ export default function Meeting() {
   }, [formData.selectedStakeholder])
 
   const handleInputChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }))
+    console.log('Input change:', field, value)
+    setFormData(prev => {
+      const newData = { ...prev, [field]: value }
+      console.log('Updated formData:', newData)
+      return newData
+    })
   }
 
   const handleQuadrantChange = (quadrant, value) => {
@@ -198,15 +203,42 @@ export default function Meeting() {
         setExtractedText(result.ocrResult.text)
         setOcrStatus('OCR completed successfully!')
 
-        // Auto-populate digital notes with OCR results (skip if fallback)
-        if (result.ocrResult.extractedSections && !result.debug?.isFallback) {
+        // Auto-populate digital notes with OCR results
+        if (result.ocrResult && result.ocrResult.extractedSections && !result.debug?.isFallback) {
           const sections = result.ocrResult.extractedSections
-          setDigitalNotes(prev => ({
-            topLeft: prev.topLeft || (sections.agenda?.join('\n• ') || ''),
-            topRight: prev.topRight || (sections.decisions?.join('\n• ') || sections.notes?.join('\n• ') || ''),
-            bottomLeft: prev.bottomLeft || (sections.actionItems?.join('\n• ') || ''),
-            bottomRight: prev.bottomRight || (sections.attendees?.join('\n• ') || '')
-          }))
+          console.log('Populating quadrants with extracted sections:', sections)
+
+          // Populate each quadrant with extracted content
+          const newNotes = {
+            topLeft: sections.agenda && sections.agenda.length > 0
+              ? '• ' + sections.agenda.join('\n• ')
+              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(0, Math.ceil(sections.notes.length/4)).join('\n') : prev.topLeft),
+            topRight: sections.decisions && sections.decisions.length > 0
+              ? '• ' + sections.decisions.join('\n• ')
+              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(sections.notes.length/4), Math.ceil(sections.notes.length/2)).join('\n') : prev.topRight),
+            bottomLeft: sections.actionItems && sections.actionItems.length > 0
+              ? '• ' + sections.actionItems.join('\n• ')
+              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(sections.notes.length/2), Math.ceil(3*sections.notes.length/4)).join('\n') : prev.bottomLeft),
+            bottomRight: sections.attendees && sections.attendees.length > 0
+              ? '• ' + sections.attendees.join('\n• ')
+              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(3*sections.notes.length/4)).join('\n') : prev.bottomRight)
+          }
+
+          console.log('Setting digital notes:', newNotes)
+          setDigitalNotes(newNotes)
+        } else if (result.ocrResult && result.ocrResult.text && !result.debug?.isFallback) {
+          // If no sections but we have text, distribute it across quadrants
+          console.log('No sections found, distributing raw text across quadrants')
+          const text = result.ocrResult.text
+          const lines = text.split('\n').filter(line => line.trim())
+          const quarterLength = Math.ceil(lines.length / 4)
+
+          setDigitalNotes({
+            topLeft: lines.slice(0, quarterLength).join('\n'),
+            topRight: lines.slice(quarterLength, 2 * quarterLength).join('\n'),
+            bottomLeft: lines.slice(2 * quarterLength, 3 * quarterLength).join('\n'),
+            bottomRight: lines.slice(3 * quarterLength).join('\n')
+          })
         }
 
         // Handle fallback message display
@@ -531,7 +563,10 @@ export default function Meeting() {
           <MobileHeader
             title="Meeting Notes"
             subtitle="Capture and organize insights"
-            onBack={() => navigate('/')}
+            onBack={() => {
+              console.log('Mobile back button clicked')
+              navigate('/', { replace: true })
+            }}
             rightContent={
               <div className="flex items-center gap-2">
                 <ExportOptionsButton
@@ -571,7 +606,10 @@ export default function Meeting() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <button
-                onClick={() => navigate('/')}
+                onClick={() => {
+                  console.log('Desktop back button clicked')
+                  navigate('/', { replace: true })
+                }}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 <ArrowLeft size={20} />

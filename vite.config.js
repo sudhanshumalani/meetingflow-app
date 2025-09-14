@@ -47,11 +47,25 @@ export default defineConfig({
   server: {
     https: true,
     host: '0.0.0.0', // Allow external connections
-    port: 5173
+    port: 5173,
+    headers: {
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Opener-Policy': 'same-origin'
+    }
   },
   preview: {
     https: true,
     host: '0.0.0.0', // Allow external connections
-    port: 4173
+    port: 4173,
+    headers: {
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Opener-Policy': 'same-origin'
+    }
+  },
+  optimizeDeps: {
+    include: ['tesseract.js']
+  },
+  worker: {
+    format: 'es'
   }
 })

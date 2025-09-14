@@ -27,63 +27,212 @@ export class OCRService {
 
   async _performInitialization() {
     console.log('=== OCR INITIALIZATION START ===')
-    console.log('Environment check:', {
-      isBrowser: typeof window !== 'undefined',
-      hasNavigator: typeof navigator !== 'undefined',
-      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A',
-      tesseractVersion: Tesseract.version || 'unknown'
-    })
 
-    // Use simple direct initialization approach
-    try {
-      console.log('Creating Tesseract worker (simple approach)...')
-
-      // Create worker with minimal config to avoid bundler issues
-      this.worker = await this._createWorkerWithTimeout()
-      console.log('Worker created successfully')
-
-      // Use simpler initialization without complex parameters
-      console.log('Loading and initializing English language...')
-      await this._withTimeout(
-        this.worker.loadLanguage('eng'),
-        20000,
-        'Language loading timeout'
-      )
-
-      await this._withTimeout(
-        this.worker.initialize('eng'),
-        15000,
-        'Worker initialization timeout'
-      )
-
-      console.log('OCR initialization completed successfully')
-      this.isInitialized = true
-
-    } catch (error) {
-      console.error('OCR initialization failed:', error)
-
-      // Cleanup on failure
-      await this._cleanupWorker()
-
-      throw new Error(`OCR initialization failed: ${error.message}`)
+    // Comprehensive environment diagnostics
+    const diagnostics = {
+      timestamp: new Date().toISOString(),
+      environment: {
+        isBrowser: typeof window !== 'undefined',
+        hasNavigator: typeof navigator !== 'undefined',
+        hasWorker: typeof Worker !== 'undefined',
+        hasSharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+        hasOffscreenCanvas: typeof OffscreenCanvas !== 'undefined',
+        hasWebAssembly: typeof WebAssembly !== 'undefined',
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A',
+        language: typeof navigator !== 'undefined' ? navigator.language : 'N/A',
+        onLine: typeof navigator !== 'undefined' ? navigator.onLine : 'N/A',
+        cookieEnabled: typeof navigator !== 'undefined' ? navigator.cookieEnabled : 'N/A'
+      },
+      tesseract: {
+        imported: typeof Tesseract !== 'undefined',
+        version: Tesseract?.version || 'unknown',
+        createWorker: typeof Tesseract?.createWorker === 'function',
+        methods: Tesseract ? Object.keys(Tesseract) : []
+      },
+      window: typeof window !== 'undefined' ? {
+        location: window.location?.href,
+        protocol: window.location?.protocol,
+        host: window.location?.host,
+        secure: window.location?.protocol === 'https:',
+        crossOriginIsolated: window.crossOriginIsolated
+      } : null
     }
-  }
 
-  async _createWorkerWithTimeout() {
-    const workerOptions = {
-      logger: (info) => {
-        if (info.status && info.progress) {
-          console.log(`OCR: ${info.status} ${Math.round(info.progress * 100)}%`)
+    console.log('=== DETAILED DIAGNOSTICS ===', diagnostics)
+
+    // Check for known incompatible environments
+    if (!diagnostics.environment.isBrowser) {
+      throw new Error('OCR requires browser environment')
+    }
+
+    if (!diagnostics.environment.hasWorker) {
+      throw new Error('Browser does not support Web Workers')
+    }
+
+    if (!diagnostics.tesseract.imported) {
+      throw new Error('Tesseract.js library not properly imported')
+    }
+
+    if (!diagnostics.tesseract.createWorker) {
+      throw new Error('Tesseract.createWorker function not available')
+    }
+
+    // Attempt multiple initialization strategies
+    const strategies = [
+      { name: 'minimal', config: {} },
+      { name: 'legacy', config: { cacheMethod: 'none' } },
+      { name: 'basic', config: { logger: false } },
+      { name: 'simple', config: { cachePath: './' } }
+    ]
+
+    let lastError = null
+
+    for (const strategy of strategies) {
+      try {
+        console.log(`=== TRYING STRATEGY: ${strategy.name.toUpperCase()} ===`)
+        console.log('Strategy config:', strategy.config)
+
+        // Create worker with current strategy
+        this.worker = await this._createWorkerWithStrategy(strategy)
+        console.log(`Worker created successfully with ${strategy.name} strategy`)
+
+        // Try language loading with detailed logging
+        console.log('Loading English language...')
+        const loadStart = performance.now()
+        await this._withTimeout(
+          this.worker.loadLanguage('eng'),
+          25000,
+          `Language loading timeout (${strategy.name})`
+        )
+        const loadTime = performance.now() - loadStart
+        console.log(`Language loaded in ${loadTime}ms`)
+
+        // Try worker initialization with detailed logging
+        console.log('Initializing worker...')
+        const initStart = performance.now()
+        await this._withTimeout(
+          this.worker.initialize('eng'),
+          20000,
+          `Worker initialization timeout (${strategy.name})`
+        )
+        const initTime = performance.now() - initStart
+        console.log(`Worker initialized in ${initTime}ms`)
+
+        console.log(`=== OCR INITIALIZATION SUCCESS (${strategy.name}) ===`)
+        this.isInitialized = true
+        return // Success!
+
+      } catch (error) {
+        console.error(`Strategy ${strategy.name} failed:`, {
+          error: error.message,
+          stack: error.stack,
+          strategy: strategy.name,
+          config: strategy.config
+        })
+
+        lastError = error
+
+        // Cleanup failed worker
+        await this._cleanupWorker()
+
+        // Continue to next strategy unless it's the last one
+        if (strategy !== strategies[strategies.length - 1]) {
+          console.log(`Trying next strategy after ${strategy.name} failure...`)
+          continue
         }
       }
     }
 
-    // Try creating worker with timeout
-    return this._withTimeout(
-      Tesseract.createWorker('eng', 1, workerOptions),
-      25000,
-      'Worker creation timeout'
+    // All strategies failed
+    const finalError = new Error(
+      `OCR initialization failed with all strategies. Last error: ${lastError?.message}. ` +
+      `Environment: ${diagnostics.environment.userAgent}. ` +
+      `Check console for detailed diagnostics.`
     )
+
+    console.error('=== ALL OCR STRATEGIES FAILED ===', {
+      finalError: finalError.message,
+      lastError: lastError?.message,
+      diagnostics: diagnostics,
+      strategiesTried: strategies.map(s => s.name)
+    })
+
+    throw finalError
+  }
+
+  async _createWorkerWithStrategy(strategy) {
+    console.log(`Creating worker with strategy: ${strategy.name}`)
+
+    const baseOptions = {
+      logger: (info) => {
+        console.log(`OCR Worker [${strategy.name}]:`, info)
+        if (info.status && info.progress) {
+          console.log(`OCR Progress [${strategy.name}]: ${info.status} ${Math.round(info.progress * 100)}%`)
+        }
+      }
+    }
+
+    const workerOptions = { ...baseOptions, ...strategy.config }
+
+    console.log(`Worker options for ${strategy.name}:`, workerOptions)
+
+    // Different worker creation approaches for different strategies
+    try {
+      let worker
+
+      switch (strategy.name) {
+        case 'minimal':
+          // Simplest possible worker creation
+          worker = await this._withTimeout(
+            Tesseract.createWorker('eng'),
+            30000,
+            `Minimal worker creation timeout`
+          )
+          break
+
+        case 'legacy':
+          // Legacy approach without language pre-loading
+          worker = await this._withTimeout(
+            Tesseract.createWorker(workerOptions),
+            30000,
+            `Legacy worker creation timeout`
+          )
+          break
+
+        case 'basic':
+          // Basic approach with options
+          worker = await this._withTimeout(
+            Tesseract.createWorker('eng', 1, workerOptions),
+            30000,
+            `Basic worker creation timeout`
+          )
+          break
+
+        case 'simple':
+          // Simple approach with custom options
+          worker = await this._withTimeout(
+            Tesseract.createWorker(workerOptions),
+            30000,
+            `Simple worker creation timeout`
+          )
+          break
+
+        default:
+          // Default fallback
+          worker = await this._withTimeout(
+            Tesseract.createWorker(workerOptions),
+            30000,
+            `Default worker creation timeout`
+          )
+      }
+
+      console.log(`Worker created successfully with ${strategy.name} strategy`)
+      return worker
+
+    } catch (error) {
+      console.error(`Worker creation failed for strategy ${strategy.name}:`, error)
+      throw new Error(`Worker creation failed (${strategy.name}): ${error.message}`)
+    }
   }
 
   async _withTimeout(promise, ms, errorMessage) {

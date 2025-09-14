@@ -447,6 +447,16 @@ export default function Home() {
                 <span className="hidden lg:inline">Search</span>
               </button>
 
+              {/* Settings Button */}
+              <button
+                onClick={() => navigate('/settings')}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                title="Settings"
+              >
+                <Settings size={18} />
+                <span className="hidden lg:inline">Settings</span>
+              </button>
+
               {/* Notion Sync Status */}
               <NotionSyncStatus className="hidden sm:flex" />
 

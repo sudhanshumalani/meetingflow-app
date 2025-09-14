@@ -39,7 +39,8 @@ export class OCRService {
 
   setUserApiKey(apiKey) {
     this.userApiKey = apiKey?.trim() || null
-    console.log('OCR.space API key', this.userApiKey ? 'configured' : 'removed')
+    console.log('OCR.space API key', this.userApiKey ? `configured: ${this.userApiKey.substring(0, 8)}...` : 'removed')
+    console.log('OCR service userApiKey is now:', this.userApiKey ? 'set' : 'null')
   }
 
   async extractText(imageFile, options = {}) {
@@ -48,6 +49,12 @@ export class OCRService {
     try {
       onProgress(5)
       console.log('Starting OCR extraction with multi-tier approach...')
+      console.log('Current OCR capabilities:', {
+        textDetector: 'TextDetector' in window,
+        ocrSpace: !!this.userApiKey,
+        tesseract: !!this.tesseractWorker,
+        apiKeyLength: this.userApiKey ? this.userApiKey.length : 0
+      })
 
       // Tier 1: Try experimental TextDetector API (Chrome only, experimental)
       try {
@@ -67,7 +74,7 @@ export class OCRService {
       // Tier 2: Try OCR.space with user API key
       if (this.userApiKey) {
         try {
-          console.log('Attempting OCR.space with user API key...')
+          console.log('Attempting OCR.space with user API key:', this.userApiKey.substring(0, 8) + '...')
           onProgress(25)
           const result = await this._extractWithOCRSpace(imageFile, onProgress)
           if (result && result.success) {
@@ -75,8 +82,11 @@ export class OCRService {
             return result
           }
         } catch (error) {
-          console.log('OCR.space API failed:', error.message)
+          console.error('OCR.space API failed with error:', error)
+          console.error('Full error details:', error.message)
         }
+      } else {
+        console.log('Skipping OCR.space - no API key configured')
       }
 
       // Tier 3: Try Tesseract.js fallback
@@ -144,6 +154,8 @@ export class OCRService {
 
   async _extractWithOCRSpace(imageFile, onProgress) {
     try {
+      console.log('OCR.space: Starting API call with file:', imageFile.name, 'size:', imageFile.size)
+
       // Prepare form data for OCR.space API
       const formData = new FormData()
       formData.append('apikey', this.userApiKey)
@@ -157,17 +169,24 @@ export class OCRService {
 
       onProgress(35)
 
+      console.log('OCR.space: Sending request to:', this.ocrSpaceUrl)
+
       // Make API call to OCR.space
       const response = await fetch(this.ocrSpaceUrl, {
         method: 'POST',
         body: formData
       })
 
+      console.log('OCR.space: Response status:', response.status)
+
       if (!response.ok) {
-        throw new Error(`OCR.space API error: ${response.status}`)
+        const errorText = await response.text()
+        console.error('OCR.space: API error response:', errorText)
+        throw new Error(`OCR.space API error: ${response.status} - ${errorText}`)
       }
 
       const result = await response.json()
+      console.log('OCR.space: API result:', result)
       onProgress(50)
 
       if (!result.IsErroredOnProcessing && result.ParsedResults && result.ParsedResults.length > 0) {
@@ -193,11 +212,14 @@ export class OCRService {
 
       } else {
         const errorMessage = result.ErrorMessage || result.ParsedResults?.[0]?.ErrorMessage || 'Unknown OCR.space error'
+        console.error('OCR.space: Processing failed:', errorMessage)
+        console.error('OCR.space: Full result object:', JSON.stringify(result, null, 2))
         throw new Error(`OCR.space processing failed: ${errorMessage}`)
       }
 
     } catch (error) {
-      throw new Error(`OCR.space failed: ${error.message}`)
+      console.error('OCR.space: Exception in _extractWithOCRSpace:', error)
+      throw error // Don't wrap the error again
     }
   }
 

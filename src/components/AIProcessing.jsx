@@ -1,14 +1,13 @@
 import React, { useState, useRef } from 'react'
-import { 
-  Sparkles, 
-  FileImage, 
-  Upload, 
-  CheckCircle, 
-  XCircle, 
+import {
+  Sparkles,
+  FileImage,
+  Upload,
+  CheckCircle,
+  XCircle,
   AlertCircle,
   Zap,
   Eye,
-  Brain,
   TrendingUp,
   MessageSquare,
   Target,
@@ -26,7 +25,7 @@ export function AIProcessingStatus({ isProcessing, stage, progress = 0 }) {
     'ocr': { icon: Eye, label: 'Reading Image' },
     'extraction': { icon: Target, label: 'Extracting Actions' },
     'sentiment': { icon: MessageSquare, label: 'Analyzing Sentiment' },
-    'insights': { icon: Brain, label: 'Generating Insights' },
+    'insights': { icon: Sparkles, label: 'Generating Insights' },
     'notifications': { icon: Sparkles, label: 'Creating Notifications' }
   }
   
@@ -386,7 +385,7 @@ export function AIInsightsDisplay({ insights, onActionClick }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Brain size={20} className="text-purple-600" />
+        <Sparkles size={20} className="text-purple-600" />
         <h3 className="font-semibold text-gray-900">AI Relationship Insights</h3>
       </div>
       

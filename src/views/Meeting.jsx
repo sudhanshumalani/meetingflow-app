@@ -20,7 +20,6 @@ import {
   Sparkles,
   Grid3X3,
   Target,
-  Brain,
   Zap,
   Eye,
   Edit3
@@ -690,7 +689,7 @@ export default function Meeting() {
               {/* AI Processing Status */}
               {isAIProcessing && (
                 <div className="flex items-center gap-2 text-purple-600">
-                  <Brain size={16} className="animate-pulse" />
+                  <Sparkles size={16} className="animate-pulse" />
                   <span className="text-sm">AI Processing...</span>
                 </div>
               )}

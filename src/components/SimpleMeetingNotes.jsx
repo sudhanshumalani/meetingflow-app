@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Edit3, Save, Camera, Upload, AlertCircle, CheckCircle, Loader2 } from 'lucide-react'
+import { Edit3, Save, Camera, Upload, AlertCircle, CheckCircle, Loader2, Sparkles } from 'lucide-react'
 import { extractTextFromImage, processWithClaude, setOCRApiKey, setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
 
 export default function SimpleMeetingNotes() {
@@ -276,7 +276,7 @@ export default function SimpleMeetingNotes() {
       {claudeResult && (
         <div className="bg-white rounded-lg shadow-sm border p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Brain className="w-5 h-5 text-purple-600" />
+            <Sparkles className="w-5 h-5 text-purple-600" />
             AI Analysis
           </h2>
 

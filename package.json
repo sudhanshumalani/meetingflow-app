@@ -1,0 +1,50 @@
+{
+  "name": "meetingflow-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:pwa": "vite build && echo 'PWA build complete! Deploy the dist/ folder to your hosting service.'",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "serve": "vite preview --host",
+    "deploy:preview": "npm run build && npm run preview",
+    "build:netlify": "npm run build:pwa && echo 'Ready for Netlify! Drag and drop the dist/ folder to netlify.com/drop'",
+    "build:vercel": "vite build --mode production && echo 'Ready for Vercel deployment!'",
+    "deploy:netlify": "npm run build:netlify",
+    "deploy:vercel": "npm run build:vercel && vercel --prod",
+    "vercel:dev": "vercel dev",
+    "vercel:deploy": "vercel --prod",
+    "postbuild": "echo 'Build completed successfully for production deployment'"
+  },
+  "dependencies": {
+    "@notionhq/client": "^5.0.0",
+    "date-fns": "^4.1.0",
+    "localforage": "^1.10.0",
+    "lucide-react": "^0.544.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-dropzone": "^14.3.8",
+    "react-router-dom": "^7.9.1",
+    "react-webcam": "^7.2.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.33.0",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.33.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.3.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "vite": "^7.1.2",
+    "vite-plugin-pwa": "^1.0.3",
+    "workbox-window": "^7.3.0"
+  }
+}

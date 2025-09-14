@@ -349,42 +349,44 @@ export default function Home() {
         navigation={mobileNavItems}
       />
 
-      {/* Mobile-Optimized Header */}
-      <MobileHeader
-        title="MeetingFlow"
-        subtitle="Your intelligent meeting companion"
-        onMenuClick={() => setIsMobileNavOpen(true)}
-        actions={
-          <>
-            {/* Search Button */}
-            <button
-              onClick={() => setIsGlobalSearchOpen(true)}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors touch-target"
-              title="Search (Ctrl+K)"
-            >
-              <Search size={20} />
-            </button>
+      {/* Mobile-Optimized Header - Hidden on Desktop */}
+      <div className="md:hidden">
+        <MobileHeader
+          title="MeetingFlow"
+          subtitle="Your intelligent meeting companion"
+          onMenuClick={() => setIsMobileNavOpen(true)}
+          actions={
+            <>
+              {/* Search Button */}
+              <button
+                onClick={() => setIsGlobalSearchOpen(true)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors touch-target"
+                title="Search (Ctrl+K)"
+              >
+                <Search size={20} />
+              </button>
 
-            {/* Notifications Button */}
-            <button
-              onClick={() => setIsNotificationCenterOpen(true)}
-              className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors touch-target"
-              title="Notifications (Ctrl+N)"
-            >
-              {notifications.some(n => n.priority === 'high' && !n.read) ? (
-                <BellDot className="text-red-600" size={20} />
-              ) : (
-                <Bell className="text-gray-600" size={20} />
-              )}
-              {notifications.filter(n => !n.read).length > 0 && (
-                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                  {notifications.filter(n => !n.read).length}
-                </span>
-              )}
-            </button>
-          </>
-        }
-      />
+              {/* Notifications Button */}
+              <button
+                onClick={() => setIsNotificationCenterOpen(true)}
+                className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors touch-target"
+                title="Notifications (Ctrl+N)"
+              >
+                {notifications.some(n => n.priority === 'high' && !n.read) ? (
+                  <BellDot className="text-red-600" size={20} />
+                ) : (
+                  <Bell className="text-gray-600" size={20} />
+                )}
+                {notifications.filter(n => !n.read).length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                    {notifications.filter(n => !n.read).length}
+                  </span>
+                )}
+              </button>
+            </>
+          }
+        />
+      </div>
       
       {/* Mobile Tabs */}
       <div className="bg-white border-b sticky top-16 z-20 md:hidden">

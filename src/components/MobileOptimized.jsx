@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { 
+import {
   Menu,
   X,
   ChevronDown,
@@ -10,6 +10,7 @@ import {
   MoreVertical,
   ArrowUp,
   ArrowDown,
+  ArrowLeft,
   Maximize2,
   Minimize2
 } from 'lucide-react'
@@ -84,12 +85,21 @@ export function MobileNavDrawer({ isOpen, onClose, navigation }) {
 }
 
 // Mobile-Optimized Header
-export function MobileHeader({ title, subtitle, actions, onMenuClick, showMenu = true }) {
+export function MobileHeader({ title, subtitle, actions, onMenuClick, onBack, showMenu = true }) {
   return (
     <header className="bg-white shadow-sm border-b sticky top-0 z-30">
       <div className="flex items-center justify-between p-4">
         <div className="flex items-center gap-3 flex-1 min-w-0">
-          {showMenu && (
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="p-2 hover:bg-gray-100 rounded-lg touch-target"
+              aria-label="Go back"
+            >
+              <ArrowLeft size={20} />
+            </button>
+          )}
+          {showMenu && !onBack && (
             <button
               onClick={onMenuClick}
               className="p-2 hover:bg-gray-100 rounded-lg touch-target md:hidden"

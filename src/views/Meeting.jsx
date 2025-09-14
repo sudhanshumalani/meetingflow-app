@@ -420,24 +420,34 @@ export default function Meeting() {
   
   const populateNotesFromAI = async (text) => {
     setAiProcessingStage('extraction')
-    
+
     // Use AI to extract different types of content
     const actionItemsResult = await aiCoordinator.actionItemExtractor.extractFromMeetingContent(text)
-    
-    // Smart population based on content analysis
+
+    // Smart population based on content analysis for 2-section structure
     const lines = text.split('\n').filter(line => line.trim())
-    const sections = {
-      agenda: lines.filter(line => /^[\d•-]\s/.test(line.trim())),
-      decisions: lines.filter(line => /decision|decided|agree|approved/i.test(line)),
-      concerns: lines.filter(line => /concern|issue|problem|risk|blocker/i.test(line)),
-      actions: actionItemsResult.actionItems?.map(item => item.title) || []
-    }
-    
+
+    // Categorize content into discussion points and action items
+    const actionLines = lines.filter(line =>
+      /^[\d•-]\s/.test(line.trim()) ||
+      /action|task|todo|follow.?up|next.?step/i.test(line)
+    )
+
+    const discussionLines = lines.filter(line =>
+      !/^[\d•-]\s/.test(line.trim()) &&
+      !/action|task|todo|follow.?up|next.?step/i.test(line) &&
+      line.trim().length > 5
+    )
+
+    // Format action items properly
+    const formattedActions = [
+      ...actionLines.map(line => `• ${line.trim()}`),
+      ...(actionItemsResult.actionItems?.map(item => `• ${item.title}`) || [])
+    ]
+
     setDigitalNotes(prev => ({
-      topLeft: prev.topLeft || sections.agenda.join('\n'),
-      topRight: prev.topRight || sections.decisions.join('\n'),
-      bottomLeft: prev.bottomLeft || sections.concerns.join('\n'),
-      bottomRight: prev.bottomRight || sections.actions.join('\n')
+      keyDiscussionPoints: prev.keyDiscussionPoints || discussionLines.join('\n'),
+      actionItems: prev.actionItems || formattedActions.join('\n')
     }))
   }
 

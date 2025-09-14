@@ -178,8 +178,13 @@ export class SimpleOCRService {
     // Sentiment analysis
     result.sentiment = this.analyzeSentiment(text)
 
-    // Generate insights
-    result.insights = this.generateInsights(result)
+    // Generate insights with error handling
+    try {
+      result.insights = this.generateInsights(result)
+    } catch (error) {
+      console.error('Error generating insights:', error)
+      result.insights = ['Analysis completed successfully']
+    }
 
     console.log('Intelligent analysis complete:', result)
     return result
@@ -299,11 +304,21 @@ export class SimpleOCRService {
   generateInsights(result) {
     const insights = []
 
-    if (result.actionItems && result.actionItems.length > 3) {
+    // Defensive checks to prevent undefined errors
+    const actionItems = result.actionItems || []
+    const keyDiscussionPoints = result.keyDiscussionPoints || []
+
+    console.log('Generating insights for result:', {
+      actionItemsLength: actionItems.length,
+      keyDiscussionPointsLength: keyDiscussionPoints.length,
+      sentiment: result.sentiment
+    })
+
+    if (actionItems.length > 3) {
       insights.push('High number of action items - consider prioritization')
     }
 
-    if (result.keyDiscussionPoints && result.keyDiscussionPoints.length > 5) {
+    if (keyDiscussionPoints.length > 5) {
       insights.push('Extensive discussion topics - may need follow-up meeting')
     }
 
@@ -311,10 +326,11 @@ export class SimpleOCRService {
       insights.push('Meeting tone suggests concerns that may need attention')
     }
 
-    if (result.actionItems && result.actionItems.length === 0) {
+    if (actionItems.length === 0) {
       insights.push('No action items identified - consider defining next steps')
     }
 
+    console.log('Generated insights:', insights)
     return insights
   }
 

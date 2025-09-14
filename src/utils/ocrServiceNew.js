@@ -299,16 +299,20 @@ export class SimpleOCRService {
   generateInsights(result) {
     const insights = []
 
-    if (result.actionItems.length > 3) {
+    if (result.actionItems && result.actionItems.length > 3) {
       insights.push('High number of action items - consider prioritization')
     }
 
-    if (result.challenges.length > result.decisions.length) {
-      insights.push('More challenges than decisions - may need follow-up meeting')
+    if (result.keyDiscussionPoints && result.keyDiscussionPoints.length > 5) {
+      insights.push('Extensive discussion topics - may need follow-up meeting')
     }
 
     if (result.sentiment === 'negative') {
       insights.push('Meeting tone suggests concerns that may need attention')
+    }
+
+    if (result.actionItems && result.actionItems.length === 0) {
+      insights.push('No action items identified - consider defining next steps')
     }
 
     return insights

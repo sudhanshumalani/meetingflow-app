@@ -114,30 +114,395 @@ export class SimpleOCRService {
 
   // Claude AI integration for processing extracted text
   async processWithClaude(text, meetingContext = {}) {
-    if (!this.claudeApiKey) {
-      console.log('No Claude API key configured')
-      return null
-    }
-
     console.log('Processing text with Claude AI...')
     console.log('Text length:', text.length)
     console.log('Meeting context:', meetingContext)
 
-    // Try the real Claude API first
-    try {
-      console.log('🤖 Attempting to call real Claude API...')
-      const result = await this.callClaudeAPI(text, meetingContext)
-      if (result) {
-        console.log('✅ Successfully got response from Claude API')
-        return result
+    // Check if we have a Claude API key configured
+    if (this.claudeApiKey) {
+      console.log('🤖 Claude API key found - offering Copy-Paste workflow...')
+
+      // Show copy-paste workflow
+      const useClaudeWebInterface = await this.offerClaudeWebWorkflow(text, meetingContext)
+      if (useClaudeWebInterface) {
+        return useClaudeWebInterface
       }
-    } catch (error) {
-      console.warn('⚠️ Claude API call failed (likely CORS):', error.message)
-      console.log('📝 Falling back to local simulation')
     }
 
-    // Fallback to local simulation
-    return this.simulateClaudeProcessing(text, meetingContext)
+    console.log('📝 Using enhanced local AI simulation...')
+    // Use enhanced local simulation
+    return this.enhancedClaudeSimulation(text, meetingContext)
+  }
+
+  // Copy-Paste workflow with Claude web interface
+  async offerClaudeWebWorkflow(text, meetingContext = {}) {
+    return new Promise((resolve) => {
+      // Create a modal overlay
+      const modal = document.createElement('div')
+      modal.style.cssText = `
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.8); z-index: 10000; display: flex;
+        align-items: center; justify-content: center; font-family: system-ui;
+      `
+
+      const content = document.createElement('div')
+      content.style.cssText = `
+        background: white; padding: 30px; border-radius: 12px; max-width: 600px;
+        max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+      `
+
+      const prompt = `I will provide you with rough meeting notes. Your task is to carefully review them and produce an organized output with the following three sections:
+
+**Summary** – Write a concise overview (3–5 sentences) capturing the overall purpose of the meeting and the main outcomes.
+
+**Key Discussion Points** – List the most important topics discussed during the meeting in bullet points. Group related points together if appropriate.
+
+**Action Items** – Provide a clear, numbered list of action items. Each action item should specify:
+• What needs to be done
+• Who is responsible (if identifiable from the notes)
+• Any deadlines or timelines (if mentioned or implied)
+
+Format the response cleanly with headers for each section. Do not include extraneous information or rephrase in a vague way—keep it clear, concise, and actionable.
+
+Meeting Notes:
+"""${text}"""
+
+Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
+
+      content.innerHTML = `
+        <h2 style="margin-top: 0; color: #333;">🤖 Use Claude Web Interface</h2>
+        <p style="color: #666; line-height: 1.5;">
+          Since direct API calls aren't available on GitHub Pages, let's use Claude's web interface for the best results:
+        </p>
+
+        <div style="margin: 20px 0;">
+          <label style="display: block; font-weight: bold; margin-bottom: 8px;">
+            Step 1: Copy this prompt to Claude.ai
+          </label>
+          <textarea readonly style="width: 100%; height: 200px; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-family: monospace; font-size: 12px;">${prompt}</textarea>
+          <button id="copyPrompt" style="margin-top: 8px; padding: 8px 16px; background: #6366f1; color: white; border: none; border-radius: 6px; cursor: pointer;">
+            📋 Copy Prompt
+          </button>
+        </div>
+
+        <div style="margin: 20px 0;">
+          <p style="color: #666; margin: 10px 0;">
+            <strong>Step 2:</strong> Go to <a href="https://claude.ai" target="_blank" style="color: #6366f1;">claude.ai</a> and paste the prompt
+          </p>
+          <p style="color: #666; margin: 10px 0;">
+            <strong>Step 3:</strong> Copy Claude's response and paste it below:
+          </p>
+          <textarea id="claudeResponse" placeholder="Paste Claude's response here..." style="width: 100%; height: 150px; padding: 10px; border: 1px solid #ddd; border-radius: 6px;"></textarea>
+        </div>
+
+        <div style="text-align: right; margin-top: 20px;">
+          <button id="cancel" style="padding: 10px 20px; margin-right: 10px; background: #6b7280; color: white; border: none; border-radius: 6px; cursor: pointer;">
+            Cancel
+          </button>
+          <button id="process" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer;">
+            ✨ Process Response
+          </button>
+        </div>
+      `
+
+      modal.appendChild(content)
+      document.body.appendChild(modal)
+
+      // Copy prompt button
+      content.querySelector('#copyPrompt').addEventListener('click', () => {
+        navigator.clipboard.writeText(prompt).then(() => {
+          const btn = content.querySelector('#copyPrompt')
+          btn.innerHTML = '✅ Copied!'
+          btn.style.background = '#10b981'
+          setTimeout(() => {
+            btn.innerHTML = '📋 Copy Prompt'
+            btn.style.background = '#6366f1'
+          }, 2000)
+        })
+      })
+
+      // Cancel button
+      content.querySelector('#cancel').addEventListener('click', () => {
+        document.body.removeChild(modal)
+        resolve(null)
+      })
+
+      // Process button
+      content.querySelector('#process').addEventListener('click', () => {
+        const response = content.querySelector('#claudeResponse').value.trim()
+        if (response) {
+          document.body.removeChild(modal)
+          const parsed = this.parseClaudeResponse(response)
+          resolve(parsed)
+        } else {
+          alert('Please paste Claude\'s response first!')
+        }
+      })
+
+      // Close on overlay click
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          document.body.removeChild(modal)
+          resolve(null)
+        }
+      })
+    })
+  }
+
+  // Parse Claude's response (handles both JSON and text formats)
+  parseClaudeResponse(response) {
+    console.log('📋 Parsing Claude response...')
+
+    // Try to parse as JSON first
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0])
+        if (parsed.summary && (parsed.keyDiscussionPoints || parsed.actionItems)) {
+          console.log('✅ Successfully parsed Claude JSON response')
+          return parsed
+        }
+      }
+    } catch (e) {
+      console.log('📄 JSON parsing failed, trying text parsing...')
+    }
+
+    // Parse as structured text
+    return this.parseStructuredText(response)
+  }
+
+  // Parse structured text response from Claude
+  parseStructuredText(text) {
+    const result = {
+      summary: '',
+      keyDiscussionPoints: [],
+      actionItems: [],
+      sentiment: 'neutral'
+    }
+
+    const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0)
+    let currentSection = null
+
+    for (const line of lines) {
+      const lowerLine = line.toLowerCase()
+
+      // Identify sections
+      if (lowerLine.includes('summary')) {
+        currentSection = 'summary'
+        continue
+      } else if (lowerLine.includes('key discussion') || lowerLine.includes('discussion points')) {
+        currentSection = 'keyDiscussionPoints'
+        continue
+      } else if (lowerLine.includes('action items') || lowerLine.includes('action item')) {
+        currentSection = 'actionItems'
+        continue
+      }
+
+      // Skip headers and empty lines
+      if (line.startsWith('#') || line.startsWith('**') || line.length < 3) {
+        continue
+      }
+
+      // Add content to appropriate section
+      if (currentSection === 'summary') {
+        result.summary += (result.summary ? ' ' : '') + line
+      } else if (currentSection === 'keyDiscussionPoints') {
+        const cleanLine = line.replace(/^[-•*]\s*/, '').replace(/^\d+\.\s*/, '')
+        if (cleanLine.length > 3) {
+          result.keyDiscussionPoints.push(cleanLine)
+        }
+      } else if (currentSection === 'actionItems') {
+        const cleanLine = line.replace(/^[-•*]\s*/, '').replace(/^\d+\.\s*/, '')
+        if (cleanLine.length > 3) {
+          // Try to extract assignee and deadline from the action item
+          const actionItem = {
+            task: cleanLine,
+            assignee: this.extractAssignee(cleanLine) || 'Unassigned',
+            priority: this.determinePriority(cleanLine.toLowerCase()),
+            dueDate: this.extractDueDate(cleanLine)
+          }
+          result.actionItems.push(actionItem)
+        }
+      }
+    }
+
+    // Analyze sentiment from summary
+    if (result.summary) {
+      result.sentiment = this.analyzeSentiment(result.summary)
+    }
+
+    console.log('✅ Successfully parsed Claude text response:', result)
+    return result
+  }
+
+  // Enhanced Claude AI simulation with much better analysis
+  enhancedClaudeSimulation(text, meetingContext = {}) {
+    console.log('🧠 Running ENHANCED AI simulation with advanced NLP...')
+    console.log('📝 Input text:', text)
+
+    const lines = text.split('\n').filter(line => line.trim().length > 0)
+    console.log('📄 Processing', lines.length, 'lines')
+
+    const result = {
+      summary: '',
+      keyDiscussionPoints: [],
+      actionItems: [],
+      sentiment: 'neutral'
+    }
+
+    // Advanced analysis
+    this.enhancedTextAnalysis(lines, result)
+
+    // Generate professional summary
+    result.summary = this.generateProfessionalSummary(lines, result)
+
+    // Analyze sentiment
+    result.sentiment = this.analyzeSentiment(text)
+
+    console.log('✅ Enhanced AI analysis complete:', result)
+    return result
+  }
+
+  // Advanced text analysis with better categorization
+  enhancedTextAnalysis(lines, result) {
+    const topics = new Map()
+    const decisions = []
+    const concerns = []
+
+    lines.forEach((line, index) => {
+      const lowerLine = line.toLowerCase()
+      console.log(`🔍 Enhanced analysis line ${index + 1}: "${line}"`)
+
+      // Enhanced action item detection
+      if (this.isEnhancedActionItem(lowerLine, line)) {
+        const actionItem = {
+          task: line.trim(),
+          assignee: this.extractAssignee(line) || 'Unassigned',
+          priority: this.determinePriority(lowerLine),
+          dueDate: this.extractDueDate(line) || null
+        }
+        result.actionItems.push(actionItem)
+        console.log('✅ ENHANCED ACTION ITEM:', actionItem)
+      }
+      // Decision detection
+      else if (this.isDecisionPoint(lowerLine)) {
+        decisions.push(line.trim())
+        console.log('🎯 DECISION DETECTED:', line.trim())
+      }
+      // Concern/challenge detection
+      else if (this.isConcernPoint(lowerLine)) {
+        concerns.push(line.trim())
+        console.log('⚠️ CONCERN DETECTED:', line.trim())
+      }
+      // Topic extraction
+      else if (line.trim().length > 10) {
+        const topic = this.extractTopicFromLine(line)
+        if (topic) {
+          topics.set(topic, (topics.get(topic) || 0) + 1)
+          result.keyDiscussionPoints.push(line.trim())
+          console.log('💬 DISCUSSION POINT:', line.trim())
+        }
+      }
+    })
+
+    // Add decisions and concerns to discussion points
+    if (decisions.length > 0) {
+      result.keyDiscussionPoints.push(...decisions.map(d => `Decision: ${d}`))
+    }
+    if (concerns.length > 0) {
+      result.keyDiscussionPoints.push(...concerns.map(c => `Concern: ${c}`))
+    }
+
+    // Remove duplicates and sort by importance
+    result.keyDiscussionPoints = [...new Set(result.keyDiscussionPoints)]
+      .sort((a, b) => b.length - a.length) // Longer entries tend to be more detailed
+      .slice(0, 10) // Limit to top 10 points
+  }
+
+  // Enhanced action item detection
+  isEnhancedActionItem(lowerText, originalText) {
+    const strongActionIndicators = [
+      'will ', 'should ', 'must ', 'need to ', 'has to ', 'responsible for',
+      'assigned to', 'follow up', 'next step', 'action item', 'todo',
+      'deliverable', 'deadline', 'by ', 'due ', 'complete', 'finish',
+      'send ', 'email ', 'call ', 'contact ', 'schedule ', 'book ',
+      'prepare ', 'draft ', 'review ', 'update ', 'create ', 'implement'
+    ]
+
+    const actionPatterns = [
+      /^\s*[\d•*-]\s+.*(?:will|should|must|need)/i,
+      /(?:will|should|must)\s+(?:be\s+)?(?:responsible|assigned|tasked)/i,
+      /(?:by|due)\s+(?:monday|tuesday|wednesday|thursday|friday)/i,
+      /(?:action|task|todo|deliverable):/i
+    ]
+
+    const hasStrongIndicator = strongActionIndicators.some(indicator =>
+      lowerText.includes(indicator)
+    )
+
+    const hasActionPattern = actionPatterns.some(pattern =>
+      pattern.test(originalText)
+    )
+
+    const hasPersonAssignment = /\b[A-Z][a-z]+\s+(?:will|should|to)\b/.test(originalText)
+
+    return hasStrongIndicator || hasActionPattern || hasPersonAssignment
+  }
+
+  // Detect decision points
+  isDecisionPoint(text) {
+    const decisionKeywords = [
+      'decided', 'agreed', 'approved', 'resolved', 'conclusion',
+      'final decision', 'determined', 'move forward', 'go with',
+      'selected', 'chosen', 'confirmed'
+    ]
+    return decisionKeywords.some(keyword => text.includes(keyword))
+  }
+
+  // Detect concerns/challenges
+  isConcernPoint(text) {
+    const concernKeywords = [
+      'concern', 'issue', 'problem', 'challenge', 'blocker', 'risk',
+      'difficulty', 'obstacle', 'worry', 'hesitation', 'question about'
+    ]
+    return concernKeywords.some(keyword => text.includes(keyword))
+  }
+
+  // Extract main topic from a line
+  extractTopicFromLine(line) {
+    // Remove common filler words and get key phrases
+    const words = line.toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter(word => word.length > 3)
+      .filter(word => !['this', 'that', 'with', 'they', 'were', 'been', 'have', 'will', 'from', 'about'].includes(word))
+
+    return words.slice(0, 3).join(' ')
+  }
+
+  // Generate professional summary
+  generateProfessionalSummary(lines, result) {
+    const totalLines = lines.length
+    const actionCount = result.actionItems.length
+    const discussionCount = result.keyDiscussionPoints.length
+
+    const topics = this.extractMainTopics(lines.join(' '))
+    const mainTopic = topics[0] || 'general business'
+
+    const summaryTemplates = [
+      `This meeting focused on ${mainTopic} with ${totalLines} key points discussed. The team covered ${discussionCount} main topics and identified ${actionCount} action items for follow-up. The discussion included both strategic planning and operational considerations to move forward effectively.`,
+
+      `The meeting addressed ${mainTopic} through comprehensive discussion of ${discussionCount} key areas. Participants reviewed current status, identified challenges, and established ${actionCount} specific action items with clear ownership. The session concluded with defined next steps and timelines.`,
+
+      `This session centered on ${mainTopic} with detailed analysis of ${discussionCount} critical discussion points. The team made progress on key decisions and outlined ${actionCount} follow-up actions. The meeting effectively balanced strategic thinking with practical implementation planning.`
+    ]
+
+    // Select template based on content characteristics
+    let selectedTemplate = summaryTemplates[0]
+    if (actionCount > 3) selectedTemplate = summaryTemplates[1]
+    if (discussionCount > 5) selectedTemplate = summaryTemplates[2]
+
+    return selectedTemplate
   }
 
   // Simulate Claude AI processing with intelligent text analysis
@@ -346,52 +711,10 @@ export class SimpleOCRService {
     return insights
   }
 
-  // Claude AI via serverless proxy (solves CORS issues)
+  // Legacy Claude API function - no longer needed with GitHub Pages approach
   async callClaudeAPI(text, meetingContext = {}) {
-    try {
-      console.log('🚀 Calling Claude API via serverless proxy...')
-
-      // Determine the correct API endpoint based on environment
-      const isLocal = window.location.hostname === 'localhost'
-      const baseUrl = isLocal
-        ? 'http://localhost:3000' // For local development
-        : window.location.origin // For production (Vercel deployment)
-
-      const proxyUrl = `${baseUrl}/api/claude-proxy`
-      console.log(`📡 Using proxy endpoint: ${proxyUrl}`)
-
-      const response = await fetch(proxyUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          text: text,
-          meetingContext: meetingContext,
-          apiKey: this.claudeApiKey
-        })
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-        throw new Error(`Proxy failed: ${response.status} - ${errorData.error || errorData.message}`)
-      }
-
-      const data = await response.json()
-
-      if (!data.success) {
-        throw new Error(`Proxy error: ${data.error || 'Unknown error'}`)
-      }
-
-      console.log('✅ Successfully got response from Claude via proxy')
-      console.log('📋 Claude response data:', data.data)
-
-      return data.data
-
-    } catch (error) {
-      console.error('❌ Claude proxy call failed:', error)
-      throw error
-    }
+    // This method is deprecated for GitHub Pages deployment
+    throw new Error('Direct Claude API calls not supported on GitHub Pages')
   }
 }
 

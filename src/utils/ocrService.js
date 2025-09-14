@@ -473,38 +473,48 @@ class FallbackOCRService {
   }
 
   async extractText(imageFile, options = {}) {
-    const { onProgress = () => {} } = options
+    const { onProgress = () => {}, includeEnablePrompt = false } = options
 
     console.log('=== FALLBACK OCR SERVICE ACTIVATED ===')
-    console.log('Using fallback OCR service due to Tesseract.js failure')
+    console.log('Using fallback OCR service (OCR disabled by default to prevent hanging)')
 
-    // Simulate progress
+    // Quick progress simulation
     onProgress(25)
-    await new Promise(resolve => setTimeout(resolve, 500))
-    onProgress(50)
-    await new Promise(resolve => setTimeout(resolve, 500))
-    onProgress(75)
-    await new Promise(resolve => setTimeout(resolve, 500))
-    onProgress(90)
     await new Promise(resolve => setTimeout(resolve, 200))
+    onProgress(50)
+    await new Promise(resolve => setTimeout(resolve, 200))
+    onProgress(75)
+    await new Promise(resolve => setTimeout(resolve, 200))
+    onProgress(90)
+    await new Promise(resolve => setTimeout(resolve, 100))
 
     // Return a helpful message for the user
-    const fallbackText = `OCR Service Notice:
+    const baseText = `📝 Manual Note Entry Mode
 
-The automatic text extraction service is currently experiencing technical difficulties. Please manually enter your meeting notes in the digital notes section.
+OCR (text extraction) is currently disabled to prevent the app from freezing.
 
-Key features still available:
+✅ All app features are fully functional:
 • Digital note-taking (4-quadrant format)
 • Meeting templates
 • Action item tracking
 • Meeting export options
+• Photo capture and storage
 
-We apologize for the inconvenience and are working to resolve this issue.
+💡 To try enabling OCR text extraction:
+• Look for the "Enable OCR" button in the interface
+• Note: This may cause slower performance or hanging
 
-File: ${imageFile.name}
-Size: ${(imageFile.size / 1024).toFixed(1)} KB
-Type: ${imageFile.type}
-`
+📎 File uploaded: ${imageFile.name}
+📊 Size: ${(imageFile.size / 1024).toFixed(1)} KB
+🎯 Type: ${imageFile.type}
+
+You can manually type your meeting notes in the Digital Notes section.`
+
+    const enablePromptText = includeEnablePrompt ? `
+
+🔧 Want to try OCR text extraction? Look for the "Enable OCR" button.` : ''
+
+    const fallbackText = baseText + enablePromptText
 
     onProgress(100)
 
@@ -539,33 +549,99 @@ Type: ${imageFile.type}
   }
 }
 
-// Enhanced OCR service with fallback
+// Enhanced OCR service with immediate fallback strategy
 class EnhancedOCRService {
   constructor() {
     this.primaryService = new OCRService()
     this.fallbackService = new FallbackOCRService()
-    this.usingFallback = false
+    // Start with fallback mode to avoid initialization issues
+    this.usingFallback = true
+    this.ocrEnabled = false
+    this.initializationAttempted = false
+  }
+
+  // Method to enable real OCR (user must explicitly request it)
+  async enableRealOCR() {
+    if (this.ocrEnabled) return { success: true, message: 'OCR already enabled' }
+
+    console.log('User requested to enable real OCR - attempting initialization...')
+
+    try {
+      // Set a very short timeout for initialization attempt
+      const initPromise = this.primaryService.initialize()
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('OCR initialization timeout - using fallback')), 10000) // 10 second timeout
+      })
+
+      await Promise.race([initPromise, timeoutPromise])
+
+      this.ocrEnabled = true
+      this.usingFallback = false
+      console.log('Real OCR successfully enabled!')
+
+      return {
+        success: true,
+        message: 'OCR successfully enabled! You can now extract text from images.'
+      }
+    } catch (error) {
+      console.warn('Failed to enable real OCR:', error.message)
+      this.usingFallback = true
+      this.ocrEnabled = false
+
+      return {
+        success: false,
+        message: `Could not enable OCR: ${error.message}. Using fallback service.`,
+        error: error.message
+      }
+    }
+  }
+
+  // Method to disable real OCR and use fallback
+  async disableRealOCR() {
+    this.usingFallback = true
+    this.ocrEnabled = false
+    await this.primaryService.cleanup()
+
+    return {
+      success: true,
+      message: 'Switched to fallback service. App will work without OCR.'
+    }
+  }
+
+  getStatus() {
+    return {
+      usingFallback: this.usingFallback,
+      ocrEnabled: this.ocrEnabled,
+      initializationAttempted: this.initializationAttempted,
+      canTryEnabling: !this.ocrEnabled
+    }
   }
 
   async extractText(imageFile, options = {}) {
-    if (this.usingFallback) {
-      return this.fallbackService.extractText(imageFile, options)
+    // Always use fallback unless user explicitly enabled OCR
+    if (this.usingFallback || !this.ocrEnabled) {
+      return this.fallbackService.extractText(imageFile, {
+        ...options,
+        includeEnablePrompt: !this.initializationAttempted
+      })
     }
 
     try {
       const result = await this.primaryService.extractText(imageFile, options)
 
-      // If primary service failed, switch to fallback
+      // If primary service failed, switch back to fallback
       if (!result.success) {
-        console.warn('Primary OCR failed, switching to fallback service')
+        console.warn('Primary OCR failed during processing, switching to fallback service')
         this.usingFallback = true
+        this.ocrEnabled = false
         return this.fallbackService.extractText(imageFile, options)
       }
 
       return result
     } catch (error) {
-      console.error('Primary OCR service error, using fallback:', error)
+      console.error('Primary OCR service error during processing, using fallback:', error)
       this.usingFallback = true
+      this.ocrEnabled = false
       return this.fallbackService.extractText(imageFile, options)
     }
   }
@@ -618,6 +694,19 @@ export const processImageForMeeting = async (imageFile, meetingContext, options 
       fileName: imageFile?.name || 'unknown'
     }
   }
+}
+
+// OCR control functions
+export const enableOCR = () => {
+  return enhancedOcrService.enableRealOCR()
+}
+
+export const disableOCR = () => {
+  return enhancedOcrService.disableRealOCR()
+}
+
+export const getOCRStatus = () => {
+  return enhancedOcrService.getStatus()
 }
 
 // Cleanup function for app shutdown

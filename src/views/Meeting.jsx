@@ -29,13 +29,14 @@ import { format } from 'date-fns'
 import { mockStakeholders, getCategoryDisplayName, STAKEHOLDER_CATEGORIES } from '../utils/mockData'
 import { getTemplateForCategory, getColorClasses, PRIORITY_LEVELS } from '../utils/meetingTemplates'
 import { processImageForMeeting, validateImageFile } from '../utils/ocrService'
-import { 
-  OCRImageUpload, 
-  AIProcessingStatus, 
-  AIInsightsDisplay, 
+import {
+  OCRImageUpload,
+  AIProcessingStatus,
+  AIInsightsDisplay,
   PredictiveNotificationsDisplay,
   AIProcessingSummary
 } from '../components/AIProcessing'
+import { OCRControls } from '../components/OCRControls'
 import { aiCoordinator } from '../utils/aiServices'
 import { 
   MobileHeader,
@@ -870,13 +871,16 @@ export default function Meeting() {
                   </div>
                 </div>
 
+                {/* OCR Controls */}
+                <OCRControls />
+
                 {/* AI-Powered OCR Upload */}
                 <div className="bg-white rounded-lg shadow-md p-6">
                   <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                     <Eye size={20} />
                     AI OCR Text Extraction
                   </h3>
-                  
+
                   <OCRImageUpload
                     onImageProcessed={processImageWithAI}
                     onError={(error) => console.error('OCR Error:', error)}

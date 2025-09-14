@@ -21,7 +21,10 @@ import {
   Tag,
   Calendar,
   Star,
-  Activity
+  Activity,
+  Eye,
+  Key,
+  Info
 } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 import {
@@ -32,6 +35,7 @@ import {
   getPriorityColor,
   getCategoryColor
 } from '../utils/stakeholderManager'
+import { setOCRApiKey, getOCRCapabilities } from '../utils/ocrService'
 
 export default function Settings() {
   const {
@@ -55,6 +59,27 @@ export default function Settings() {
   // Category management state
   const [showAddCategoryForm, setShowAddCategoryForm] = useState(false)
   const [editingCategory, setEditingCategory] = useState(null)
+
+  // OCR configuration state
+  const [ocrApiKey, setOcrApiKey] = useState(localStorage.getItem('ocrApiKey') || '')
+  const [ocrCapabilities, setOcrCapabilities] = useState(getOCRCapabilities())
+  const [ocrKeySaved, setOcrKeySaved] = useState(false)
+
+  // OCR configuration functions
+  const handleSaveOcrKey = () => {
+    localStorage.setItem('ocrApiKey', ocrApiKey)
+    setOCRApiKey(ocrApiKey)
+    setOcrCapabilities(getOCRCapabilities())
+    setOcrKeySaved(true)
+    setTimeout(() => setOcrKeySaved(false), 3000)
+  }
+
+  const handleClearOcrKey = () => {
+    setOcrApiKey('')
+    localStorage.removeItem('ocrApiKey')
+    setOCRApiKey('')
+    setOcrCapabilities(getOCRCapabilities())
+  }
 
   // Filter stakeholders based on search and filters
   const filteredStakeholders = stakeholders.filter(stakeholder => {
@@ -155,6 +180,19 @@ export default function Settings() {
               <div className="flex items-center gap-2">
                 <Tag className="w-4 h-4" />
                 Category Management
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('ocr')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'ocr'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Eye className="w-4 h-4" />
+                OCR Configuration
               </div>
             </button>
           </nav>
@@ -397,6 +435,199 @@ export default function Settings() {
                     />
                   ))
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* OCR Configuration Tab */}
+        {activeTab === 'ocr' && (
+          <div className="space-y-8">
+            {/* OCR Status Overview */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">OCR Text Extraction</h3>
+                  <p className="text-sm text-gray-600">Configure optical character recognition for better text extraction from images</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className={`w-3 h-3 rounded-full ${ocrCapabilities.ocrSpace ? 'bg-green-500' : ocrCapabilities.tesseract ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
+                  <span className="text-sm font-medium text-gray-700">
+                    {ocrCapabilities.ocrSpace ? 'High Quality' : ocrCapabilities.tesseract ? 'Basic Quality' : 'Manual Only'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className={`p-4 rounded-lg border-2 ${ocrCapabilities.textDetector ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`w-2 h-2 rounded-full ${ocrCapabilities.textDetector ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                    <h4 className="font-medium text-gray-900">Browser TextDetector</h4>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    {ocrCapabilities.textDetector ? 'Available (Experimental)' : 'Not supported in this browser'}
+                  </p>
+                </div>
+
+                <div className={`p-4 rounded-lg border-2 ${ocrCapabilities.ocrSpace ? 'border-green-200 bg-green-50' : 'border-yellow-200 bg-yellow-50'}`}>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`w-2 h-2 rounded-full ${ocrCapabilities.ocrSpace ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
+                    <h4 className="font-medium text-gray-900">OCR.space API</h4>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    {ocrCapabilities.ocrSpace ? 'Configured (Best Quality)' : 'API key required'}
+                  </p>
+                </div>
+
+                <div className={`p-4 rounded-lg border-2 ${ocrCapabilities.tesseract ? 'border-blue-200 bg-blue-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`w-2 h-2 rounded-full ${ocrCapabilities.tesseract ? 'bg-blue-500' : 'bg-gray-400'}`}></div>
+                    <h4 className="font-medium text-gray-900">Tesseract.js</h4>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    {ocrCapabilities.tesseract ? 'Ready (Fallback)' : 'Initializing...'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* OCR.space API Configuration */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">OCR.space API Configuration</h3>
+
+              <div className="space-y-4">
+                <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <h4 className="font-medium text-blue-900 mb-1">Get Your Free OCR.space API Key</h4>
+                    <p className="text-sm text-blue-800 mb-2">
+                      OCR.space provides high-quality text extraction with 25,000 free requests per month.
+                      Get your free API key at <a href="https://ocr.space/ocrapi" target="_blank" rel="noopener noreferrer" className="underline font-medium">ocr.space/ocrapi</a>
+                    </p>
+                    <ul className="text-xs text-blue-700 space-y-1">
+                      <li>• 99% accuracy, similar to Apple Photos</li>
+                      <li>• 25,000 requests/month free tier</li>
+                      <li>• Multiple OCR engines for best results</li>
+                      <li>• Support for 24+ languages</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="block text-sm font-medium text-gray-700">
+                    OCR.space API Key
+                  </label>
+                  <div className="flex gap-3">
+                    <div className="flex-1 relative">
+                      <Key className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
+                      <input
+                        type="text"
+                        value={ocrApiKey}
+                        onChange={(e) => setOcrApiKey(e.target.value)}
+                        placeholder="Enter your OCR.space API key"
+                        className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                    <button
+                      onClick={handleSaveOcrKey}
+                      disabled={!ocrApiKey.trim()}
+                      className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                        ocrKeySaved
+                          ? 'bg-green-600 text-white'
+                          : ocrApiKey.trim()
+                            ? 'bg-blue-600 text-white hover:bg-blue-700'
+                            : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                      }`}
+                    >
+                      {ocrKeySaved ? (
+                        <div className="flex items-center gap-2">
+                          <Check className="w-4 h-4" />
+                          Saved
+                        </div>
+                      ) : (
+                        'Save Key'
+                      )}
+                    </button>
+                    {ocrCapabilities.ocrSpace && (
+                      <button
+                        onClick={handleClearOcrKey}
+                        className="px-4 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Your API key is stored locally in your browser and never sent to our servers.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* OCR Processing Hierarchy */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">OCR Processing Order</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                MeetingFlow uses multiple OCR methods in this priority order for best results:
+              </p>
+
+              <div className="space-y-3">
+                <div className="flex items-center gap-4 p-3 rounded-lg bg-green-50 border border-green-200">
+                  <div className="w-8 h-8 rounded-full bg-green-600 text-white flex items-center justify-center text-sm font-medium">1</div>
+                  <div className="flex-1">
+                    <h4 className="font-medium text-gray-900">TextDetector API</h4>
+                    <p className="text-sm text-gray-600">Browser-native OCR (Chrome experimental feature)</p>
+                  </div>
+                  <div className={`px-2 py-1 rounded text-xs font-medium ${
+                    ocrCapabilities.textDetector ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {ocrCapabilities.textDetector ? 'Available' : 'Not supported'}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 p-3 rounded-lg bg-blue-50 border border-blue-200">
+                  <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-medium">2</div>
+                  <div className="flex-1">
+                    <h4 className="font-medium text-gray-900">OCR.space API</h4>
+                    <p className="text-sm text-gray-600">Professional cloud OCR with 85-90% accuracy</p>
+                  </div>
+                  <div className={`px-2 py-1 rounded text-xs font-medium ${
+                    ocrCapabilities.ocrSpace ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                  }`}>
+                    {ocrCapabilities.ocrSpace ? 'Configured' : 'API key needed'}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 p-3 rounded-lg bg-yellow-50 border border-yellow-200">
+                  <div className="w-8 h-8 rounded-full bg-yellow-600 text-white flex items-center justify-center text-sm font-medium">3</div>
+                  <div className="flex-1">
+                    <h4 className="font-medium text-gray-900">Tesseract.js</h4>
+                    <p className="text-sm text-gray-600">Local browser OCR fallback (basic quality)</p>
+                  </div>
+                  <div className={`px-2 py-1 rounded text-xs font-medium ${
+                    ocrCapabilities.tesseract ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {ocrCapabilities.tesseract ? 'Ready' : 'Initializing'}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                  <div className="w-8 h-8 rounded-full bg-gray-600 text-white flex items-center justify-center text-sm font-medium">4</div>
+                  <div className="flex-1">
+                    <h4 className="font-medium text-gray-900">Manual Entry</h4>
+                    <p className="text-sm text-gray-600">Fallback when OCR is unavailable</p>
+                  </div>
+                  <div className="px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-800">
+                    Always available
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                <p className="text-sm text-gray-600">
+                  <strong>Tip:</strong> Configure an OCR.space API key for the best text extraction quality.
+                  The system will automatically use the best available method for each image.
+                </p>
               </div>
             </div>
           </div>

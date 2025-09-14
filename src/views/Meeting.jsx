@@ -212,17 +212,19 @@ export default function Meeting() {
 
         // Auto-populate digital notes with OCR results
         if (result.ocrResult && result.ocrResult.text && !result.debug?.isFallback) {
-          console.log('Populating quadrants with OCR result:', result.ocrResult)
+          console.log('OCR SUCCESS - Populating quadrants with OCR result:', result.ocrResult)
+          console.log('OCR Debug info:', result.debug)
+          console.log('OCR Text length:', result.ocrResult.text.length)
 
           const sections = result.ocrResult.extractedSections || {}
           const text = result.ocrResult.text
 
           // Smart quadrant population
           let newNotes = {
-            topLeft: digitalNotes.topLeft,    // Agenda / Meeting Topics
-            topRight: digitalNotes.topRight,  // Key Discussion Points
-            bottomLeft: digitalNotes.bottomLeft,  // Action Items
-            bottomRight: digitalNotes.bottomRight // Decisions Made
+            topLeft: digitalNotes.topLeft,    // Key Discussion Points
+            topRight: digitalNotes.topRight,  // Decisions Made
+            bottomLeft: digitalNotes.bottomLeft,  // Challenges & Blockers
+            bottomRight: digitalNotes.bottomRight // Action Items
           }
 
           // Try to populate with extracted sections first
@@ -244,26 +246,48 @@ export default function Meeting() {
 
           // If we have notes section or no specific sections were found, distribute text
           if (sections.notes && sections.notes.length > 0) {
+            console.log('Distributing notes across quadrants:', sections.notes.length, 'lines')
             const notes = sections.notes
             const quarterLength = Math.ceil(notes.length / 4)
 
             // Only populate empty quadrants
             if (!newNotes.topLeft || newNotes.topLeft === digitalNotes.topLeft) {
               newNotes.topLeft = notes.slice(0, quarterLength).join('\n')
+              console.log('Populated topLeft with', quarterLength, 'lines')
             }
             if (!newNotes.topRight || newNotes.topRight === digitalNotes.topRight) {
               newNotes.topRight = notes.slice(quarterLength, 2 * quarterLength).join('\n')
+              console.log('Populated topRight with', quarterLength, 'lines')
             }
             if (!newNotes.bottomLeft || newNotes.bottomLeft === digitalNotes.bottomLeft) {
               newNotes.bottomLeft = notes.slice(2 * quarterLength, 3 * quarterLength).join('\n')
+              console.log('Populated bottomLeft with', quarterLength, 'lines')
             }
             if (!newNotes.bottomRight || newNotes.bottomRight === digitalNotes.bottomRight) {
               newNotes.bottomRight = notes.slice(3 * quarterLength).join('\n')
+              console.log('Populated bottomRight with remaining lines')
+            }
+          } else if (!sections.agenda?.length && !sections.decisions?.length && !sections.actionItems?.length && !sections.attendees?.length) {
+            // No sections found at all, distribute raw text lines
+            console.log('No sections found, distributing raw text across quadrants')
+            const lines = text.split('\n').filter(line => line.trim().length > 0)
+            const quarterLength = Math.ceil(lines.length / 4)
+
+            if (lines.length > 0) {
+              newNotes.topLeft = lines.slice(0, quarterLength).join('\n')
+              newNotes.topRight = lines.slice(quarterLength, 2 * quarterLength).join('\n')
+              newNotes.bottomLeft = lines.slice(2 * quarterLength, 3 * quarterLength).join('\n')
+              newNotes.bottomRight = lines.slice(3 * quarterLength).join('\n')
+              console.log('Distributed', lines.length, 'lines across all quadrants')
             }
           }
 
-          console.log('Setting digital notes to:', newNotes)
+          console.log('Final quadrant assignment:', newNotes)
           setDigitalNotes(newNotes)
+        } else if (result.debug?.isFallback) {
+          console.log('OCR FALLBACK - Not populating quadrants, user needs to configure API key')
+        } else {
+          console.log('OCR result structure:', { hasOcrResult: !!result.ocrResult, hasText: !!result.ocrResult?.text, isFallback: result.debug?.isFallback })
         }
 
         // Handle fallback message display
@@ -875,18 +899,22 @@ export default function Meeting() {
                   ) : (
                     // Default quadrants
                     [
-                      { key: 'topLeft', title: 'Key Discussion Points' },
-                      { key: 'topRight', title: 'Decisions Made' },
-                      { key: 'bottomLeft', title: 'Challenges & Blockers' },
-                      { key: 'bottomRight', title: 'Action Items' }
-                    ].map(({ key, title }) => (
-                      <div key={key} className="border border-gray-200 rounded-lg p-4">
-                        <h3 className="font-semibold text-gray-900 mb-3">{title}</h3>
+                      { key: 'topLeft', title: 'Key Discussion Points', icon: '💬' },
+                      { key: 'topRight', title: 'Decisions Made', icon: '✅' },
+                      { key: 'bottomLeft', title: 'Challenges & Blockers', icon: '⚠️' },
+                      { key: 'bottomRight', title: 'Action Items', icon: '📋' }
+                    ].map(({ key, title, icon }) => (
+                      <div key={key} className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors group">
+                        <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                          <span>{icon}</span>
+                          {title}
+                          <Edit3 className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </h3>
                         <textarea
                           value={digitalNotes[key]}
                           onChange={(e) => handleQuadrantChange(key, e.target.value)}
                           placeholder={`Add ${title.toLowerCase()}...`}
-                          className="w-full h-full resize-none border-none focus:outline-none text-sm"
+                          className="w-full h-full resize-none border-none focus:outline-none text-sm hover:bg-gray-50 focus:bg-white transition-colors"
                         />
                       </div>
                     ))

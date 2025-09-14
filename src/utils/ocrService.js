@@ -4,6 +4,7 @@ export class OCRService {
     this.userApiKey = localStorage.getItem('ocrApiKey') || null
     this.apiUrl = 'https://api.ocr.space/parse/image'
     console.log('OCR Service initialized with API key:', this.userApiKey ? 'present' : 'missing')
+    console.log('Raw API key value:', this.userApiKey)
   }
 
   setUserApiKey(apiKey) {
@@ -19,7 +20,7 @@ export class OCRService {
       console.log('Starting OCR extraction...')
       console.log('API key available:', !!this.userApiKey)
 
-      if (!this.userApiKey) {
+      if (!this.userApiKey || this.userApiKey.trim() === '') {
         console.log('No OCR.space API key configured, using fallback')
         return await this._extractWithFallback(imageFile, onProgress)
       }
@@ -183,7 +184,9 @@ The image has been saved and will be included in your meeting record.`
     if (!hasContentInSections && lines.length > 0) {
       // Distribute all lines across the notes section so Meeting.jsx can handle it
       sections.notes = lines
-      console.log('No specific sections found, putting all text in notes section')
+      console.log('No specific sections found, putting all text in notes section:', lines.length, 'lines')
+    } else if (hasContentInSections) {
+      console.log('Sections found - agenda:', sections.agenda.length, 'decisions:', sections.decisions.length, 'actions:', sections.actionItems.length, 'attendees:', sections.attendees.length)
     }
 
     const actionItems = this.extractActionItems(text)

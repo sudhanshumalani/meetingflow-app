@@ -119,12 +119,24 @@ export class SimpleOCRService {
       return null
     }
 
-    console.log('Processing text with Claude AI simulation...')
+    console.log('Processing text with Claude AI...')
     console.log('Text length:', text.length)
     console.log('Meeting context:', meetingContext)
 
-    // NOTE: Direct browser calls to Claude API will fail due to CORS
-    // For now, implement intelligent text analysis locally
+    // Try the real Claude API first
+    try {
+      console.log('🤖 Attempting to call real Claude API...')
+      const result = await this.callClaudeAPI(text, meetingContext)
+      if (result) {
+        console.log('✅ Successfully got response from Claude API')
+        return result
+      }
+    } catch (error) {
+      console.warn('⚠️ Claude API call failed (likely CORS):', error.message)
+      console.log('📝 Falling back to local simulation')
+    }
+
+    // Fallback to local simulation
     return this.simulateClaudeProcessing(text, meetingContext)
   }
 
@@ -334,22 +346,32 @@ export class SimpleOCRService {
     return insights
   }
 
-  // Original Claude API implementation (will fail due to CORS)
+  // Claude API implementation with CORS proxy fallback
   async callClaudeAPI(text, meetingContext = {}) {
+    const endpoints = [
+      // Try direct API first
+      'https://api.anthropic.com/v1/messages',
+      // Fallback to CORS proxy if direct fails
+      'https://cors-anywhere.herokuapp.com/https://api.anthropic.com/v1/messages'
+    ]
+
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': this.claudeApiKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: 'claude-3-sonnet-20240229',
-          max_tokens: 2000,
-          messages: [{
-            role: 'user',
-            content: `I will provide you with rough meeting notes. Your task is to carefully review them and produce an organized output with the following three sections:
+      for (const endpoint of endpoints) {
+        try {
+        console.log(`Trying Claude API endpoint: ${endpoint}`)
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': this.claudeApiKey,
+              'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+              model: 'claude-3-sonnet-20240229',
+              max_tokens: 2000,
+              messages: [{
+                role: 'user',
+                content: `I will provide you with rough meeting notes. Your task is to carefully review them and produce an organized output with the following three sections:
 
 **Summary** – Write a concise overview (3–5 sentences) capturing the overall purpose of the meeting and the main outcomes.
 
@@ -381,45 +403,54 @@ Please provide a JSON response with:
   ],
   "sentiment": "positive/neutral/negative"
 }`
-          }]
-        })
-      })
+              }]
+            })
+          })
 
-      if (!response.ok) {
-        throw new Error(`Claude API failed: ${response.status}`)
-      }
+          if (!response.ok) {
+            throw new Error(`Claude API failed: ${response.status}`)
+          }
 
-      const data = await response.json()
-      const content = data.content[0]?.text
+          const data = await response.json()
+          const content = data.content[0]?.text
 
-      if (!content) {
-        throw new Error('No response from Claude')
-      }
+          if (!content) {
+            throw new Error('No response from Claude')
+          }
 
-      // Try to parse JSON from Claude's response
-      try {
-        const jsonMatch = content.match(/\{[\s\S]*\}/)
-        if (jsonMatch) {
-          return JSON.parse(jsonMatch[0])
+          console.log(`✅ Got response from ${endpoint}`)
+
+          // Try to parse JSON from Claude's response
+          try {
+            const jsonMatch = content.match(/\{[\s\S]*\}/)
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0])
+              console.log('📋 Successfully parsed Claude JSON response')
+              return parsed
+            }
+          } catch (parseError) {
+            console.warn('Could not parse Claude JSON response:', parseError)
+          }
+
+          // Return structured fallback if JSON parsing fails
+          console.log('📄 Using fallback parsing for Claude response')
+          return {
+            summary: content.substring(0, 200),
+            keyDiscussionPoints: [content],
+            actionItems: [],
+            sentiment: 'neutral'
+          }
+
+        } catch (error) {
+          console.warn(`❌ Failed with ${endpoint}:`, error.message)
+          // Continue to next endpoint
         }
-      } catch (parseError) {
-        console.warn('Could not parse Claude JSON response:', parseError)
       }
 
-      // Return structured fallback if JSON parsing fails
-      return {
-        summary: content.substring(0, 200),
-        keyPoints: [content],
-        decisions: [],
-        actionItems: [],
-        challenges: [],
-        sentiment: 'neutral',
-        insights: [],
-        relationships: []
-      }
-
+      // All endpoints failed
+      throw new Error('All Claude API endpoints failed')
     } catch (error) {
-      console.error('Claude processing failed:', error)
+      console.error('Claude API processing failed:', error)
       return null
     }
   }

@@ -1,255 +1,46 @@
-import Tesseract from 'tesseract.js'
+import { createWorker } from 'tesseract.js'
 
-// OCR Service using Tesseract.js for real text extraction
+// OCR Service using Tesseract.js v6 for real text extraction
 export class OCRService {
   constructor() {
     this.worker = null
     this.isInitialized = false
-    this.initializationPromise = null
   }
 
   async initialize() {
-    // Prevent multiple simultaneous initialization attempts
-    if (this.initializationPromise) {
-      return this.initializationPromise
-    }
+    if (this.isInitialized && this.worker) return
 
-    if (this.isInitialized) return
-
-    this.initializationPromise = this._performInitialization()
+    console.log('=== OCR INITIALIZATION (Tesseract.js v6) ===')
+    console.log('Creating worker with modern API...')
 
     try {
-      await this.initializationPromise
-    } finally {
-      this.initializationPromise = null
-    }
-  }
-
-  async _performInitialization() {
-    console.log('=== OCR INITIALIZATION START ===')
-
-    // Comprehensive environment diagnostics
-    const diagnostics = {
-      timestamp: new Date().toISOString(),
-      environment: {
-        isBrowser: typeof window !== 'undefined',
-        hasNavigator: typeof navigator !== 'undefined',
-        hasWorker: typeof Worker !== 'undefined',
-        hasSharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
-        hasOffscreenCanvas: typeof OffscreenCanvas !== 'undefined',
-        hasWebAssembly: typeof WebAssembly !== 'undefined',
-        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A',
-        language: typeof navigator !== 'undefined' ? navigator.language : 'N/A',
-        onLine: typeof navigator !== 'undefined' ? navigator.onLine : 'N/A',
-        cookieEnabled: typeof navigator !== 'undefined' ? navigator.cookieEnabled : 'N/A'
-      },
-      tesseract: {
-        imported: typeof Tesseract !== 'undefined',
-        version: Tesseract?.version || 'unknown',
-        createWorker: typeof Tesseract?.createWorker === 'function',
-        methods: Tesseract ? Object.keys(Tesseract) : []
-      },
-      window: typeof window !== 'undefined' ? {
-        location: window.location?.href,
-        protocol: window.location?.protocol,
-        host: window.location?.host,
-        secure: window.location?.protocol === 'https:',
-        crossOriginIsolated: window.crossOriginIsolated
-      } : null
-    }
-
-    console.log('=== DETAILED DIAGNOSTICS ===', diagnostics)
-
-    // Check for known incompatible environments
-    if (!diagnostics.environment.isBrowser) {
-      throw new Error('OCR requires browser environment')
-    }
-
-    if (!diagnostics.environment.hasWorker) {
-      throw new Error('Browser does not support Web Workers')
-    }
-
-    if (!diagnostics.tesseract.imported) {
-      throw new Error('Tesseract.js library not properly imported')
-    }
-
-    if (!diagnostics.tesseract.createWorker) {
-      throw new Error('Tesseract.createWorker function not available')
-    }
-
-    // Attempt multiple initialization strategies
-    const strategies = [
-      { name: 'minimal', config: {} },
-      { name: 'legacy', config: { cacheMethod: 'none' } },
-      { name: 'basic', config: { logger: false } },
-      { name: 'simple', config: { cachePath: './' } }
-    ]
-
-    let lastError = null
-
-    for (const strategy of strategies) {
-      try {
-        console.log(`=== TRYING STRATEGY: ${strategy.name.toUpperCase()} ===`)
-        console.log('Strategy config:', strategy.config)
-
-        // Create worker with current strategy
-        this.worker = await this._createWorkerWithStrategy(strategy)
-        console.log(`Worker created successfully with ${strategy.name} strategy`)
-
-        // Try language loading with detailed logging
-        console.log('Loading English language...')
-        const loadStart = performance.now()
-        await this._withTimeout(
-          this.worker.loadLanguage('eng'),
-          25000,
-          `Language loading timeout (${strategy.name})`
-        )
-        const loadTime = performance.now() - loadStart
-        console.log(`Language loaded in ${loadTime}ms`)
-
-        // Try worker initialization with detailed logging
-        console.log('Initializing worker...')
-        const initStart = performance.now()
-        await this._withTimeout(
-          this.worker.initialize('eng'),
-          20000,
-          `Worker initialization timeout (${strategy.name})`
-        )
-        const initTime = performance.now() - initStart
-        console.log(`Worker initialized in ${initTime}ms`)
-
-        console.log(`=== OCR INITIALIZATION SUCCESS (${strategy.name}) ===`)
-        this.isInitialized = true
-        return // Success!
-
-      } catch (error) {
-        console.error(`Strategy ${strategy.name} failed:`, {
-          error: error.message,
-          stack: error.stack,
-          strategy: strategy.name,
-          config: strategy.config
-        })
-
-        lastError = error
-
-        // Cleanup failed worker
-        await this._cleanupWorker()
-
-        // Continue to next strategy unless it's the last one
-        if (strategy !== strategies[strategies.length - 1]) {
-          console.log(`Trying next strategy after ${strategy.name} failure...`)
-          continue
+      // Use the correct v6 API - worker is ready immediately
+      this.worker = await createWorker('eng', 1, {
+        logger: (info) => {
+          console.log('Tesseract:', info)
+          if (info.status === 'recognizing text' && info.progress) {
+            console.log(`OCR Progress: ${Math.round(info.progress * 100)}%`)
+          }
         }
-      }
-    }
+      })
 
-    // All strategies failed
-    const finalError = new Error(
-      `OCR initialization failed with all strategies. Last error: ${lastError?.message}. ` +
-      `Environment: ${diagnostics.environment.userAgent}. ` +
-      `Check console for detailed diagnostics.`
-    )
-
-    console.error('=== ALL OCR STRATEGIES FAILED ===', {
-      finalError: finalError.message,
-      lastError: lastError?.message,
-      diagnostics: diagnostics,
-      strategiesTried: strategies.map(s => s.name)
-    })
-
-    throw finalError
-  }
-
-  async _createWorkerWithStrategy(strategy) {
-    console.log(`Creating worker with strategy: ${strategy.name}`)
-
-    const baseOptions = {
-      logger: (info) => {
-        console.log(`OCR Worker [${strategy.name}]:`, info)
-        if (info.status && info.progress) {
-          console.log(`OCR Progress [${strategy.name}]: ${info.status} ${Math.round(info.progress * 100)}%`)
-        }
-      }
-    }
-
-    const workerOptions = { ...baseOptions, ...strategy.config }
-
-    console.log(`Worker options for ${strategy.name}:`, workerOptions)
-
-    // Different worker creation approaches for different strategies
-    try {
-      let worker
-
-      switch (strategy.name) {
-        case 'minimal':
-          // Simplest possible worker creation
-          worker = await this._withTimeout(
-            Tesseract.createWorker('eng'),
-            30000,
-            `Minimal worker creation timeout`
-          )
-          break
-
-        case 'legacy':
-          // Legacy approach without language pre-loading
-          worker = await this._withTimeout(
-            Tesseract.createWorker(workerOptions),
-            30000,
-            `Legacy worker creation timeout`
-          )
-          break
-
-        case 'basic':
-          // Basic approach with options
-          worker = await this._withTimeout(
-            Tesseract.createWorker('eng', 1, workerOptions),
-            30000,
-            `Basic worker creation timeout`
-          )
-          break
-
-        case 'simple':
-          // Simple approach with custom options
-          worker = await this._withTimeout(
-            Tesseract.createWorker(workerOptions),
-            30000,
-            `Simple worker creation timeout`
-          )
-          break
-
-        default:
-          // Default fallback
-          worker = await this._withTimeout(
-            Tesseract.createWorker(workerOptions),
-            30000,
-            `Default worker creation timeout`
-          )
-      }
-
-      console.log(`Worker created successfully with ${strategy.name} strategy`)
-      return worker
+      this.isInitialized = true
+      console.log('OCR worker created and ready!')
 
     } catch (error) {
-      console.error(`Worker creation failed for strategy ${strategy.name}:`, error)
-      throw new Error(`Worker creation failed (${strategy.name}): ${error.message}`)
+      console.error('OCR initialization failed:', error)
+      await this.cleanup()
+      throw new Error(`OCR initialization failed: ${error.message}`)
     }
   }
 
-  async _withTimeout(promise, ms, errorMessage) {
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error(`${errorMessage} after ${ms}ms`)), ms)
-    })
-
-    return Promise.race([promise, timeoutPromise])
-  }
-
-  async _cleanupWorker() {
+  async cleanup() {
     if (this.worker) {
       try {
         await this.worker.terminate()
-        console.log('Worker terminated successfully')
+        console.log('OCR worker terminated')
       } catch (error) {
-        console.warn('Error terminating worker:', error)
+        console.warn('Error terminating OCR worker:', error)
       }
       this.worker = null
     }
@@ -284,23 +75,12 @@ export class OCRService {
         throw new Error('OCR worker not properly initialized')
       }
 
-      // Run OCR with simplified approach and shorter timeout
+      // Run OCR with v6 API - no timeout needed, it's built in
       console.log('Starting OCR recognition...')
-      onProgress(10) // Initial progress
+      onProgress(10)
 
-      const { data } = await this._withTimeout(
-        this.worker.recognize(imageUrl, {
-          logger: (info) => {
-            if (info.status === 'recognizing text' && typeof info.progress === 'number') {
-              const progress = Math.round(info.progress * 100)
-              console.log(`OCR Progress: ${progress}%`)
-              onProgress(Math.min(progress, 90)) // Keep some progress for post-processing
-            }
-          }
-        }),
-        60000, // Reduced timeout to 60 seconds
-        'OCR recognition timeout'
-      )
+      const ret = await this.worker.recognize(imageUrl)
+      const data = ret.data
 
       console.log('=== RAW TESSERACT RESULT ===')
       console.log('Full data object:', data)
@@ -640,8 +420,9 @@ You can manually type your meeting notes in the Digital Notes section.`
         agenda: [],
         decisions: [],
         actionItems: [],
-        notes: [fallbackText],
-        attendees: []
+        notes: [], // Don't auto-populate fallback text
+        attendees: [],
+        fallbackMessage: fallbackText // Store separately to avoid auto-population
       },
       actionItems: [], // No action items from fallback
       debug: {

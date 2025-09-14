@@ -53,11 +53,12 @@ import { ExportOptionsButton } from '../components/ExportOptions'
 export default function Meeting() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { 
-    meetings, 
-    currentMeeting, 
-    updateMeeting, 
-    setCurrentMeeting 
+  const {
+    meetings,
+    stakeholders,
+    currentMeeting,
+    updateMeeting,
+    setCurrentMeeting
   } = useApp()
   
   // Form state
@@ -97,8 +98,8 @@ export default function Meeting() {
   const [aiMode, setAiMode] = useState('auto') // 'auto', 'manual', 'off'
   
 
-  // Mock stakeholders for dropdown
-  const stakeholders = mockStakeholders
+  // Use real stakeholders from app context, fallback to mock data for demo
+  const displayStakeholders = stakeholders.length > 0 ? stakeholders : mockStakeholders
 
   useEffect(() => {
     const meeting = meetings.find(m => m.id === id)
@@ -122,7 +123,7 @@ export default function Meeting() {
   // Update template when stakeholder changes
   useEffect(() => {
     if (formData.selectedStakeholder) {
-      const stakeholder = stakeholders.find(s => s.id === formData.selectedStakeholder)
+      const stakeholder = displayStakeholders.find(s => s.id === formData.selectedStakeholder)
       if (stakeholder) {
         const template = getTemplateForCategory(stakeholder.category)
         setFormData(prev => ({ ...prev, template }))
@@ -225,10 +226,10 @@ export default function Meeting() {
       }
       
       // Get current stakeholder info
-      const currentStakeholder = stakeholders.find(s => s.id === formData.selectedStakeholder)
+      const currentStakeholder = displayStakeholders.find(s => s.id === formData.selectedStakeholder)
       
       // Process meeting with AI coordinator
-      const aiResult = await aiCoordinator.processFullMeetingAI(meetingData, stakeholders)
+      const aiResult = await aiCoordinator.processFullMeetingAI(meetingData, displayStakeholders)
       
       if (aiResult.success) {
         setAiProcessingResult(aiResult)
@@ -422,7 +423,7 @@ export default function Meeting() {
     )
   }
 
-  const selectedStakeholder = stakeholders.find(s => s.id === formData.selectedStakeholder)
+  const selectedStakeholder = displayStakeholders.find(s => s.id === formData.selectedStakeholder)
   const template = formData.template
 
   const handleRefresh = async () => {

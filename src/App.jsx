@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-route
 import { AppProvider } from './contexts/AppContext'
 import Home from './views/Home'
 import Meeting from './views/Meeting'
+import Settings from './views/Settings'
 import ErrorBoundary, { ErrorToast } from './components/ErrorBoundary'
 import LoadingSpinner from './components/LoadingSpinner'
 import accessibility, { a11y } from './utils/accessibility'
@@ -166,6 +167,7 @@ function AppContent() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/meeting/:id" element={<Meeting />} />
+            <Route path="/settings" element={<Settings />} />
           </Routes>
         </PageTransition>
       </main>

@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
 import { 
   Search, 
-  Plus, 
+  Plus,
+  Settings, 
   Calendar, 
   Users, 
   Clock, 
@@ -310,6 +311,11 @@ export default function Home() {
         // This would open a mobile-friendly batch export dialog
         console.log('Batch export clicked')
       }
+    },
+    {
+      label: 'Settings',
+      icon: <Settings size={20} />,
+      onClick: () => navigate('/settings')
     }
   ]
 

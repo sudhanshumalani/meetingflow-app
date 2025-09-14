@@ -79,6 +79,9 @@ export default function Settings() {
       setOCRApiKey(savedKey)
       setOcrCapabilities(getOCRCapabilities())
     }
+
+    // Initialize capabilities
+    setCapabilities(getCapabilities())
   }, [])
 
   // OCR configuration functions
@@ -224,6 +227,19 @@ export default function Settings() {
               <div className="flex items-center gap-2">
                 <Eye className="w-4 h-4" />
                 OCR Configuration
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('claude')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'claude'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
+                Claude AI
               </div>
             </button>
           </nav>

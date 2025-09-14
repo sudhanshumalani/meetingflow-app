@@ -243,10 +243,8 @@ function AppContent() {
 }
 
 function App() {
-  // GitHub Pages base path configuration
-  const basename = import.meta.env.MODE === 'production' && import.meta.env.VITE_GITHUB_PAGES
-    ? '/meetingflow-app'
-    : ''
+  // Simplified base path - always use /meetingflow-app for production
+  const basename = import.meta.env.PROD ? '/meetingflow-app' : ''
 
   return (
     <ErrorBoundary>

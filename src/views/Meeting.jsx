@@ -199,8 +199,8 @@ export default function Meeting() {
         setExtractedText(result.ocrResult.text)
         setOcrStatus('OCR completed successfully!')
 
-        // Auto-populate digital notes with OCR results
-        if (result.ocrResult.extractedSections) {
+        // Auto-populate digital notes with OCR results (skip if fallback)
+        if (result.ocrResult.extractedSections && !result.debug?.isFallback) {
           const sections = result.ocrResult.extractedSections
           setDigitalNotes(prev => ({
             topLeft: prev.topLeft || (sections.agenda?.join('\n• ') || ''),
@@ -210,11 +210,16 @@ export default function Meeting() {
           }))
         }
 
-        // Show success notification
-        setTimeout(() => {
-          setOcrStatus('')
-          setOcrProgress(0)
-        }, 2000)
+        // Handle fallback message display
+        if (result.debug?.isFallback && result.ocrResult.extractedSections?.fallbackMessage) {
+          setOcrStatus(result.ocrResult.extractedSections.fallbackMessage.substring(0, 150) + '...')
+        } else {
+          // Show success notification
+          setTimeout(() => {
+            setOcrStatus('')
+            setOcrProgress(0)
+          }, 2000)
+        }
 
       } else {
         console.error('OCR processing failed:', result.error)

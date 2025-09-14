@@ -458,6 +458,8 @@ class EnhancedOCRService {
     console.log('User requested to enable real OCR - attempting initialization...')
 
     try {
+      this.initializationAttempted = true
+
       // Set a very short timeout for initialization attempt
       const initPromise = this.primaryService.initialize()
       const timeoutPromise = new Promise((_, reject) => {
@@ -509,13 +511,23 @@ class EnhancedOCRService {
   }
 
   async extractText(imageFile, options = {}) {
+    console.log('=== ENHANCED OCR SERVICE EXTRACT TEXT ===')
+    console.log('Service status:', {
+      usingFallback: this.usingFallback,
+      ocrEnabled: this.ocrEnabled,
+      initializationAttempted: this.initializationAttempted
+    })
+
     // Always use fallback unless user explicitly enabled OCR
     if (this.usingFallback || !this.ocrEnabled) {
+      console.log('Using fallback service')
       return this.fallbackService.extractText(imageFile, {
         ...options,
         includeEnablePrompt: !this.initializationAttempted
       })
     }
+
+    console.log('Using real OCR service')
 
     try {
       const result = await this.primaryService.extractText(imageFile, options)

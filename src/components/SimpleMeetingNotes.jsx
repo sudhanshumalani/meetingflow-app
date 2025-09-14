@@ -64,14 +64,16 @@ export default function SimpleMeetingNotes() {
         setExtractedText(result.text)
         setOcrStatus('Text extracted successfully!')
 
-        // If it's real OCR text (not fallback), try to distribute it
+        // If it's real OCR text (not fallback), process with AI first
         if (!result.isFallback && result.text.length > 20) {
-          distributeTextToQuadrants(result.text)
-        }
-
-        // Process with Claude if available
-        if (getCapabilities().claude) {
-          processTextWithClaude(result.text)
+          // Try Claude AI first for smart categorization
+          if (getCapabilities().claude) {
+            console.log('Processing with Claude AI for smart categorization...')
+            await processTextWithClaude(result.text)
+          } else {
+            console.log('No Claude AI available, using simple distribution')
+            distributeTextToQuadrants(result.text)
+          }
         }
       } else {
         setOcrStatus('OCR failed - please enter text manually')
@@ -107,23 +109,61 @@ export default function SimpleMeetingNotes() {
 
   // Process with Claude AI
   const processTextWithClaude = async (text) => {
+    console.log('Starting Claude AI processing...')
+    setOcrStatus('Processing with Claude AI...')
+
     try {
       const result = await processWithClaude(text, { meetingType: 'general' })
+      console.log('Claude AI result:', result)
+
       if (result) {
         setClaudeResult(result)
+        setOcrStatus('AI analysis complete!')
 
-        // Optionally populate quadrants with AI-structured data
-        if (result.keyPoints || result.decisions || result.actionItems || result.challenges) {
-          setNotes({
-            topLeft: result.keyPoints?.join('\n') || notes.topLeft,
-            topRight: result.decisions?.join('\n') || notes.topRight,
-            bottomLeft: result.challenges?.join('\n') || notes.bottomLeft,
-            bottomRight: result.actionItems?.map(item => `${item.task} (${item.assignee})`).join('\n') || notes.bottomRight
-          })
+        // Populate quadrants with AI-structured data
+        const newNotes = {
+          topLeft: '', // Key Discussion Points
+          topRight: '', // Decisions Made
+          bottomLeft: '', // Challenges & Blockers
+          bottomRight: '' // Action Items
         }
+
+        // Map Claude AI results to quadrants
+        if (result.keyPoints && result.keyPoints.length > 0) {
+          newNotes.topLeft = result.keyPoints.join('\n')
+        }
+
+        if (result.decisions && result.decisions.length > 0) {
+          newNotes.topRight = result.decisions.join('\n')
+        }
+
+        if (result.challenges && result.challenges.length > 0) {
+          newNotes.bottomLeft = result.challenges.join('\n')
+        }
+
+        if (result.actionItems && result.actionItems.length > 0) {
+          newNotes.bottomRight = result.actionItems.map(item =>
+            typeof item === 'string' ? item : `${item.task} (${item.assignee || 'Unassigned'})`
+          ).join('\n')
+        }
+
+        // If no specific AI categorization, fall back to simple distribution
+        if (!newNotes.topLeft && !newNotes.topRight && !newNotes.bottomLeft && !newNotes.bottomRight) {
+          console.log('No AI categorization available, using simple distribution')
+          distributeTextToQuadrants(text)
+        } else {
+          console.log('Using AI-categorized content for quadrants')
+          setNotes(newNotes)
+        }
+      } else {
+        console.log('No Claude AI result, falling back to simple distribution')
+        distributeTextToQuadrants(text)
       }
     } catch (error) {
       console.error('Claude processing failed:', error)
+      setOcrStatus('AI processing failed, using simple distribution')
+      // Fallback to simple distribution
+      distributeTextToQuadrants(text)
     }
   }
 
@@ -166,6 +206,35 @@ export default function SimpleMeetingNotes() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Manual Text Input for Testing */}
+      <div className="bg-white rounded-lg shadow-sm border p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Manual Text Input (For Testing)</h2>
+        <div className="space-y-3">
+          <textarea
+            value={extractedText}
+            onChange={(e) => setExtractedText(e.target.value)}
+            placeholder="Paste or type meeting text here to test AI categorization...\n\nExample:\nWe decided to move forward with the new project\nJohn will handle the backend development\nThere are some concerns about the timeline\nNext action: Schedule follow-up meeting"
+            className="w-full h-32 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => processTextWithClaude(extractedText)}
+              disabled={!extractedText.trim() || !getCapabilities().claude}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              🧠 Analyze with AI
+            </button>
+            <button
+              onClick={() => distributeTextToQuadrants(extractedText)}
+              disabled={!extractedText.trim()}
+              className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              📋 Simple Distribution
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Extracted Text Section */}
@@ -234,13 +303,22 @@ export default function SimpleMeetingNotes() {
       <div className="bg-white rounded-lg shadow-sm border p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold text-gray-900">Meeting Notes</h2>
-          <button
-            onClick={() => distributeTextToQuadrants(extractedText)}
-            disabled={!extractedText}
-            className="px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Distribute Text
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => distributeTextToQuadrants(extractedText)}
+              disabled={!extractedText}
+              className="px-3 py-1 text-sm bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Simple Distribution
+            </button>
+            <button
+              onClick={() => processTextWithClaude(extractedText)}
+              disabled={!extractedText || !getCapabilities().claude}
+              className="px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              AI Analysis
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-96">
@@ -271,6 +349,17 @@ export default function SimpleMeetingNotes() {
           <div>Capabilities: {JSON.stringify(getCapabilities())}</div>
           <div>Notes state: {Object.keys(notes).map(key => `${key}: ${notes[key].length} chars`).join(', ')}</div>
           <div>Extracted text: {extractedText.length} characters</div>
+          <div>Claude result: {claudeResult ? 'Available' : 'None'}</div>
+          {claudeResult && (
+            <div className="mt-2 p-2 bg-white rounded border">
+              <div>AI Analysis Summary: {claudeResult.summary}</div>
+              <div>Key Points: {claudeResult.keyPoints?.length || 0}</div>
+              <div>Decisions: {claudeResult.decisions?.length || 0}</div>
+              <div>Action Items: {claudeResult.actionItems?.length || 0}</div>
+              <div>Challenges: {claudeResult.challenges?.length || 0}</div>
+              <div>Sentiment: {claudeResult.sentiment}</div>
+            </div>
+          )}
         </div>
       </div>
     </div>

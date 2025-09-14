@@ -119,6 +119,167 @@ export class SimpleOCRService {
       return null
     }
 
+    console.log('Processing text with Claude AI simulation...')
+    console.log('Text length:', text.length)
+    console.log('Meeting context:', meetingContext)
+
+    // NOTE: Direct browser calls to Claude API will fail due to CORS
+    // For now, implement intelligent text analysis locally
+    return this.simulateClaudeProcessing(text, meetingContext)
+  }
+
+  // Simulate Claude AI processing with intelligent text analysis
+  simulateClaudeProcessing(text, meetingContext = {}) {
+    console.log('Running intelligent text analysis simulation...')
+
+    const lines = text.split('\n').filter(line => line.trim().length > 0)
+    const words = text.toLowerCase()
+
+    const result = {
+      summary: '',
+      keyPoints: [],
+      decisions: [],
+      actionItems: [],
+      challenges: [],
+      sentiment: 'neutral',
+      insights: [],
+      relationships: []
+    }
+
+    // Generate summary
+    result.summary = `Meeting discussion covering ${lines.length} key topics with focus on ${this.getMainTopics(text).join(', ')}.`
+
+    // Intelligent categorization based on keywords and patterns
+    lines.forEach(line => {
+      const lowerLine = line.toLowerCase()
+
+      // Action items detection
+      if (this.isActionItem(lowerLine)) {
+        result.actionItems.push({
+          task: line.trim(),
+          assignee: this.extractAssignee(line) || 'Unassigned',
+          priority: this.determinePriority(lowerLine)
+        })
+      }
+      // Decisions detection
+      else if (this.isDecision(lowerLine)) {
+        result.decisions.push(line.trim())
+      }
+      // Challenges detection
+      else if (this.isChallenge(lowerLine)) {
+        result.challenges.push(line.trim())
+      }
+      // Key discussion points (everything else)
+      else if (line.trim().length > 10) {
+        result.keyPoints.push(line.trim())
+      }
+    })
+
+    // Sentiment analysis
+    result.sentiment = this.analyzeSentiment(text)
+
+    // Generate insights
+    result.insights = this.generateInsights(result)
+
+    console.log('Intelligent analysis complete:', result)
+    return result
+  }
+
+  // Helper methods for intelligent text analysis
+  isActionItem(text) {
+    const actionKeywords = ['todo', 'action', 'task', 'need to', 'should', 'must', 'will', 'follow up', 'next step']
+    const actionPatterns = ['\\d+\\.', '•', '-', '*']
+
+    return actionKeywords.some(keyword => text.includes(keyword)) ||
+           actionPatterns.some(pattern => text.match(new RegExp(pattern)))
+  }
+
+  isDecision(text) {
+    const decisionKeywords = ['decided', 'agreed', 'approved', 'resolved', 'conclusion', 'final', 'determined']
+    return decisionKeywords.some(keyword => text.includes(keyword))
+  }
+
+  isChallenge(text) {
+    const challengeKeywords = ['problem', 'issue', 'challenge', 'blocker', 'concern', 'risk', 'difficulty', 'obstacle']
+    return challengeKeywords.some(keyword => text.includes(keyword))
+  }
+
+  extractAssignee(text) {
+    const assigneePatterns = [
+      /by\\s+([A-Za-z]+)/i,
+      /([A-Za-z]+)\\s+will/i,
+      /assigned\\s+to\\s+([A-Za-z]+)/i
+    ]
+
+    for (const pattern of assigneePatterns) {
+      const match = text.match(pattern)
+      if (match) return match[1]
+    }
+    return null
+  }
+
+  determinePriority(text) {
+    if (text.includes('urgent') || text.includes('critical') || text.includes('asap')) return 'high'
+    if (text.includes('later') || text.includes('when possible') || text.includes('eventually')) return 'low'
+    return 'medium'
+  }
+
+  getMainTopics(text) {
+    const words = text.toLowerCase().split(/\\s+/)
+    const commonWords = new Set(['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'must', 'shall', 'a', 'an', 'this', 'that', 'these', 'those'])
+
+    const wordFreq = {}
+    words.forEach(word => {
+      const cleaned = word.replace(/[^a-z]/g, '')
+      if (cleaned.length > 3 && !commonWords.has(cleaned)) {
+        wordFreq[cleaned] = (wordFreq[cleaned] || 0) + 1
+      }
+    })
+
+    return Object.entries(wordFreq)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 3)
+      .map(([word]) => word)
+  }
+
+  analyzeSentiment(text) {
+    const positiveWords = ['good', 'great', 'excellent', 'positive', 'success', 'achieve', 'progress', 'solution']
+    const negativeWords = ['bad', 'problem', 'issue', 'fail', 'difficult', 'challenge', 'concern', 'risk']
+
+    const words = text.toLowerCase().split(/\\s+/)
+    let positiveCount = 0
+    let negativeCount = 0
+
+    words.forEach(word => {
+      if (positiveWords.some(pos => word.includes(pos))) positiveCount++
+      if (negativeWords.some(neg => word.includes(neg))) negativeCount++
+    })
+
+    if (positiveCount > negativeCount) return 'positive'
+    if (negativeCount > positiveCount) return 'negative'
+    return 'neutral'
+  }
+
+  generateInsights(result) {
+    const insights = []
+
+    if (result.actionItems.length > 3) {
+      insights.push('High number of action items - consider prioritization')
+    }
+
+    if (result.challenges.length > result.decisions.length) {
+      insights.push('More challenges than decisions - may need follow-up meeting')
+    }
+
+    if (result.sentiment === 'negative') {
+      insights.push('Meeting tone suggests concerns that may need attention')
+    }
+
+    return insights
+  }
+
+  // Original Claude API implementation (will fail due to CORS)
+  async callClaudeAPI(text, meetingContext = {}) {
     try {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',

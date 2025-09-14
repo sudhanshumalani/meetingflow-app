@@ -110,16 +110,23 @@ export default function Meeting() {
     const meeting = meetings.find(m => m.id === id)
     if (meeting) {
       setCurrentMeeting(meeting)
-      setFormData({
-        title: meeting.title || '',
-        selectedStakeholder: meeting.stakeholderIds?.[0] || '',
-        date: meeting.scheduledAt ? meeting.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
-        priority: meeting.priority || 'medium',
-        template: meeting.template || null
+      // Only set initial values if not already set
+      setFormData(prev => {
+        // If title is already set (user typed something), don't overwrite
+        if (prev.title && prev.title !== '') {
+          return prev
+        }
+        return {
+          title: meeting.title || '',
+          selectedStakeholder: meeting.stakeholderIds?.[0] || '',
+          date: meeting.scheduledAt ? meeting.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
+          priority: meeting.priority || 'medium',
+          template: meeting.template || null
+        }
       })
-      
+
       // Load existing notes if any
-      if (meeting.digitalNotes) {
+      if (meeting.digitalNotes && Object.values(meeting.digitalNotes).some(v => v)) {
         setDigitalNotes(meeting.digitalNotes)
       }
     }
@@ -134,7 +141,7 @@ export default function Meeting() {
         setFormData(prev => ({ ...prev, template }))
       }
     }
-  }, [formData.selectedStakeholder])
+  }, [formData.selectedStakeholder, displayStakeholders])
 
   const handleInputChange = (field, value) => {
     console.log('Input change:', field, value)
@@ -212,16 +219,16 @@ export default function Meeting() {
           const newNotes = {
             topLeft: sections.agenda && sections.agenda.length > 0
               ? '• ' + sections.agenda.join('\n• ')
-              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(0, Math.ceil(sections.notes.length/4)).join('\n') : prev.topLeft),
+              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(0, Math.ceil(sections.notes.length/4)).join('\n') : digitalNotes.topLeft),
             topRight: sections.decisions && sections.decisions.length > 0
               ? '• ' + sections.decisions.join('\n• ')
-              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(sections.notes.length/4), Math.ceil(sections.notes.length/2)).join('\n') : prev.topRight),
+              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(sections.notes.length/4), Math.ceil(sections.notes.length/2)).join('\n') : digitalNotes.topRight),
             bottomLeft: sections.actionItems && sections.actionItems.length > 0
               ? '• ' + sections.actionItems.join('\n• ')
-              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(sections.notes.length/2), Math.ceil(3*sections.notes.length/4)).join('\n') : prev.bottomLeft),
+              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(sections.notes.length/2), Math.ceil(3*sections.notes.length/4)).join('\n') : digitalNotes.bottomLeft),
             bottomRight: sections.attendees && sections.attendees.length > 0
               ? '• ' + sections.attendees.join('\n• ')
-              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(3*sections.notes.length/4)).join('\n') : prev.bottomRight)
+              : (sections.notes && sections.notes.length > 0 ? sections.notes.slice(Math.ceil(3*sections.notes.length/4)).join('\n') : digitalNotes.bottomRight)
           }
 
           console.log('Setting digital notes:', newNotes)
@@ -565,7 +572,7 @@ export default function Meeting() {
             subtitle="Capture and organize insights"
             onBack={() => {
               console.log('Mobile back button clicked')
-              navigate('/', { replace: true })
+              window.location.href = '/meetingflow-app/'
             }}
             rightContent={
               <div className="flex items-center gap-2">
@@ -608,7 +615,7 @@ export default function Meeting() {
               <button
                 onClick={() => {
                   console.log('Desktop back button clicked')
-                  navigate('/', { replace: true })
+                  window.location.href = '/meetingflow-app/'
                 }}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >

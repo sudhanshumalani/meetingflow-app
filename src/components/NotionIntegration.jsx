@@ -9,7 +9,7 @@ import {
   ExternalLink,
   Upload,
   Database,
-  Sync,
+  RefreshCcw,
   Users
 } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
@@ -168,7 +168,7 @@ export function NotionStakeholderSync() {
           {isSyncing ? (
             <Loader2 size={16} className="animate-spin" />
           ) : (
-            <Sync size={16} />
+            <RefreshCcw size={16} />
           )}
           {isSyncing ? 'Syncing...' : 'Sync from Notion'}
         </button>

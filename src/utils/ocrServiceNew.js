@@ -114,19 +114,21 @@ export class SimpleOCRService {
 
   // Claude AI integration for processing extracted text
   async processWithClaude(text, meetingContext = {}) {
-    console.log('Processing text with Claude AI...')
+    console.log('🎯 Processing text with Claude AI integration...')
     console.log('Text length:', text.length)
     console.log('Meeting context:', meetingContext)
 
-    // Check if we have a Claude API key configured
-    if (this.claudeApiKey) {
-      console.log('🤖 Claude API key found - offering Copy-Paste workflow...')
+    // Always offer the copy-paste workflow option first
+    console.log('🤖 Offering Claude Web Interface workflow...')
 
-      // Show copy-paste workflow
+    try {
       const useClaudeWebInterface = await this.offerClaudeWebWorkflow(text, meetingContext)
       if (useClaudeWebInterface) {
+        console.log('✅ User used Claude web interface - got high-quality results!')
         return useClaudeWebInterface
       }
+    } catch (error) {
+      console.warn('⚠️ Claude web workflow failed or cancelled:', error)
     }
 
     console.log('📝 Using enhanced local AI simulation...')
@@ -170,10 +172,12 @@ Meeting Notes:
 Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
 
       content.innerHTML = `
-        <h2 style="margin-top: 0; color: #333;">🤖 Use Claude Web Interface</h2>
-        <p style="color: #666; line-height: 1.5;">
-          Since direct API calls aren't available on GitHub Pages, let's use Claude's web interface for the best results:
-        </p>
+        <h2 style="margin-top: 0; color: #333; text-align: center;">🧠 Get Professional AI Analysis</h2>
+        <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #0ea5e9;">
+          <p style="color: #0c4a6e; margin: 0; font-weight: 500;">
+            ✨ Want Claude-quality meeting analysis like your example? Use this workflow to get professional summaries, organized discussion points, and detailed action items!
+          </p>
+        </div>
 
         <div style="margin: 20px 0;">
           <label style="display: block; font-weight: bold; margin-bottom: 8px;">
@@ -195,13 +199,18 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
           <textarea id="claudeResponse" placeholder="Paste Claude's response here..." style="width: 100%; height: 150px; padding: 10px; border: 1px solid #ddd; border-radius: 6px;"></textarea>
         </div>
 
-        <div style="text-align: right; margin-top: 20px;">
-          <button id="cancel" style="padding: 10px 20px; margin-right: 10px; background: #6b7280; color: white; border: none; border-radius: 6px; cursor: pointer;">
-            Cancel
+        <div style="display: flex; justify-content: space-between; margin-top: 20px;">
+          <button id="skip" style="padding: 10px 20px; background: #f59e0b; color: white; border: none; border-radius: 6px; cursor: pointer;">
+            🚀 Skip - Use Enhanced Local Analysis
           </button>
-          <button id="process" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer;">
-            ✨ Process Response
-          </button>
+          <div>
+            <button id="cancel" style="padding: 10px 20px; margin-right: 10px; background: #6b7280; color: white; border: none; border-radius: 6px; cursor: pointer;">
+              Cancel
+            </button>
+            <button id="process" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer;">
+              ✨ Process Claude Response
+            </button>
+          </div>
         </div>
       `
 
@@ -219,6 +228,12 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
             btn.style.background = '#6366f1'
           }, 2000)
         })
+      })
+
+      // Skip button - use enhanced local analysis
+      content.querySelector('#skip').addEventListener('click', () => {
+        document.body.removeChild(modal)
+        resolve(null) // This will trigger enhanced local simulation
       })
 
       // Cancel button

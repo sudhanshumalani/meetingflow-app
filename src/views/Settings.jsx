@@ -65,6 +65,15 @@ export default function Settings() {
   const [ocrCapabilities, setOcrCapabilities] = useState(getOCRCapabilities())
   const [ocrKeySaved, setOcrKeySaved] = useState(false)
 
+  // Initialize OCR API key on component mount
+  useEffect(() => {
+    const savedKey = localStorage.getItem('ocrApiKey')
+    if (savedKey && !ocrCapabilities.ocrSpace) {
+      setOCRApiKey(savedKey)
+      setOcrCapabilities(getOCRCapabilities())
+    }
+  }, [])
+
   // OCR configuration functions
   const handleSaveOcrKey = () => {
     localStorage.setItem('ocrApiKey', ocrApiKey)

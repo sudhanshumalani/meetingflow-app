@@ -435,6 +435,13 @@ The image has been saved and will be included in your meeting record.`
 // Create singleton instance
 const ocrService = new OCRService()
 
+// Load saved API key from localStorage
+const savedApiKey = localStorage.getItem('ocrApiKey')
+if (savedApiKey) {
+  ocrService.setUserApiKey(savedApiKey)
+  console.log('OCR.space API key loaded from localStorage')
+}
+
 // Initialize on first load
 ocrService.initialize().catch(() => {
   console.log('OCR service initialization completed with fallback only')

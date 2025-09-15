@@ -7,6 +7,8 @@
 class NotionService {
   constructor() {
     this.baseUrl = 'https://api.notion.com/v1'
+    // Use CORS proxy for browser environments
+    this.corsProxy = 'https://api.allorigins.win/raw?url='
     this.version = '2022-06-28'
     this.apiKey = null
     this.stakeholderDbIds = [] // Support multiple stakeholder databases
@@ -78,6 +80,22 @@ class NotionService {
   }
 
   /**
+   * Get API URL with CORS proxy if needed
+   */
+  getApiUrl(endpoint) {
+    const url = `${this.baseUrl}${endpoint}`
+    // For GitHub Pages, we'll try direct connection first and handle CORS errors
+    return url
+  }
+
+  /**
+   * Check if we're in a CORS-restricted environment
+   */
+  isGitHubPages() {
+    return typeof window !== 'undefined' && window.location.hostname.includes('github.io')
+  }
+
+  /**
    * Test Notion API connection
    */
   async testConnection() {
@@ -86,7 +104,7 @@ class NotionService {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/users/me`, {
+      const response = await fetch(this.getApiUrl('/users/me'), {
         headers: this.getHeaders()
       })
 
@@ -106,6 +124,12 @@ class NotionService {
       }
     } catch (error) {
       console.error('Notion connection test failed:', error)
+
+      // Check if this is a CORS error in GitHub Pages deployment
+      if (this.isGitHubPages() && error.message.includes('CORS')) {
+        throw new Error(`CORS Error: Notion API access is blocked from GitHub Pages. Please use the local development server (npm run dev) to test Notion integration. In production, consider using a backend server or CORS proxy.`)
+      }
+
       throw error
     }
   }
@@ -125,7 +149,7 @@ class NotionService {
         try {
           console.log(`Fetching stakeholders from database ${index + 1}/${this.stakeholderDbIds.length}: ${dbId}`)
 
-          const response = await fetch(`${this.baseUrl}/databases/${dbId}/query`, {
+          const response = await fetch(this.getApiUrl(`/databases/${dbId}/query`), {
             method: 'POST',
             headers: this.getHeaders(),
             body: JSON.stringify({
@@ -216,7 +240,7 @@ class NotionService {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/databases/${this.categoryDbId}/query`, {
+      const response = await fetch(this.getApiUrl(`/databases/${this.categoryDbId}/query`), {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify({
@@ -268,7 +292,7 @@ class NotionService {
     try {
       const pageProperties = this.buildMeetingProperties(meeting, analysisResults)
 
-      const response = await fetch(`${this.baseUrl}/pages`, {
+      const response = await fetch(this.getApiUrl('/pages'), {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify({

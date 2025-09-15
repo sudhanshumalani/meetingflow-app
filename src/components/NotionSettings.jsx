@@ -175,6 +175,28 @@ export default function NotionSettings() {
               Connect MeetingFlow to your Notion workspace to sync stakeholders and export meetings.
             </p>
 
+            {/* GitHub Pages Warning */}
+            {typeof window !== 'undefined' && window.location.hostname.includes('github.io') && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <h4 className="font-medium text-yellow-900 mb-2">GitHub Pages Limitation</h4>
+                    <p className="text-sm text-yellow-800 mb-2">
+                      Notion API integration is not available on GitHub Pages due to CORS restrictions.
+                      To test the Notion integration:
+                    </p>
+                    <ol className="text-sm text-yellow-800 space-y-1 list-decimal list-inside">
+                      <li>Clone the repository locally</li>
+                      <li>Run <code className="bg-yellow-100 px-1 rounded">npm install</code></li>
+                      <li>Run <code className="bg-yellow-100 px-1 rounded">npm run dev</code></li>
+                      <li>Access the app at <code className="bg-yellow-100 px-1 rounded">http://localhost:5173</code></li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Setup Instructions */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
               <div className="flex items-start gap-3">

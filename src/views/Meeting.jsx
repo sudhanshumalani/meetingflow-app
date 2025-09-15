@@ -94,6 +94,7 @@ export default function Meeting() {
   const [ocrProgress, setOcrProgress] = useState(0)
   const [ocrStatus, setOcrStatus] = useState('')
   const [uploadedFiles, setUploadedFiles] = useState([])
+  const [uploadedImageUrls, setUploadedImageUrls] = useState([]) // URLs for displaying images
   const [extractedText, setExtractedText] = useState('')
   const [isEditingExtractedText, setIsEditingExtractedText] = useState(false)
   
@@ -124,6 +125,15 @@ export default function Meeting() {
 
   // Use real stakeholders from app context, fallback to mock data for demo
   const displayStakeholders = stakeholders.length > 0 ? stakeholders : mockStakeholders
+
+  // Cleanup object URLs when component unmounts
+  useEffect(() => {
+    return () => {
+      uploadedImageUrls.forEach(imageData => {
+        URL.revokeObjectURL(imageData.url)
+      })
+    }
+  }, [uploadedImageUrls])
 
   useEffect(() => {
     const meeting = meetings.find(m => m.id === id)
@@ -252,6 +262,11 @@ export default function Meeting() {
       if (acceptedFiles.length > 0) {
         const file = acceptedFiles[0]
         setUploadedFiles(prev => [...prev, file])
+
+        // Create image URL for display
+        const imageUrl = URL.createObjectURL(file)
+        setUploadedImageUrls(prev => [...prev, { url: imageUrl, name: file.name }])
+
         await processImage(file)
       }
     }
@@ -308,8 +323,13 @@ export default function Meeting() {
           // Process with Claude AI first for intelligent analysis
           if (text.length > 20) {
             console.log('🧠 Processing OCR text with Claude AI...')
-            await handleAIAnalysis(text)
-            return // Claude AI will handle the notes population
+            try {
+              await handleAIAnalysis(text)
+              return // Claude AI will handle the notes population
+            } catch (error) {
+              console.warn('⚠️ Claude AI processing failed, using fallback:', error)
+              // Continue to fallback logic below
+            }
           }
 
           // Fallback: Smart 3-section population
@@ -348,35 +368,45 @@ export default function Meeting() {
 
           // If we have notes section or no specific sections were found, distribute text
           if (sections.notes && sections.notes.length > 0) {
-            console.log('Distributing notes across 2 sections:', sections.notes.length, 'lines')
+            console.log('Distributing notes across 3 sections:', sections.notes.length, 'lines')
             const notes = sections.notes
-            const halfLength = Math.ceil(notes.length / 2)
+            const thirdLength = Math.ceil(notes.length / 3)
+
+            // Generate summary from first few lines
+            if (!newNotes.summary || newNotes.summary === digitalNotes.summary) {
+              newNotes.summary = `OCR extracted text summary: ${notes.slice(0, Math.min(3, notes.length)).join(' ')}`
+              console.log('Generated fallback summary')
+            }
 
             // Only populate empty sections
             if (!newNotes.keyDiscussionPoints || newNotes.keyDiscussionPoints === digitalNotes.keyDiscussionPoints) {
-              newNotes.keyDiscussionPoints = notes.slice(0, halfLength).join('\n')
-              console.log('Populated keyDiscussionPoints with', halfLength, 'lines')
+              newNotes.keyDiscussionPoints = notes.slice(0, thirdLength * 2).join('\n')
+              console.log('Populated keyDiscussionPoints with', thirdLength * 2, 'lines')
             }
             if (!newNotes.actionItems || newNotes.actionItems === digitalNotes.actionItems) {
-              const actionLines = notes.slice(halfLength).map(line => `• ${line}`)
+              const actionLines = notes.slice(thirdLength * 2).map(line => `• ${line}`)
               newNotes.actionItems = actionLines.join('\n')
-              console.log('Populated actionItems with', notes.length - halfLength, 'lines')
+              console.log('Populated actionItems with', notes.length - (thirdLength * 2), 'lines')
             }
           } else if (!sections.keyDiscussionPoints?.length && !sections.actionItems?.length) {
-            // No sections found at all, distribute raw text lines across 2 sections
-            console.log('No sections found, distributing raw text across 2 sections')
+            // No sections found at all, distribute raw text lines across 3 sections
+            console.log('No sections found, distributing raw text across 3 sections')
             const lines = text.split('\n').filter(line => line.trim().length > 0)
-            const halfLength = Math.ceil(lines.length / 2)
+            const thirdLength = Math.ceil(lines.length / 3)
 
             if (lines.length > 0) {
-              newNotes.keyDiscussionPoints = lines.slice(0, halfLength).join('\n')
-              const actionLines = lines.slice(halfLength).map(line => `• ${line}`)
+              // Generate summary from first few lines
+              newNotes.summary = `Meeting content extracted via OCR: ${lines.slice(0, Math.min(2, lines.length)).join(' ')}`
+
+              // Distribute remaining lines
+              newNotes.keyDiscussionPoints = lines.slice(0, thirdLength * 2).join('\n')
+              const actionLines = lines.slice(thirdLength * 2).map(line => `• ${line}`)
               newNotes.actionItems = actionLines.join('\n')
-              console.log('Distributed', lines.length, 'lines across 2 sections')
+              console.log('Distributed', lines.length, 'lines across 3 sections with summary')
             }
           }
 
-          console.log('Final 2-section assignment:', newNotes)
+          console.log('Final 3-section assignment:', newNotes)
           setDigitalNotes(newNotes)
         } else if (result.debug?.isFallback) {
           console.log('OCR FALLBACK - Not populating quadrants, user needs to configure API key')
@@ -1374,16 +1404,18 @@ Action: Schedule follow-up meeting by Friday"
                           </div>
                         </div>
                       )}
-                      {uploadedFiles.map((file, index) => (
+                      {uploadedImageUrls.map((imageData, index) => (
                         <div key={index} className="relative">
-                          <div className="w-full h-32 bg-gray-100 rounded-lg flex items-center justify-center">
-                            <div className="text-center">
-                              <Image size={24} className="mx-auto text-gray-400 mb-1" />
-                              <p className="text-xs text-gray-600">{file.name}</p>
-                            </div>
-                          </div>
+                          <img
+                            src={imageData.url}
+                            alt={imageData.name}
+                            className="w-full h-32 object-cover rounded-lg"
+                          />
                           <div className="absolute top-2 right-2 bg-blue-500 text-white px-2 py-1 rounded text-xs">
                             Uploaded
+                          </div>
+                          <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
+                            {imageData.name}
                           </div>
                         </div>
                       ))}

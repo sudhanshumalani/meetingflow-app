@@ -66,7 +66,7 @@ import { BatchExportButton, ExportOptionsButton } from '../components/ExportOpti
 
 export default function Home() {
   const navigate = useNavigate()
-  const { meetings, stakeholders, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder } = useApp()
+  const { meetings, stakeholders, stakeholderCategories, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder, addStakeholderCategory, updateStakeholderCategory, deleteStakeholderCategory } = useApp()
   const [searchTerm, setSearchTerm] = useState('')
   const [notifications, setNotifications] = useState([])
   const [activeTab, setActiveTab] = useState('all')
@@ -100,6 +100,10 @@ export default function Home() {
   const [showDeleteStakeholderConfirm, setShowDeleteStakeholderConfirm] = useState(null)
   const [showStakeholderManagement, setShowStakeholderManagement] = useState(false)
   const [newStakeholder, setNewStakeholder] = useState(null)
+  const [showAddCategoryForm, setShowAddCategoryForm] = useState(false)
+  const [editingCategory, setEditingCategory] = useState(null)
+  const [newCategory, setNewCategory] = useState({ label: '', description: '', color: 'blue' })
+  const [activeStakeholderTab, setActiveStakeholderTab] = useState('stakeholders')
 
   // Initialize services
   const sentimentAnalyzer = new SentimentAnalyzer()
@@ -1316,291 +1320,414 @@ export default function Home() {
             {/* Modal Header */}
             <div className="flex items-center justify-between p-6 border-b">
               <h2 className="text-xl font-semibold text-gray-900">Manage Stakeholders</h2>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleCreateStakeholder}
-                  className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-                >
-                  <Plus size={16} />
-                  Add Stakeholder
-                </button>
-                <button
-                  onClick={() => setShowStakeholderManagement(false)}
-                  className="text-gray-500 hover:text-gray-700"
-                >
-                  <X size={24} />
-                </button>
-              </div>
+              <button
+                onClick={() => setShowStakeholderManagement(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex border-b">
+              <button
+                onClick={() => setActiveStakeholderTab('stakeholders')}
+                className={`px-6 py-3 font-medium transition-colors ${
+                  activeStakeholderTab === 'stakeholders'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Stakeholders
+              </button>
+              <button
+                onClick={() => setActiveStakeholderTab('categories')}
+                className={`px-6 py-3 font-medium transition-colors ${
+                  activeStakeholderTab === 'categories'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Categories
+              </button>
             </div>
 
             {/* Modal Content */}
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
-              {/* New Stakeholder Form */}
-              {newStakeholder && (
-                <div className="mb-6 p-4 border-2 border-blue-200 rounded-lg bg-blue-50">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Add New Stakeholder</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
-                      <input
-                        type="text"
-                        value={newStakeholder.name || ''}
-                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, name: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="Full name"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Title</label>
-                      <input
-                        type="text"
-                        value={newStakeholder.title || ''}
-                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, title: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="Job title"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Organization</label>
-                      <input
-                        type="text"
-                        value={newStakeholder.organization || ''}
-                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, organization: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="Company or organization"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-                      <input
-                        type="email"
-                        value={newStakeholder.email || ''}
-                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, email: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="email@example.com"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
-                      <select
-                        value={newStakeholder.category || 'investors'}
-                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, category: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      >
-                        {Object.entries(STAKEHOLDER_CATEGORIES).map(([key, value]) => (
-                          <option key={key} value={key}>{getCategoryDisplayName(key)}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
-                      <select
-                        value={newStakeholder.priority || 'medium'}
-                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, priority: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      >
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Notes</label>
-                    <textarea
-                      value={newStakeholder.notes || ''}
-                      onChange={(e) => setNewStakeholder(prev => ({ ...prev, notes: e.target.value }))}
-                      rows={3}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="Additional notes about this stakeholder"
-                    />
-                  </div>
-                  <div className="flex justify-end gap-3 mt-4">
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-180px)]">
+              {activeStakeholderTab === 'stakeholders' && (
+                <>
+                  {/* Add New Stakeholder Button */}
+                  <div className="mb-6">
                     <button
-                      onClick={handleCancelNewStakeholder}
-                      className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                    >
-                      <XCircle size={16} />
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleSaveNewStakeholder}
+                      onClick={handleCreateStakeholder}
                       className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
                     >
-                      <Save size={16} />
+                      <Plus size={16} />
                       Add Stakeholder
                     </button>
                   </div>
-                </div>
+
+                  {/* New Stakeholder Form */}
+                  {newStakeholder && (
+                    <div className="mb-6 p-4 border-2 border-blue-200 rounded-lg bg-blue-50">
+                      <h3 className="text-lg font-medium text-gray-900 mb-4">Add New Stakeholder</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
+                          <input
+                            type="text"
+                            value={newStakeholder.name || ''}
+                            onChange={(e) => setNewStakeholder(prev => ({ ...prev, name: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="Stakeholder name"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Category *</label>
+                          <select
+                            value={newStakeholder.category || ''}
+                            onChange={(e) => setNewStakeholder(prev => ({ ...prev, category: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            required
+                          >
+                            <option value="">Select Category</option>
+                            {stakeholderCategories.map(cat => (
+                              <option key={cat.key} value={cat.key}>{cat.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="flex justify-end gap-3 mt-4">
+                        <button
+                          onClick={handleCancelNewStakeholder}
+                          className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                        >
+                          <XCircle size={16} />
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSaveNewStakeholder}
+                          className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                        >
+                          <Save size={16} />
+                          Add Stakeholder
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
-              {displayStakeholders.length === 0 ? (
-                <div className="text-center py-12">
-                  <Users className="mx-auto text-gray-400 mb-4" size={48} />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No stakeholders found</h3>
-                  <p className="text-gray-600">Add your first stakeholder to get started.</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {displayStakeholders.map(stakeholder => (
-                    <div key={stakeholder.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-                      {editingStakeholder && editingStakeholder.id === stakeholder.id ? (
-                        /* Edit Mode */
-                        <div className="space-y-4">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
-                              <input
-                                type="text"
-                                value={editingStakeholder.name || ''}
-                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, name: e.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">Title</label>
-                              <input
-                                type="text"
-                                value={editingStakeholder.title || ''}
-                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, title: e.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">Organization</label>
-                              <input
-                                type="text"
-                                value={editingStakeholder.organization || ''}
-                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, organization: e.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-                              <input
-                                type="email"
-                                value={editingStakeholder.email || ''}
-                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, email: e.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
-                              <select
-                                value={editingStakeholder.category || 'investors'}
-                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, category: e.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              >
-                                {Object.entries(STAKEHOLDER_CATEGORIES).map(([key, value]) => (
-                                  <option key={key} value={key}>{getCategoryDisplayName(key)}</option>
-                                ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
-                              <select
-                                value={editingStakeholder.priority || 'medium'}
-                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, priority: e.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              >
-                                <option value="low">Low</option>
-                                <option value="medium">Medium</option>
-                                <option value="high">High</option>
-                              </select>
-                            </div>
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Notes</label>
-                            <textarea
-                              value={editingStakeholder.notes || ''}
-                              onChange={(e) => setEditingStakeholder(prev => ({ ...prev, notes: e.target.value }))}
-                              rows={3}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            />
-                          </div>
-                          <div className="flex justify-end gap-3 pt-4 border-t">
-                            <button
-                              onClick={handleCancelStakeholderEdit}
-                              className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                            >
-                              <XCircle size={16} />
-                              Cancel
-                            </button>
-                            <button
-                              onClick={handleSaveStakeholderEdit}
-                              className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-                            >
-                              <Save size={16} />
-                              Save Changes
-                            </button>
-                          </div>
+              {activeStakeholderTab === 'categories' && (
+                <>
+                  {/* Add New Category Button */}
+                  <div className="mb-6">
+                    <button
+                      onClick={() => setShowAddCategoryForm(true)}
+                      className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                    >
+                      <Plus size={16} />
+                      Add Category
+                    </button>
+                  </div>
+
+                  {/* New Category Form */}
+                  {showAddCategoryForm && (
+                    <div className="mb-6 p-4 border-2 border-blue-200 rounded-lg bg-blue-50">
+                      <h3 className="text-lg font-medium text-gray-900 mb-4">Add New Category</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
+                          <input
+                            type="text"
+                            value={newCategory.label}
+                            onChange={(e) => setNewCategory(prev => ({ ...prev, label: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="Category name"
+                          />
                         </div>
-                      ) : (
-                        /* View Mode */
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <h3 className="text-lg font-medium text-gray-900">
-                                {stakeholder.name}
-                              </h3>
-                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                stakeholder.category === 'investors' ? 'bg-green-100 text-green-800' :
-                                stakeholder.category === 'team' ? 'bg-blue-100 text-blue-800' :
-                                stakeholder.category === 'customers' ? 'bg-purple-100 text-purple-800' :
-                                stakeholder.category === 'partners' ? 'bg-orange-100 text-orange-800' :
-                                'bg-gray-100 text-gray-800'
-                              }`}>
-                                {getCategoryDisplayName(stakeholder.category)}
-                              </span>
-                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                stakeholder.priority === 'high' ? 'bg-red-100 text-red-800' :
-                                stakeholder.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                                'bg-green-100 text-green-800'
-                              }`}>
-                                {stakeholder.priority || 'medium'} priority
-                              </span>
-                            </div>
-                            <div className="space-y-1 mb-3">
-                              {stakeholder.title && (
-                                <p className="text-sm text-gray-600">{stakeholder.title}</p>
-                              )}
-                              {stakeholder.organization && (
-                                <p className="text-sm text-gray-600">{stakeholder.organization}</p>
-                              )}
-                              {stakeholder.email && (
-                                <p className="text-sm text-gray-600">{stakeholder.email}</p>
-                              )}
-                            </div>
-                            {stakeholder.notes && (
-                              <p className="text-sm text-gray-600 mb-3 line-clamp-2">{stakeholder.notes}</p>
-                            )}
-                            <div className="text-xs text-gray-500">
-                              Added: {stakeholder.createdAt ? format(new Date(stakeholder.createdAt), 'MMM d, yyyy') : 'Unknown'}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2 ml-4">
-                            <button
-                              onClick={() => handleEditStakeholder(stakeholder)}
-                              className="flex items-center gap-1 px-3 py-2 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
-                              title="Edit Stakeholder"
-                            >
-                              <Edit2 size={16} />
-                              <span className="hidden sm:inline">Edit</span>
-                            </button>
-                            <button
-                              onClick={() => handleDeleteStakeholder(stakeholder.id)}
-                              className="flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                              title="Delete Stakeholder"
-                            >
-                              <Trash2 size={16} />
-                              <span className="hidden sm:inline">Delete</span>
-                            </button>
-                          </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
+                          <select
+                            value={newCategory.color}
+                            onChange={(e) => setNewCategory(prev => ({ ...prev, color: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            <option value="blue">Blue</option>
+                            <option value="green">Green</option>
+                            <option value="purple">Purple</option>
+                            <option value="red">Red</option>
+                            <option value="orange">Orange</option>
+                            <option value="yellow">Yellow</option>
+                            <option value="gray">Gray</option>
+                          </select>
                         </div>
-                      )}
+                      </div>
+                      <div className="mt-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                        <textarea
+                          value={newCategory.description}
+                          onChange={(e) => setNewCategory(prev => ({ ...prev, description: e.target.value }))}
+                          rows={2}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          placeholder="Brief description of this category"
+                        />
+                      </div>
+                      <div className="flex justify-end gap-3 mt-4">
+                        <button
+                          onClick={() => {
+                            setShowAddCategoryForm(false)
+                            setNewCategory({ label: '', description: '', color: 'blue' })
+                          }}
+                          className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                        >
+                          <XCircle size={16} />
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (newCategory.label.trim()) {
+                              addStakeholderCategory({
+                                ...newCategory,
+                                key: newCategory.label.toLowerCase().replace(/\s+/g, '-'),
+                                createdAt: new Date().toISOString()
+                              })
+                              setShowAddCategoryForm(false)
+                              setNewCategory({ label: '', description: '', color: 'blue' })
+                            }
+                          }}
+                          disabled={!newCategory.label.trim()}
+                          className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 rounded-lg transition-colors"
+                        >
+                          <Save size={16} />
+                          Add Category
+                        </button>
+                      </div>
                     </div>
-                  ))}
-                </div>
+                  )}
+                </>
+              )}
+
+              {activeStakeholderTab === 'stakeholders' && (
+                stakeholders.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Users className="mx-auto text-gray-400 mb-4" size={48} />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No stakeholders found</h3>
+                    <p className="text-gray-600">Add your first stakeholder to get started.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {stakeholders.map(stakeholder => {
+                      const categoryInfo = stakeholderCategories.find(cat => cat.key === stakeholder.category)
+                      return (
+                        <div key={stakeholder.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                          {editingStakeholder && editingStakeholder.id === stakeholder.id ? (
+                            /* Edit Mode */
+                            <div className="space-y-4">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
+                                  <input
+                                    type="text"
+                                    value={editingStakeholder.name || ''}
+                                    onChange={(e) => setEditingStakeholder(prev => ({ ...prev, name: e.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
+                                  <select
+                                    value={editingStakeholder.category || ''}
+                                    onChange={(e) => setEditingStakeholder(prev => ({ ...prev, category: e.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  >
+                                    {stakeholderCategories.map(cat => (
+                                      <option key={cat.key} value={cat.key}>{cat.label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
+                              <div className="flex justify-end gap-3 pt-4 border-t">
+                                <button
+                                  onClick={handleCancelStakeholderEdit}
+                                  className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                                >
+                                  <XCircle size={16} />
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={handleSaveStakeholderEdit}
+                                  className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                                >
+                                  <Save size={16} />
+                                  Save Changes
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* View Mode */
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-3 mb-2">
+                                  <h3 className="text-lg font-medium text-gray-900">
+                                    {stakeholder.name}
+                                  </h3>
+                                  <span className={`px-2 py-1 rounded-full text-xs font-medium bg-${categoryInfo?.color || 'gray'}-100 text-${categoryInfo?.color || 'gray'}-800`}>
+                                    {categoryInfo?.label || stakeholder.category || 'Uncategorized'}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  Added: {stakeholder.createdAt ? format(new Date(stakeholder.createdAt), 'MMM d, yyyy') : 'Unknown'}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 ml-4">
+                                <button
+                                  onClick={() => handleEditStakeholder(stakeholder)}
+                                  className="flex items-center gap-1 px-3 py-2 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+                                  title="Edit Stakeholder"
+                                >
+                                  <Edit2 size={16} />
+                                  <span className="hidden sm:inline">Edit</span>
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteStakeholder(stakeholder.id)}
+                                  className="flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="Delete Stakeholder"
+                                >
+                                  <Trash2 size={16} />
+                                  <span className="hidden sm:inline">Delete</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              )}
+
+              {activeStakeholderTab === 'categories' && (
+                stakeholderCategories.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="text-6xl mb-4">🏷️</div>
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No categories found</h3>
+                    <p className="text-gray-600">Add your first category to get started.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {stakeholderCategories.map(category => {
+                      const stakeholderCount = stakeholders.filter(s => s.category === category.key).length
+                      return (
+                        <div key={category.key} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                          {editingCategory && editingCategory.key === category.key ? (
+                            /* Edit Mode */
+                            <div className="space-y-4">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
+                                  <input
+                                    type="text"
+                                    value={editingCategory.label || ''}
+                                    onChange={(e) => setEditingCategory(prev => ({ ...prev, label: e.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
+                                  <select
+                                    value={editingCategory.color || 'blue'}
+                                    onChange={(e) => setEditingCategory(prev => ({ ...prev, color: e.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  >
+                                    <option value="blue">Blue</option>
+                                    <option value="green">Green</option>
+                                    <option value="purple">Purple</option>
+                                    <option value="red">Red</option>
+                                    <option value="orange">Orange</option>
+                                    <option value="yellow">Yellow</option>
+                                    <option value="gray">Gray</option>
+                                  </select>
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                                <textarea
+                                  value={editingCategory.description || ''}
+                                  onChange={(e) => setEditingCategory(prev => ({ ...prev, description: e.target.value }))}
+                                  rows={2}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                              </div>
+                              <div className="flex justify-end gap-3 pt-4 border-t">
+                                <button
+                                  onClick={() => setEditingCategory(null)}
+                                  className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                                >
+                                  <XCircle size={16} />
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    updateStakeholderCategory(editingCategory)
+                                    setEditingCategory(null)
+                                  }}
+                                  className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                                >
+                                  <Save size={16} />
+                                  Save Changes
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* View Mode */
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-3 mb-2">
+                                  <div className={`w-4 h-4 rounded-full bg-${category.color || 'gray'}-500`}></div>
+                                  <h3 className="text-lg font-medium text-gray-900">
+                                    {category.label}
+                                  </h3>
+                                  <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                                    {stakeholderCount} stakeholder{stakeholderCount !== 1 ? 's' : ''}
+                                  </span>
+                                </div>
+                                {category.description && (
+                                  <p className="text-sm text-gray-600 mb-2">{category.description}</p>
+                                )}
+                                <div className="text-xs text-gray-500">
+                                  Created: {category.createdAt ? format(new Date(category.createdAt), 'MMM d, yyyy') : 'Unknown'}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 ml-4">
+                                <button
+                                  onClick={() => setEditingCategory(category)}
+                                  className="flex items-center gap-1 px-3 py-2 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+                                  title="Edit Category"
+                                >
+                                  <Edit2 size={16} />
+                                  <span className="hidden sm:inline">Edit</span>
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm(`Are you sure you want to delete this category? ${stakeholderCount} stakeholder${stakeholderCount !== 1 ? 's' : ''} will be affected.`)) {
+                                      deleteStakeholderCategory(category.key)
+                                    }
+                                  }}
+                                  className="flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="Delete Category"
+                                >
+                                  <Trash2 size={16} />
+                                  <span className="hidden sm:inline">Delete</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
               )}
             </div>
           </div>

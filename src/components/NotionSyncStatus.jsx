@@ -127,9 +127,11 @@ export default function NotionSyncStatus({ showDetails = true, onConfigureClick 
         <div className="grid grid-cols-3 gap-4 pt-3 border-t border-gray-100">
           <div className="text-center">
             <div className="text-lg font-semibold text-gray-900">
-              {notion.syncStatus.stakeholderDbId ? '✓' : '—'}
+              {notion.syncStatus.stakeholderDbCount > 0 ? `${notion.syncStatus.stakeholderDbCount}` : '—'}
             </div>
-            <div className="text-xs text-gray-600">Stakeholders</div>
+            <div className="text-xs text-gray-600">
+              Stakeholder DB{notion.syncStatus.stakeholderDbCount !== 1 ? 's' : ''}
+            </div>
           </div>
           <div className="text-center">
             <div className="text-lg font-semibold text-gray-900">

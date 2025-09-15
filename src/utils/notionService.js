@@ -9,7 +9,7 @@ class NotionService {
     this.baseUrl = 'https://api.notion.com/v1'
     this.version = '2022-06-28'
     this.apiKey = null
-    this.stakeholderDbId = null
+    this.stakeholderDbIds = [] // Support multiple stakeholder databases
     this.categoryDbId = null
     this.meetingDbId = null
     this.client = null // For @notionhq/client when available
@@ -20,13 +20,41 @@ class NotionService {
    */
   initialize(config) {
     this.apiKey = config.apiKey || localStorage.getItem('notionApiKey')
-    this.stakeholderDbId = config.stakeholderDbId || localStorage.getItem('notionStakeholderDbId')
+
+    // Handle multiple stakeholder databases
+    if (config.stakeholderDbIds) {
+      this.stakeholderDbIds = Array.isArray(config.stakeholderDbIds) ? config.stakeholderDbIds : [config.stakeholderDbIds]
+    } else if (config.stakeholderDbId) {
+      // Backward compatibility - convert single ID to array
+      this.stakeholderDbIds = [config.stakeholderDbId]
+    } else {
+      // Load from localStorage
+      const stored = localStorage.getItem('notionStakeholderDbIds')
+      if (stored) {
+        try {
+          this.stakeholderDbIds = JSON.parse(stored)
+        } catch (e) {
+          // Fallback to old single database format
+          const oldId = localStorage.getItem('notionStakeholderDbId')
+          this.stakeholderDbIds = oldId ? [oldId] : []
+        }
+      } else {
+        // Check for old format
+        const oldId = localStorage.getItem('notionStakeholderDbId')
+        this.stakeholderDbIds = oldId ? [oldId] : []
+      }
+    }
+
     this.categoryDbId = config.categoryDbId || localStorage.getItem('notionCategoryDbId')
     this.meetingDbId = config.meetingDbId || localStorage.getItem('notionMeetingDbId')
 
     // Store in localStorage for persistence
     if (config.apiKey) localStorage.setItem('notionApiKey', config.apiKey)
-    if (config.stakeholderDbId) localStorage.setItem('notionStakeholderDbId', config.stakeholderDbId)
+    if (this.stakeholderDbIds.length > 0) {
+      localStorage.setItem('notionStakeholderDbIds', JSON.stringify(this.stakeholderDbIds))
+      // Remove old single database storage
+      localStorage.removeItem('notionStakeholderDbId')
+    }
     if (config.categoryDbId) localStorage.setItem('notionCategoryDbId', config.categoryDbId)
     if (config.meetingDbId) localStorage.setItem('notionMeetingDbId', config.meetingDbId)
   }
@@ -35,7 +63,7 @@ class NotionService {
    * Check if Notion is configured and available
    */
   isConfigured() {
-    return !!(this.apiKey && (this.stakeholderDbId || this.categoryDbId || this.meetingDbId))
+    return !!(this.apiKey && (this.stakeholderDbIds.length > 0 || this.categoryDbId || this.meetingDbId))
   }
 
   /**
@@ -83,36 +111,70 @@ class NotionService {
   }
 
   /**
-   * Fetch stakeholders from Notion database
+   * Fetch stakeholders from all configured Notion databases
    */
   async fetchStakeholders() {
-    if (!this.stakeholderDbId) {
-      console.warn('Stakeholder database ID not configured')
+    if (this.stakeholderDbIds.length === 0) {
+      console.warn('No stakeholder database IDs configured')
       return []
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/databases/${this.stakeholderDbId}/query`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify({
-          page_size: 100,
-          filter: {
-            property: 'Status',
-            select: {
-              does_not_equal: 'Archived'
-            }
+      const allStakeholders = []
+      const fetchPromises = this.stakeholderDbIds.map(async (dbId, index) => {
+        try {
+          console.log(`Fetching stakeholders from database ${index + 1}/${this.stakeholderDbIds.length}: ${dbId}`)
+
+          const response = await fetch(`${this.baseUrl}/databases/${dbId}/query`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+              page_size: 100,
+              filter: {
+                property: 'Status',
+                select: {
+                  does_not_equal: 'Archived'
+                }
+              }
+            })
+          })
+
+          if (!response.ok) {
+            const error = await response.json()
+            console.warn(`Failed to fetch from database ${dbId}:`, error.message)
+            return { dbId, stakeholders: [], error: error.message }
           }
-        })
+
+          const data = await response.json()
+          const stakeholders = this.parseStakeholders(data.results, dbId)
+
+          console.log(`Successfully fetched ${stakeholders.length} stakeholders from database ${dbId}`)
+          return { dbId, stakeholders, error: null }
+        } catch (error) {
+          console.warn(`Error fetching from database ${dbId}:`, error.message)
+          return { dbId, stakeholders: [], error: error.message }
+        }
       })
 
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(`Failed to fetch stakeholders: ${error.message}`)
+      const results = await Promise.all(fetchPromises)
+
+      // Combine all stakeholders and track source databases
+      results.forEach(result => {
+        if (result.stakeholders.length > 0) {
+          allStakeholders.push(...result.stakeholders)
+        }
+      })
+
+      // Report results
+      const successCount = results.filter(r => !r.error).length
+      const totalDatabases = this.stakeholderDbIds.length
+      console.log(`Fetched ${allStakeholders.length} total stakeholders from ${successCount}/${totalDatabases} databases`)
+
+      if (successCount === 0) {
+        throw new Error('Failed to fetch stakeholders from any configured databases')
       }
 
-      const data = await response.json()
-      return this.parseStakeholders(data.results)
+      return allStakeholders
     } catch (error) {
       console.error('Error fetching stakeholders from Notion:', error)
       throw error
@@ -122,7 +184,7 @@ class NotionService {
   /**
    * Parse Notion pages into stakeholder objects
    */
-  parseStakeholders(pages) {
+  parseStakeholders(pages, sourceDbId = null) {
     return pages.map(page => {
       const properties = page.properties
 
@@ -136,6 +198,7 @@ class NotionService {
         priority: this.extractSelect(properties.Priority) || 'medium',
         notes: this.extractText(properties.Notes),
         source: 'notion',
+        sourceDbId: sourceDbId, // Track which database this came from
         lastSynced: new Date().toISOString(),
         createdAt: page.created_time,
         updatedAt: page.last_edited_time
@@ -425,7 +488,7 @@ class NotionService {
       await this.testConnection()
 
       // Fetch stakeholders
-      if (this.stakeholderDbId) {
+      if (this.stakeholderDbIds.length > 0) {
         try {
           results.stakeholders = await this.fetchStakeholders()
         } catch (error) {
@@ -491,7 +554,8 @@ class NotionService {
       configured: this.isConfigured(),
       lastSynced: lastSynced ? new Date(lastSynced) : null,
       lastError: lastError || null,
-      stakeholderDbId: !!this.stakeholderDbId,
+      stakeholderDbIds: this.stakeholderDbIds,
+      stakeholderDbCount: this.stakeholderDbIds.length,
       categoryDbId: !!this.categoryDbId,
       meetingDbId: !!this.meetingDbId
     }
@@ -502,12 +566,13 @@ class NotionService {
    */
   clearConfiguration() {
     this.apiKey = null
-    this.stakeholderDbId = null
+    this.stakeholderDbIds = []
     this.categoryDbId = null
     this.meetingDbId = null
 
     localStorage.removeItem('notionApiKey')
-    localStorage.removeItem('notionStakeholderDbId')
+    localStorage.removeItem('notionStakeholderDbIds')
+    localStorage.removeItem('notionStakeholderDbId') // Remove old format too
     localStorage.removeItem('notionCategoryDbId')
     localStorage.removeItem('notionMeetingDbId')
     localStorage.removeItem('notionLastSynced')

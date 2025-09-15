@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Cloud, Key, Database, TestTube, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, ExternalLink, Info } from 'lucide-react'
+import { Cloud, Key, Database, TestTube, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, ExternalLink, Info, Plus, X } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 import NotionSyncStatus from './NotionSyncStatus'
 
@@ -8,7 +8,7 @@ export default function NotionSettings() {
 
   const [formData, setFormData] = useState({
     apiKey: '',
-    stakeholderDbId: '',
+    stakeholderDbIds: [''], // Array to support multiple databases
     categoryDbId: '',
     meetingDbId: ''
   })
@@ -21,6 +21,30 @@ export default function NotionSettings() {
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }))
     setConnectionResult(null) // Clear previous test results
+  }
+
+  const handleStakeholderDbChange = (index, value) => {
+    setFormData(prev => ({
+      ...prev,
+      stakeholderDbIds: prev.stakeholderDbIds.map((id, i) => i === index ? value : id)
+    }))
+    setConnectionResult(null)
+  }
+
+  const addStakeholderDatabase = () => {
+    setFormData(prev => ({
+      ...prev,
+      stakeholderDbIds: [...prev.stakeholderDbIds, '']
+    }))
+  }
+
+  const removeStakeholderDatabase = (index) => {
+    if (formData.stakeholderDbIds.length > 1) {
+      setFormData(prev => ({
+        ...prev,
+        stakeholderDbIds: prev.stakeholderDbIds.filter((_, i) => i !== index)
+      }))
+    }
   }
 
   const handleTestConnection = async () => {
@@ -58,19 +82,32 @@ export default function NotionSettings() {
     setIsSaving(true)
 
     try {
+      // Filter out empty stakeholder database IDs
+      const cleanedStakeholderDbIds = formData.stakeholderDbIds.filter(id => id.trim())
+
+      if (!formData.apiKey.trim()) {
+        throw new Error('API key is required')
+      }
+
+      // Prepare configuration data
+      const configData = {
+        ...formData,
+        stakeholderDbIds: cleanedStakeholderDbIds
+      }
+
       // Save configuration
-      configureNotion(formData)
+      configureNotion(configData)
 
       // Clear form
       setFormData({
         apiKey: '',
-        stakeholderDbId: '',
+        stakeholderDbIds: [''],
         categoryDbId: '',
         meetingDbId: ''
       })
 
       // Test sync if databases are configured
-      if (formData.stakeholderDbId || formData.categoryDbId) {
+      if (cleanedStakeholderDbIds.length > 0 || formData.categoryDbId) {
         try {
           await syncFromNotion()
         } catch (syncError) {
@@ -80,7 +117,7 @@ export default function NotionSettings() {
 
       setConnectionResult({
         success: true,
-        message: 'Configuration saved successfully!'
+        message: `Configuration saved! ${cleanedStakeholderDbIds.length} stakeholder database(s) configured.`
       })
     } catch (error) {
       setConnectionResult({
@@ -226,22 +263,62 @@ export default function NotionSettings() {
           </div>
 
           {/* Database IDs */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-6">
+            {/* Stakeholder Databases */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <Database className="w-4 h-4 inline mr-1" />
-                Stakeholder Database ID
-              </label>
-              <input
-                type="text"
-                value={formData.stakeholderDbId}
-                onChange={(e) => handleInputChange('stakeholderDbId', e.target.value)}
-                onPaste={handleDatabaseUrlPaste('stakeholderDbId')}
-                placeholder="Paste database URL or ID"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">Optional: For syncing stakeholder data</p>
+              <div className="flex items-center justify-between mb-3">
+                <label className="block text-sm font-medium text-gray-700">
+                  <Database className="w-4 h-4 inline mr-1" />
+                  Stakeholder Databases
+                </label>
+                <button
+                  type="button"
+                  onClick={addStakeholderDatabase}
+                  className="flex items-center gap-1 px-2 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                  Add Database
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {formData.stakeholderDbIds.map((dbId, index) => (
+                  <div key={index} className="flex gap-2">
+                    <input
+                      type="text"
+                      value={dbId}
+                      onChange={(e) => handleStakeholderDbChange(index, e.target.value)}
+                      onPaste={(e) => {
+                        const pastedText = e.clipboardData.getData('text')
+                        const extractedId = extractDbIdFromUrl(pastedText)
+                        if (extractedId && extractedId !== pastedText) {
+                          e.preventDefault()
+                          handleStakeholderDbChange(index, extractedId)
+                        }
+                      }}
+                      placeholder={`Stakeholder database ${index + 1} URL or ID`}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    />
+                    {formData.stakeholderDbIds.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeStakeholderDatabase(index)}
+                        className="px-2 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Remove database"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Add multiple databases to sync stakeholders from different Notion workspaces or teams.
+              </p>
             </div>
+
+            {/* Other Databases */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -273,6 +350,7 @@ export default function NotionSettings() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
               />
               <p className="text-xs text-gray-500 mt-1">Optional: For exporting meetings</p>
+            </div>
             </div>
           </div>
 

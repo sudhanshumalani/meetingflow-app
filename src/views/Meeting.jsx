@@ -27,7 +27,7 @@ import {
 import { format } from 'date-fns'
 import { mockStakeholders, getCategoryDisplayName, STAKEHOLDER_CATEGORIES } from '../utils/mockData'
 import { getTemplateForCategory, getColorClasses, PRIORITY_LEVELS } from '../utils/meetingTemplates'
-import { processImageForMeeting, validateImageFile } from '../utils/ocrService'
+import { extractTextFromImage, setOCRApiKey, setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
 import {
   OCRImageUpload,
   AIProcessingStatus,
@@ -272,6 +272,22 @@ export default function Meeting() {
     }
   })
 
+  // Simple image validation
+  const validateImageFile = (file) => {
+    const maxSize = 10 * 1024 * 1024 // 10MB
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif']
+
+    if (!allowedTypes.includes(file.type)) {
+      return { valid: false, error: 'Only JPEG, PNG, and GIF files are supported' }
+    }
+
+    if (file.size > maxSize) {
+      return { valid: false, error: 'File size must be less than 10MB' }
+    }
+
+    return { valid: true }
+  }
+
   // OCR Processing
   const processImage = async (file) => {
     // Validate image file first
@@ -287,11 +303,7 @@ export default function Meeting() {
     setExtractedText('')
 
     try {
-      const result = await processImageForMeeting(file, {
-        meetingId: id,
-        stakeholder: formData.selectedStakeholder,
-        template: formData.template
-      }, {
+      const result = await extractTextFromImage(file, {
         onProgress: (progress) => {
           setOcrProgress(progress)
           if (progress < 30) {
@@ -308,117 +320,30 @@ export default function Meeting() {
 
       if (result.success) {
         setOcrResult(result)
-        setExtractedText(result.ocrResult.text)
+        setExtractedText(result.text)
         setOcrStatus('OCR completed successfully!')
 
         // Auto-populate digital notes with OCR results
-        if (result.ocrResult && result.ocrResult.text && !result.debug?.isFallback) {
-          console.log('OCR SUCCESS - Populating quadrants with OCR result:', result.ocrResult)
-          console.log('OCR Debug info:', result.debug)
-          console.log('OCR Text length:', result.ocrResult.text.length)
+        if (result.text && !result.isFallback) {
+          console.log('OCR SUCCESS - Processing with Claude AI:', result)
+          console.log('OCR Text length:', result.text.length)
 
-          const sections = result.ocrResult.extractedSections || {}
-          const text = result.ocrResult.text
+          const text = result.text
 
-          // Process with Claude AI first for intelligent analysis
+          // Process with Claude AI for intelligent analysis
           if (text.length > 20) {
             console.log('🧠 Processing OCR text with Claude AI...')
             await handleAIAnalysis(text)
-            return // Claude AI will handle the notes population
           }
-
-          // Fallback: Smart 3-section population
-          let newNotes = {
-            summary: digitalNotes.summary,
-            keyDiscussionPoints: digitalNotes.keyDiscussionPoints,
-            actionItems: digitalNotes.actionItems
-          }
-
-          // Try to populate with Claude AI analysis first
-          if (sections.keyDiscussionPoints && sections.keyDiscussionPoints.length > 0) {
-            newNotes.keyDiscussionPoints = sections.keyDiscussionPoints.join('\n')
-          }
-
-          if (sections.actionItems && sections.actionItems.length > 0) {
-            // Format action items properly
-            const formattedActionItems = sections.actionItems.map(item => {
-              if (typeof item === 'string') {
-                return `• ${item}`
-              } else {
-                let formatted = `• ${item.task}`
-                if (item.assignee && item.assignee !== 'Unassigned') {
-                  formatted += ` (${item.assignee})`
-                }
-                if (item.priority && item.priority !== 'medium') {
-                  formatted += ` [${item.priority.toUpperCase()}]`
-                }
-                if (item.dueDate) {
-                  formatted += ` - Due: ${item.dueDate}`
-                }
-                return formatted
-              }
-            })
-            newNotes.actionItems = formattedActionItems.join('\n')
-          }
-
-          // If we have notes section or no specific sections were found, distribute text
-          if (sections.notes && sections.notes.length > 0) {
-            console.log('Distributing notes across 3 sections:', sections.notes.length, 'lines')
-            const notes = sections.notes
-            const thirdLength = Math.ceil(notes.length / 3)
-
-            // Generate summary from first few lines
-            if (!newNotes.summary || newNotes.summary === digitalNotes.summary) {
-              newNotes.summary = `OCR extracted text summary: ${notes.slice(0, Math.min(3, notes.length)).join(' ')}`
-              console.log('Generated fallback summary')
-            }
-
-            // Only populate empty sections
-            if (!newNotes.keyDiscussionPoints || newNotes.keyDiscussionPoints === digitalNotes.keyDiscussionPoints) {
-              newNotes.keyDiscussionPoints = notes.slice(0, thirdLength * 2).join('\n')
-              console.log('Populated keyDiscussionPoints with', thirdLength * 2, 'lines')
-            }
-            if (!newNotes.actionItems || newNotes.actionItems === digitalNotes.actionItems) {
-              const actionLines = notes.slice(thirdLength * 2).map(line => `• ${line}`)
-              newNotes.actionItems = actionLines.join('\n')
-              console.log('Populated actionItems with', notes.length - (thirdLength * 2), 'lines')
-            }
-          } else if (!sections.keyDiscussionPoints?.length && !sections.actionItems?.length) {
-            // No sections found at all, distribute raw text lines across 3 sections
-            console.log('No sections found, distributing raw text across 3 sections')
-            const lines = text.split('\n').filter(line => line.trim().length > 0)
-            const thirdLength = Math.ceil(lines.length / 3)
-
-            if (lines.length > 0) {
-              // Generate summary from first few lines
-              newNotes.summary = `Meeting content extracted via OCR: ${lines.slice(0, Math.min(2, lines.length)).join(' ')}`
-
-              // Distribute remaining lines
-              newNotes.keyDiscussionPoints = lines.slice(0, thirdLength * 2).join('\n')
-              const actionLines = lines.slice(thirdLength * 2).map(line => `• ${line}`)
-              newNotes.actionItems = actionLines.join('\n')
-              console.log('Distributed', lines.length, 'lines across 3 sections with summary')
-            }
-          }
-
-          console.log('Final 3-section assignment:', newNotes)
-          setDigitalNotes(newNotes)
-        } else if (result.debug?.isFallback) {
-          console.log('OCR FALLBACK - Not populating quadrants, user needs to configure API key')
-        } else {
-          console.log('OCR result structure:', { hasOcrResult: !!result.ocrResult, hasText: !!result.ocrResult?.text, isFallback: result.debug?.isFallback })
+        } else if (result.isFallback) {
+          console.log('OCR FALLBACK - Not processing with Claude AI, user needs to configure API key')
         }
 
-        // Handle fallback message display
-        if (result.debug?.isFallback && result.ocrResult.extractedSections?.fallbackMessage) {
-          setOcrStatus(result.ocrResult.extractedSections.fallbackMessage.substring(0, 150) + '...')
-        } else {
-          // Show success notification
-          setTimeout(() => {
-            setOcrStatus('')
-            setOcrProgress(0)
-          }, 2000)
-        }
+        // Show success notification
+        setTimeout(() => {
+          setOcrStatus('')
+          setOcrProgress(0)
+        }, 2000)
 
       } else {
         console.error('OCR processing failed:', result.error)
@@ -450,10 +375,7 @@ export default function Meeting() {
     if (ocrResult) {
       setOcrResult(prev => ({
         ...prev,
-        ocrResult: {
-          ...prev.ocrResult,
-          text: newText
-        }
+        text: newText
       }))
     }
   }
@@ -1256,7 +1178,7 @@ Action: Schedule follow-up meeting by Friday"
                         <Sparkles size={20} className="text-blue-600" />
                         OCR Results
                         <span className="text-sm font-normal text-green-600">
-                          ({Math.round(ocrResult.ocrResult.confidence * 100)}% confidence)
+                          ({Math.round(ocrResult.confidence || 90)}% confidence)
                         </span>
                       </h3>
                       <div className="flex items-center gap-2">
@@ -1275,14 +1197,14 @@ Action: Schedule follow-up meeting by Friday"
                         <h4 className="font-medium mb-2 flex items-center justify-between">
                           <span>Extracted Text:</span>
                           <span className="text-xs text-gray-500">
-                            {(extractedText || ocrResult.ocrResult.text).length} characters • {(extractedText || ocrResult.ocrResult.text).split(/\s+/).length} words
+                            {(extractedText || ocrResult.text).length} characters • {(extractedText || ocrResult.text).split(/\s+/).length} words
                           </span>
                         </h4>
 
                         {isEditingExtractedText ? (
                           <div className="space-y-2">
                             <textarea
-                              value={extractedText || ocrResult.ocrResult.text}
+                              value={extractedText || ocrResult.text}
                               onChange={(e) => handleTextEdit(e.target.value)}
                               className="w-full h-48 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
                               placeholder="Edit the extracted text here..."
@@ -1305,12 +1227,12 @@ Action: Schedule follow-up meeting by Friday"
                         ) : (
                           <div className="relative">
                             <pre className="text-sm text-gray-700 whitespace-pre-wrap bg-white border border-gray-200 rounded p-3 max-h-64 overflow-y-auto">
-                              {extractedText || ocrResult.ocrResult.text}
+                              {extractedText || ocrResult.text}
                             </pre>
                             <div className="absolute top-2 right-2">
                               <button
                                 onClick={() => {
-                                  if (!extractedText) setExtractedText(ocrResult.ocrResult.text)
+                                  if (!extractedText) setExtractedText(ocrResult.text)
                                   setIsEditingExtractedText(true)
                                 }}
                                 className="p-1 text-gray-400 hover:text-gray-600 bg-white rounded shadow-sm"

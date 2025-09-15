@@ -323,13 +323,8 @@ export default function Meeting() {
           // Process with Claude AI first for intelligent analysis
           if (text.length > 20) {
             console.log('🧠 Processing OCR text with Claude AI...')
-            try {
-              await handleAIAnalysis(text)
-              return // Claude AI will handle the notes population
-            } catch (error) {
-              console.warn('⚠️ Claude AI processing failed, using fallback:', error)
-              // Continue to fallback logic below
-            }
+            await handleAIAnalysis(text)
+            return // Claude AI will handle the notes population
           }
 
           // Fallback: Smart 3-section population

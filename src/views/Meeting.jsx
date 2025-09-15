@@ -187,17 +187,28 @@ export default function Meeting() {
 
   // Enhanced Claude AI processing function
   const handleAIAnalysis = async (text) => {
+    console.log('🚀 handleAIAnalysis CALLED with:', {
+      hasText: !!text,
+      textLength: text?.length,
+      textPreview: text?.substring(0, 50) + '...'
+    })
+
     if (!text?.trim()) {
+      console.log('❌ No text provided to handleAIAnalysis')
       setErrorMessage('No text to analyze')
       return
     }
 
-    console.log('🚀 Starting Claude AI analysis for meeting...', {
+    console.log('🔧 handleAIAnalysis: Starting Claude AI analysis for meeting...', {
       textLength: text.length,
-      meetingContext: formData
+      meetingContext: formData,
+      analyzeFunction: typeof analyze,
+      capabilities: capabilities
     })
 
     try {
+      console.log('🔧 handleAIAnalysis: About to call analyze() hook...')
+
       // Use the enhanced AI analysis hook with meeting context
       const result = await analyze(text, {
         meetingType: formData.selectedStakeholder ? 'stakeholder' : 'general',
@@ -205,6 +216,14 @@ export default function Meeting() {
         date: formData.date,
         title: formData.title,
         timestamp: new Date().toISOString()
+      })
+
+      console.log('🔧 handleAIAnalysis: analyze() hook returned:', {
+        hasResult: !!result,
+        resultKeys: result ? Object.keys(result) : null,
+        summary: result?.summary,
+        keyDiscussionPointsType: typeof result?.keyDiscussionPoints,
+        actionItemsType: typeof result?.actionItems
       })
 
       if (result) {
@@ -239,15 +258,19 @@ export default function Meeting() {
           newNotes.actionItems = result.actionItems
         }
 
+        console.log('🔧 handleAIAnalysis: Updating digitalNotes with:', newNotes)
         setDigitalNotes(newNotes)
         setManualText('') // Clear manual input
         setShowManualInput(false) // Hide manual input
         setErrorMessage('')
 
-        console.log('✅ Meeting notes populated from Claude AI:', newNotes)
+        console.log('✅ Meeting notes populated from Claude AI successfully!')
+        console.log('📝 Final digitalNotes state should be:', newNotes)
+      } else {
+        console.log('⚠️ analyze() hook returned null or undefined result')
       }
     } catch (error) {
-      console.error('❌ Claude AI processing error:', error)
+      console.error('❌ Claude AI processing error in handleAIAnalysis:', error)
       setErrorMessage(`AI processing failed: ${error.message || 'Unknown error'}`)
     }
   }
@@ -324,19 +347,40 @@ export default function Meeting() {
         setOcrStatus('OCR completed successfully!')
 
         // Auto-populate digital notes with OCR results
+        console.log('📋 DEBUG: OCR Result Analysis:', {
+          hasText: !!result.text,
+          textLength: result.text?.length,
+          isFallback: result.isFallback,
+          fullResult: result
+        })
+
         if (result.text && !result.isFallback) {
-          console.log('OCR SUCCESS - Processing with Claude AI:', result)
-          console.log('OCR Text length:', result.text.length)
+          console.log('✅ OCR SUCCESS - Text extracted, processing with Claude AI:', {
+            text: result.text.substring(0, 100) + '...',
+            textLength: result.text.length
+          })
 
           const text = result.text
 
           // Process with Claude AI for intelligent analysis
           if (text.length > 20) {
-            console.log('🧠 Processing OCR text with Claude AI...')
-            await handleAIAnalysis(text)
+            console.log('🧠 TRIGGERING Claude AI analysis...')
+            console.log('🔧 About to call handleAIAnalysis with text:', text.substring(0, 50) + '...')
+
+            try {
+              await handleAIAnalysis(text)
+              console.log('✅ handleAIAnalysis completed successfully!')
+            } catch (error) {
+              console.error('❌ handleAIAnalysis failed:', error)
+              setErrorMessage(`Claude AI failed: ${error.message}`)
+            }
+          } else {
+            console.log('⚠️ Text too short for AI analysis:', text.length, 'characters')
           }
         } else if (result.isFallback) {
-          console.log('OCR FALLBACK - Not processing with Claude AI, user needs to configure API key')
+          console.log('⚠️ OCR FALLBACK - Not processing with Claude AI, user needs to configure API key')
+        } else {
+          console.log('❌ No valid text found in OCR result')
         }
 
         // Show success notification

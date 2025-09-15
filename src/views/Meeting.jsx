@@ -48,6 +48,7 @@ import {
   NotionSyncStatus, 
   NotionStakeholderDropdown 
 } from '../components/NotionIntegration'
+import { useAIAnalysis } from '../hooks/useAIAnalysis'
 import { ExportOptionsButton } from '../components/ExportOptions'
 
 export default function Meeting() {
@@ -73,11 +74,16 @@ export default function Meeting() {
   // Mode state
   const [activeMode, setActiveMode] = useState('digital') // 'digital' or 'photo'
   
-  // Digital notes state (4-quadrant)
+  // Digital notes state (3-section with Claude summary)
   const [digitalNotes, setDigitalNotes] = useState({
+    summary: '',
     keyDiscussionPoints: '',
     actionItems: ''
   })
+
+  // Manual text input for Claude processing
+  const [manualText, setManualText] = useState('')
+  const [showManualInput, setShowManualInput] = useState(false)
   
   // Photo/OCR state
   const [showCamera, setShowCamera] = useState(false)
@@ -98,6 +104,21 @@ export default function Meeting() {
   const [aiInsights, setAiInsights] = useState(null)
   const [aiNotifications, setAiNotifications] = useState([])
   const [aiMode, setAiMode] = useState('auto') // 'auto', 'manual', 'off'
+
+  // Enhanced AI Analysis Hook
+  const {
+    result: aiResult,
+    isAnalyzing,
+    error: aiError,
+    progress: aiProgress,
+    analyze,
+    cancel: cancelAnalysis,
+    clear: clearAnalysis,
+    exportResults,
+    hasResult,
+    isStreaming,
+    capabilities
+  } = useAIAnalysis()
   
 
   // Use real stakeholders from app context, fallback to mock data for demo
@@ -151,6 +172,73 @@ export default function Meeting() {
 
   const handleSectionChange = (section, value) => {
     setDigitalNotes(prev => ({ ...prev, [section]: value }))
+  }
+
+  // Enhanced Claude AI processing function
+  const handleAIAnalysis = async (text) => {
+    if (!text?.trim()) {
+      setErrorMessage('No text to analyze')
+      return
+    }
+
+    console.log('🚀 Starting Claude AI analysis for meeting...', {
+      textLength: text.length,
+      meetingContext: formData
+    })
+
+    try {
+      // Use the enhanced AI analysis hook with meeting context
+      const result = await analyze(text, {
+        meetingType: formData.selectedStakeholder ? 'stakeholder' : 'general',
+        stakeholder: formData.selectedStakeholder,
+        date: formData.date,
+        title: formData.title,
+        timestamp: new Date().toISOString()
+      })
+
+      if (result) {
+        console.log('✅ Claude AI analysis complete:', result)
+
+        // Update digital notes with AI-structured data
+        const newNotes = {
+          summary: result.summary || '',
+          keyDiscussionPoints: '',
+          actionItems: ''
+        }
+
+        // Handle key discussion points
+        if (Array.isArray(result.keyDiscussionPoints)) {
+          newNotes.keyDiscussionPoints = result.keyDiscussionPoints.join('\n\n')
+        } else if (typeof result.keyDiscussionPoints === 'string') {
+          newNotes.keyDiscussionPoints = result.keyDiscussionPoints
+        }
+
+        // Handle action items with enhanced formatting
+        if (Array.isArray(result.actionItems)) {
+          newNotes.actionItems = result.actionItems.map(item => {
+            if (typeof item === 'object' && item.task) {
+              const priority = item.priority ? `[${item.priority.toUpperCase()}]` : ''
+              const assignee = item.assignee && item.assignee !== 'Unassigned' ? `@${item.assignee}` : ''
+              const dueDate = item.dueDate ? `(Due: ${item.dueDate})` : ''
+              return `• ${item.task} ${assignee} ${priority} ${dueDate}`.trim()
+            }
+            return `• ${item}`
+          }).join('\n\n')
+        } else if (typeof result.actionItems === 'string') {
+          newNotes.actionItems = result.actionItems
+        }
+
+        setDigitalNotes(newNotes)
+        setManualText('') // Clear manual input
+        setShowManualInput(false) // Hide manual input
+        setErrorMessage('')
+
+        console.log('✅ Meeting notes populated from Claude AI:', newNotes)
+      }
+    } catch (error) {
+      console.error('❌ Claude AI processing error:', error)
+      setErrorMessage(`AI processing failed: ${error.message || 'Unknown error'}`)
+    }
   }
 
 
@@ -216,8 +304,16 @@ export default function Meeting() {
           const sections = result.ocrResult.extractedSections || {}
           const text = result.ocrResult.text
 
-          // Smart 2-section population
+          // Process with Claude AI first for intelligent analysis
+          if (text.length > 20) {
+            console.log('🧠 Processing OCR text with Claude AI...')
+            await handleAIAnalysis(text)
+            return // Claude AI will handle the notes population
+          }
+
+          // Fallback: Smart 3-section population
           let newNotes = {
+            summary: digitalNotes.summary,
             keyDiscussionPoints: digitalNotes.keyDiscussionPoints,
             actionItems: digitalNotes.actionItems
           }
@@ -877,53 +973,163 @@ export default function Meeting() {
               <div className="bg-white rounded-lg shadow-md p-6">
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-xl font-semibold flex items-center gap-2">
-                    <Target size={24} />
-                    4-Quadrant Notes
+                    <Sparkles size={24} />
+                    AI-Enhanced Meeting Notes
                   </h2>
-                  {template && (
-                    <div className={`px-3 py-1 rounded-full text-sm font-medium ${getColorClasses(template.color)}`}>
-                      {template.name}
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {template && (
+                      <div className={`px-3 py-1 rounded-full text-sm font-medium ${getColorClasses(template.color)}`}>
+                        {template.name}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setShowManualInput(!showManualInput)}
+                      className="flex items-center gap-1 px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                    >
+                      <Edit3 size={14} />
+                      Add Notes
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 h-[600px]">
-                  {template ? (
-                    // Template-based quadrants
-                    Object.entries(template.quadrants).map(([key, quadrant]) => (
-                      <div key={key} className="border border-gray-200 rounded-lg p-4">
-                        <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                          {quadrant.title}
-                        </h3>
-                        <textarea
-                          value={digitalNotes[key]}
-                          onChange={(e) => handleSectionChange(key, e.target.value)}
-                          placeholder={quadrant.placeholder}
-                          className="w-full h-full resize-none border-none focus:outline-none text-sm"
+                {/* Manual Text Input for Claude Processing */}
+                {showManualInput && (
+                  <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
+                    <h3 className="font-medium text-purple-900 mb-2 flex items-center gap-2">
+                      <Zap size={16} />
+                      Paste Meeting Notes for AI Analysis
+                    </h3>
+                    <textarea
+                      value={manualText}
+                      onChange={(e) => setManualText(e.target.value)}
+                      placeholder="Paste your meeting notes here and Claude AI will automatically organize them into Summary, Key Discussion Points, and Action Items...
+
+Example:
+We decided to move forward with the new project
+John will handle the backend development
+Sarah mentioned concerns about the timeline
+Action: Schedule follow-up meeting by Friday"
+                      className="w-full h-32 p-3 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm resize-none"
+                    />
+                    <div className="flex items-center justify-between mt-3">
+                      <span className="text-sm text-purple-600">
+                        {capabilities.claudeAPI ? '🚀 Direct Claude API' : '🧠 Claude Workflow'} • {manualText.length} characters
+                      </span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setManualText('')
+                            setShowManualInput(false)
+                          }}
+                          className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => handleAIAnalysis(manualText)}
+                          disabled={!manualText.trim() || isAnalyzing}
+                          className="flex items-center gap-1 px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isAnalyzing ? (
+                            <>
+                              <Loader2 size={14} className="animate-spin" />
+                              Analyzing...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles size={14} />
+                              Process with Claude
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Analysis Status */}
+                {isAnalyzing && (
+                  <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Loader2 size={16} className="animate-spin text-blue-600" />
+                      <span className="font-medium text-blue-900">
+                        {capabilities.claudeAPI ? 'Processing with Claude API...' : 'Processing with Claude Workflow...'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 bg-blue-200 rounded-full h-2">
+                        <div
+                          className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${aiProgress}%` }}
                         />
                       </div>
-                    ))
-                  ) : (
-                    // Default sections
-                    [
-                      { key: 'keyDiscussionPoints', title: 'Key Discussion Points', icon: '💬' },
-                      { key: 'actionItems', title: 'Action Items', icon: '📋' }
-                    ].map(({ key, title, icon }) => (
-                      <div key={key} className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors group">
-                        <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                          <span>{icon}</span>
-                          {title}
-                          <Edit3 className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </h3>
-                        <textarea
-                          value={digitalNotes[key]}
-                          onChange={(e) => handleSectionChange(key, e.target.value)}
-                          placeholder={`Add ${title.toLowerCase()}...`}
-                          className="w-full h-full resize-none border-none focus:outline-none text-sm hover:bg-gray-50 focus:bg-white transition-colors"
-                        />
-                      </div>
-                    ))
-                  )}
+                      <span className="text-sm text-blue-600">{aiProgress}%</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Error Display */}
+                {(errorMessage || aiError) && (
+                  <div className="mb-6 p-4 bg-red-50 rounded-lg border border-red-200">
+                    <div className="flex items-center gap-2 text-red-800">
+                      <AlertCircle size={16} />
+                      <span className="font-medium">Analysis Error</span>
+                    </div>
+                    <p className="text-sm text-red-700 mt-1">{errorMessage || aiError}</p>
+                  </div>
+                )}
+
+                {/* 3-Section Layout: Summary (full width), Discussion Points & Action Items (side by side) */}
+                <div className="space-y-4">
+                  {/* Summary Section (Claude AI Generated) */}
+                  <div className="border border-gray-200 rounded-lg p-4 bg-gradient-to-r from-purple-50 to-blue-50">
+                    <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-purple-600" />
+                      Meeting Summary
+                      <span className="text-xs text-purple-600 bg-purple-100 px-2 py-1 rounded-full ml-auto">
+                        Generated by Claude AI
+                      </span>
+                    </h3>
+                    <textarea
+                      value={digitalNotes.summary}
+                      onChange={(e) => handleSectionChange('summary', e.target.value)}
+                      placeholder="Meeting summary will appear here after Claude AI analysis... You can also type directly."
+                      className="w-full h-24 resize-none border-none focus:outline-none text-sm bg-transparent placeholder-purple-400"
+                    />
+                  </div>
+
+                  {/* Discussion Points & Action Items (Side by Side) */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[500px]">
+                    {/* Key Discussion Points */}
+                    <div className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors group">
+                      <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                        <span>💬</span>
+                        Key Discussion Points
+                        <Edit3 className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </h3>
+                      <textarea
+                        value={digitalNotes.keyDiscussionPoints}
+                        onChange={(e) => handleSectionChange('keyDiscussionPoints', e.target.value)}
+                        placeholder="Key topics and discussion points will appear here after AI analysis..."
+                        className="w-full h-full resize-none border-none focus:outline-none text-sm hover:bg-gray-50 focus:bg-white transition-colors"
+                      />
+                    </div>
+
+                    {/* Action Items */}
+                    <div className="border border-gray-200 rounded-lg p-4 hover:border-green-300 transition-colors group">
+                      <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                        <span>📋</span>
+                        Action Items
+                        <Edit3 className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </h3>
+                      <textarea
+                        value={digitalNotes.actionItems}
+                        onChange={(e) => handleSectionChange('actionItems', e.target.value)}
+                        placeholder="Action items with assignees, priorities, and deadlines will appear here after AI analysis..."
+                        className="w-full h-full resize-none border-none focus:outline-none text-sm hover:bg-gray-50 focus:bg-white transition-colors"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

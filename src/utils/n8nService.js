@@ -5,16 +5,30 @@
 
 class N8nService {
   constructor() {
-    // Detect if we're on HTTPS and adjust n8n URL accordingly
-    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:'
+    // Detect environment
+    const isLocalhost = typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    const isGitHubPages = typeof window !== 'undefined' &&
+      window.location.hostname.includes('github.io')
 
-    // For development: try HTTPS first if the page is HTTPS, fallback to HTTP
-    this.baseUrls = isHttps ? [
-      'https://localhost:5678',  // Try HTTPS first (if n8n supports it)
-      'http://localhost:5678'    // Fallback to HTTP (will cause mixed content warning)
-    ] : [
-      'http://localhost:5678'
-    ]
+    // Configure base URLs based on environment
+    if (isLocalhost) {
+      // Local development - try both HTTPS and HTTP
+      this.baseUrls = [
+        'https://localhost:5678',  // Try HTTPS first
+        'http://localhost:5678'    // Fallback to HTTP
+      ]
+    } else if (isGitHubPages) {
+      // GitHub Pages deployment - need public n8n instance or tunneling
+      this.baseUrls = [
+        'http://localhost:5678',  // Will fail with CORS, but we'll provide helpful message
+        // Add your deployed n8n URL here when available
+        // 'https://your-n8n-instance.com'
+      ]
+    } else {
+      // Other deployment
+      this.baseUrls = ['http://localhost:5678']
+    }
 
     this.baseUrl = this.baseUrls[0]
     this.endpoints = {
@@ -247,10 +261,17 @@ class N8nService {
       const isAvailable = await this.isAvailable()
 
       if (!isAvailable) {
-        const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:'
-        const suggestion = isHttps
-          ? 'Try accessing MeetingFlow via http://localhost:5173 instead of https://, or configure n8n to support HTTPS.'
-          : 'Make sure n8n is running on localhost:5678 and workflows are active.'
+        const isGitHubPages = typeof window !== 'undefined' && window.location.hostname.includes('github.io')
+
+        let suggestion = ''
+        if (isGitHubPages) {
+          suggestion = 'GitHub Pages cannot connect to localhost. Solutions:\n' +
+            '1. Use ngrok to tunnel your local n8n: "ngrok http 5678"\n' +
+            '2. Deploy n8n to a cloud service (Railway, Heroku, etc.)\n' +
+            '3. For testing: access the app locally at https://localhost:5173'
+        } else {
+          suggestion = 'Make sure n8n is running on localhost:5678 and workflows are active.'
+        }
 
         throw new Error(`n8n service is not responding. ${suggestion}`)
       }

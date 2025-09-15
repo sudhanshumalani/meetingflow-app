@@ -38,9 +38,7 @@ import {
   Eye
 } from 'lucide-react'
 import { format, isToday, isThisWeek, startOfDay, endOfDay, differenceInDays } from 'date-fns'
-import { 
-  mockStakeholders, 
-  mockMeetings,
+import {
   generateAIInsights,
   getCategoryDisplayName,
   getHealthColor,
@@ -68,7 +66,7 @@ import { BatchExportButton, ExportOptionsButton } from '../components/ExportOpti
 
 export default function Home() {
   const navigate = useNavigate()
-  const { meetings, stakeholders, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting } = useApp()
+  const { meetings, stakeholders, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder } = useApp()
   const [searchTerm, setSearchTerm] = useState('')
   const [notifications, setNotifications] = useState([])
   const [activeTab, setActiveTab] = useState('all')
@@ -97,21 +95,19 @@ export default function Home() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null)
   const [showMeetingManagement, setShowMeetingManagement] = useState(false)
 
+  // Stakeholder management states
+  const [editingStakeholder, setEditingStakeholder] = useState(null)
+  const [showDeleteStakeholderConfirm, setShowDeleteStakeholderConfirm] = useState(null)
+  const [showStakeholderManagement, setShowStakeholderManagement] = useState(false)
+  const [newStakeholder, setNewStakeholder] = useState(null)
+
   // Initialize services
   const sentimentAnalyzer = new SentimentAnalyzer()
   const exportManager = new ExportManager()
 
-  // Initialize with mock data if empty
-  useEffect(() => {
-    if (stakeholders.length === 0) {
-      // In a real app, you'd initialize this through the context
-      // For demo purposes, we'll use the mock data
-    }
-  }, [stakeholders])
-
-  // Use mock data for demonstration
-  const displayStakeholders = stakeholders.length > 0 ? stakeholders : mockStakeholders
-  const displayMeetings = meetings.length > 0 ? meetings : mockMeetings
+  // Use real data only
+  const displayStakeholders = stakeholders
+  const displayMeetings = meetings
 
   useEffect(() => {
     const insights = generateAIInsights(displayMeetings, displayStakeholders)
@@ -244,6 +240,62 @@ export default function Home() {
     setShowDeleteConfirm(null)
   }
 
+  // Stakeholder management handlers
+  const handleEditStakeholder = (stakeholder) => {
+    setEditingStakeholder({ ...stakeholder })
+  }
+
+  const handleSaveStakeholderEdit = () => {
+    if (editingStakeholder) {
+      updateStakeholder(editingStakeholder)
+      setEditingStakeholder(null)
+    }
+  }
+
+  const handleCancelStakeholderEdit = () => {
+    setEditingStakeholder(null)
+  }
+
+  const handleDeleteStakeholder = (stakeholderId) => {
+    setShowDeleteStakeholderConfirm(stakeholderId)
+  }
+
+  const confirmDeleteStakeholder = () => {
+    if (showDeleteStakeholderConfirm) {
+      deleteStakeholder(showDeleteStakeholderConfirm)
+      setShowDeleteStakeholderConfirm(null)
+    }
+  }
+
+  const cancelDeleteStakeholder = () => {
+    setShowDeleteStakeholderConfirm(null)
+  }
+
+  const handleCreateStakeholder = () => {
+    setNewStakeholder({
+      name: '',
+      title: '',
+      organization: '',
+      email: '',
+      phone: '',
+      category: 'investors',
+      priority: 'medium',
+      relationship_health: 'good',
+      notes: ''
+    })
+  }
+
+  const handleSaveNewStakeholder = () => {
+    if (newStakeholder && newStakeholder.name.trim()) {
+      addStakeholder(newStakeholder)
+      setNewStakeholder(null)
+    }
+  }
+
+  const handleCancelNewStakeholder = () => {
+    setNewStakeholder(null)
+  }
+
   const toggleGroup = (category) => {
     setCollapsedGroups(prev => ({
       ...prev,
@@ -344,6 +396,11 @@ export default function Home() {
       label: 'Manage Meetings',
       icon: <Edit2 size={20} />,
       onClick: () => setShowMeetingManagement(true)
+    },
+    {
+      label: 'Manage Stakeholders',
+      icon: <Users size={20} />,
+      onClick: () => setShowStakeholderManagement(true)
     },
     {
       label: 'Export Data',
@@ -503,6 +560,16 @@ export default function Home() {
               >
                 <Edit2 size={18} />
                 <span className="hidden lg:inline">Manage Meetings</span>
+              </button>
+
+              {/* Manage Stakeholders Button */}
+              <button
+                onClick={() => setShowStakeholderManagement(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                title="Manage Stakeholders"
+              >
+                <Users size={18} />
+                <span className="hidden lg:inline">Manage Stakeholders</span>
               </button>
 
               {/* Settings Button */}
@@ -1237,6 +1304,337 @@ export default function Home() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stakeholder Management Modal */}
+      {showStakeholderManagement && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-6 border-b">
+              <h2 className="text-xl font-semibold text-gray-900">Manage Stakeholders</h2>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleCreateStakeholder}
+                  className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                >
+                  <Plus size={16} />
+                  Add Stakeholder
+                </button>
+                <button
+                  onClick={() => setShowStakeholderManagement(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+              {/* New Stakeholder Form */}
+              {newStakeholder && (
+                <div className="mb-6 p-4 border-2 border-blue-200 rounded-lg bg-blue-50">
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Add New Stakeholder</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
+                      <input
+                        type="text"
+                        value={newStakeholder.name || ''}
+                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="Full name"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Title</label>
+                      <input
+                        type="text"
+                        value={newStakeholder.title || ''}
+                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, title: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="Job title"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Organization</label>
+                      <input
+                        type="text"
+                        value={newStakeholder.organization || ''}
+                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, organization: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="Company or organization"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                      <input
+                        type="email"
+                        value={newStakeholder.email || ''}
+                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, email: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="email@example.com"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
+                      <select
+                        value={newStakeholder.category || 'investors'}
+                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, category: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        {Object.entries(STAKEHOLDER_CATEGORIES).map(([key, value]) => (
+                          <option key={key} value={key}>{getCategoryDisplayName(key)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                      <select
+                        value={newStakeholder.priority || 'medium'}
+                        onChange={(e) => setNewStakeholder(prev => ({ ...prev, priority: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Notes</label>
+                    <textarea
+                      value={newStakeholder.notes || ''}
+                      onChange={(e) => setNewStakeholder(prev => ({ ...prev, notes: e.target.value }))}
+                      rows={3}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Additional notes about this stakeholder"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-3 mt-4">
+                    <button
+                      onClick={handleCancelNewStakeholder}
+                      className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                    >
+                      <XCircle size={16} />
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveNewStakeholder}
+                      className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                    >
+                      <Save size={16} />
+                      Add Stakeholder
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {displayStakeholders.length === 0 ? (
+                <div className="text-center py-12">
+                  <Users className="mx-auto text-gray-400 mb-4" size={48} />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">No stakeholders found</h3>
+                  <p className="text-gray-600">Add your first stakeholder to get started.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {displayStakeholders.map(stakeholder => (
+                    <div key={stakeholder.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                      {editingStakeholder && editingStakeholder.id === stakeholder.id ? (
+                        /* Edit Mode */
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
+                              <input
+                                type="text"
+                                value={editingStakeholder.name || ''}
+                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, name: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Title</label>
+                              <input
+                                type="text"
+                                value={editingStakeholder.title || ''}
+                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, title: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Organization</label>
+                              <input
+                                type="text"
+                                value={editingStakeholder.organization || ''}
+                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, organization: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                              <input
+                                type="email"
+                                value={editingStakeholder.email || ''}
+                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, email: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
+                              <select
+                                value={editingStakeholder.category || 'investors'}
+                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, category: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              >
+                                {Object.entries(STAKEHOLDER_CATEGORIES).map(([key, value]) => (
+                                  <option key={key} value={key}>{getCategoryDisplayName(key)}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                              <select
+                                value={editingStakeholder.priority || 'medium'}
+                                onChange={(e) => setEditingStakeholder(prev => ({ ...prev, priority: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              >
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Notes</label>
+                            <textarea
+                              value={editingStakeholder.notes || ''}
+                              onChange={(e) => setEditingStakeholder(prev => ({ ...prev, notes: e.target.value }))}
+                              rows={3}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                          <div className="flex justify-end gap-3 pt-4 border-t">
+                            <button
+                              onClick={handleCancelStakeholderEdit}
+                              className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                            >
+                              <XCircle size={16} />
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleSaveStakeholderEdit}
+                              className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                            >
+                              <Save size={16} />
+                              Save Changes
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* View Mode */
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <h3 className="text-lg font-medium text-gray-900">
+                                {stakeholder.name}
+                              </h3>
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                stakeholder.category === 'investors' ? 'bg-green-100 text-green-800' :
+                                stakeholder.category === 'team' ? 'bg-blue-100 text-blue-800' :
+                                stakeholder.category === 'customers' ? 'bg-purple-100 text-purple-800' :
+                                stakeholder.category === 'partners' ? 'bg-orange-100 text-orange-800' :
+                                'bg-gray-100 text-gray-800'
+                              }`}>
+                                {getCategoryDisplayName(stakeholder.category)}
+                              </span>
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                stakeholder.priority === 'high' ? 'bg-red-100 text-red-800' :
+                                stakeholder.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-green-100 text-green-800'
+                              }`}>
+                                {stakeholder.priority || 'medium'} priority
+                              </span>
+                            </div>
+                            <div className="space-y-1 mb-3">
+                              {stakeholder.title && (
+                                <p className="text-sm text-gray-600">{stakeholder.title}</p>
+                              )}
+                              {stakeholder.organization && (
+                                <p className="text-sm text-gray-600">{stakeholder.organization}</p>
+                              )}
+                              {stakeholder.email && (
+                                <p className="text-sm text-gray-600">{stakeholder.email}</p>
+                              )}
+                            </div>
+                            {stakeholder.notes && (
+                              <p className="text-sm text-gray-600 mb-3 line-clamp-2">{stakeholder.notes}</p>
+                            )}
+                            <div className="text-xs text-gray-500">
+                              Added: {stakeholder.createdAt ? format(new Date(stakeholder.createdAt), 'MMM d, yyyy') : 'Unknown'}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 ml-4">
+                            <button
+                              onClick={() => handleEditStakeholder(stakeholder)}
+                              className="flex items-center gap-1 px-3 py-2 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+                              title="Edit Stakeholder"
+                            >
+                              <Edit2 size={16} />
+                              <span className="hidden sm:inline">Edit</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteStakeholder(stakeholder.id)}
+                              className="flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Delete Stakeholder"
+                            >
+                              <Trash2 size={16} />
+                              <span className="hidden sm:inline">Delete</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Stakeholder Confirmation Modal */}
+      {showDeleteStakeholderConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-shrink-0 w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                  <Users className="text-red-600" size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900">Delete Stakeholder</h3>
+                  <p className="text-sm text-gray-600">Are you sure you want to delete this stakeholder? This action cannot be undone.</p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={cancelDeleteStakeholder}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDeleteStakeholder}
+                  className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                >
+                  Delete Stakeholder
+                </button>
+              </div>
             </div>
           </div>
         </div>

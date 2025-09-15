@@ -29,13 +29,11 @@ import { mockStakeholders, getCategoryDisplayName, STAKEHOLDER_CATEGORIES } from
 import { getTemplateForCategory, getColorClasses, PRIORITY_LEVELS } from '../utils/meetingTemplates'
 import { extractTextFromImage, setOCRApiKey, setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
 import {
-  OCRImageUpload,
   AIProcessingStatus,
   AIInsightsDisplay,
   PredictiveNotificationsDisplay,
   AIProcessingSummary
 } from '../components/AIProcessing'
-import { aiCoordinator } from '../utils/aiServices'
 import { 
   MobileHeader,
   TouchButton,
@@ -428,116 +426,8 @@ export default function Meeting() {
     setIsEditingExtractedText(!isEditingExtractedText)
   }
 
-  // AI Processing functions
-  const processImageWithAI = async (imageResult) => {
-    if (aiMode === 'off') return
-    
-    setIsAIProcessing(true)
-    setAiProcessingStage('ocr')
-    
-    try {
-      // Process the OCR result with AI services
-      const aiResult = await aiCoordinator.processImageWithAI(imageResult, {
-        extractActionItems: true,
-        analyzeSentiment: true
-      })
-      
-      setAiProcessingResult(aiResult)
-      
-      // Auto-populate digital notes if enabled
-      if (aiMode === 'auto' && aiResult.ocr?.text) {
-        await populateNotesFromAI(aiResult.ocr.text)
-      }
-      
-    } catch (error) {
-      console.error('AI processing failed:', error)
-    } finally {
-      setIsAIProcessing(false)
-      setAiProcessingStage('')
-    }
-  }
   
-  const processMeetingWithAI = async (meetingData) => {
-    if (aiMode === 'off') return
-    
-    setIsAIProcessing(true)
-    const stages = ['extraction', 'sentiment', 'insights', 'notifications']
-    
-    try {
-      for (const stage of stages) {
-        setAiProcessingStage(stage)
-        await new Promise(resolve => setTimeout(resolve, 800))
-      }
-      
-      // Get current stakeholder info
-      const currentStakeholder = displayStakeholders.find(s => s.id === formData.selectedStakeholder)
-      
-      // Process meeting with AI coordinator
-      const aiResult = await aiCoordinator.processFullMeetingAI(meetingData, displayStakeholders)
-      
-      if (aiResult.success) {
-        setAiProcessingResult(aiResult)
-        
-        // Generate stakeholder insights if we have a stakeholder
-        if (currentStakeholder) {
-          setAiProcessingStage('insights')
-          const insights = await aiCoordinator.generateStakeholderInsights(
-            currentStakeholder, 
-            [meetingData], 
-            stakeholders
-          )
-          setAiInsights(insights)
-        }
-        
-        // Generate predictive notifications
-        setAiProcessingStage('notifications')
-        const notifications = await aiCoordinator.generatePredictiveNotifications(
-          stakeholders, 
-          [meetingData]
-        )
-        setAiNotifications(notifications.notifications || [])
-      }
-      
-    } catch (error) {
-      console.error('AI meeting processing failed:', error)
-    } finally {
-      setIsAIProcessing(false)
-      setAiProcessingStage('')
-    }
-  }
   
-  const populateNotesFromAI = async (text) => {
-    setAiProcessingStage('extraction')
-
-    // Use AI to extract different types of content
-    const actionItemsResult = await aiCoordinator.actionItemExtractor.extractFromMeetingContent(text)
-
-    // Smart population based on content analysis for 2-section structure
-    const lines = text.split('\n').filter(line => line.trim())
-
-    // Categorize content into discussion points and action items
-    const actionLines = lines.filter(line =>
-      /^[\d•-]\s/.test(line.trim()) ||
-      /action|task|todo|follow.?up|next.?step/i.test(line)
-    )
-
-    const discussionLines = lines.filter(line =>
-      !/^[\d•-]\s/.test(line.trim()) &&
-      !/action|task|todo|follow.?up|next.?step/i.test(line) &&
-      line.trim().length > 5
-    )
-
-    // Format action items properly
-    const formattedActions = [
-      ...actionLines.map(line => `• ${line.trim()}`),
-      ...(actionItemsResult.actionItems?.map(item => `• ${item.title}`) || [])
-    ]
-
-    setDigitalNotes(prev => ({
-      keyDiscussionPoints: prev.keyDiscussionPoints || discussionLines.join('\n'),
-      actionItems: prev.actionItems || formattedActions.join('\n')
-    }))
-  }
 
   // AI Processing simulation (keeping for backward compatibility)
   const simulateAIProcessing = async () => {
@@ -595,20 +485,7 @@ export default function Meeting() {
         status: 'completed'
       }
       
-      // Process with AI if enabled
-      if (aiMode !== 'off') {
-        await processMeetingWithAI(meetingData)
-      }
-      
-      // Update meeting with AI results
-      const updatedMeeting = {
-        ...meetingData,
-        aiProcessingResult,
-        aiInsights,
-        aiNotifications
-      }
-      
-      updateMeeting(updatedMeeting)
+      updateMeeting(meetingData)
       
     } catch (error) {
       console.error('Save failed:', error)
@@ -1169,17 +1046,23 @@ Action: Schedule follow-up meeting by Friday"
                   </div>
                 </div>
 
-                {/* AI-Powered OCR Upload */}
+                {/* File Upload for OCR */}
                 <div className="bg-white rounded-lg shadow-md p-6">
                   <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                     <Eye size={20} />
-                    AI OCR Text Extraction
+                    Upload Image for OCR Analysis
                   </h3>
 
-                  <OCRImageUpload
-                    onImageProcessed={processImageWithAI}
-                    onError={(error) => console.error('OCR Error:', error)}
-                  />
+                  <div {...getRootProps()} className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                    isDragActive ? 'border-blue-400 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
+                  }`}>
+                    <input {...getInputProps()} />
+                    <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                    <p className="text-gray-600">
+                      {isDragActive ? 'Drop the image here...' : 'Drag & drop an image here, or click to select'}
+                    </p>
+                    <p className="text-sm text-gray-500 mt-1">PNG, JPG, GIF up to 10MB</p>
+                  </div>
                 </div>
 
                 {/* OCR Processing Results */}

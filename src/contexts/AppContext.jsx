@@ -2,6 +2,7 @@ import { createContext, useContext, useReducer, useEffect } from 'react'
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
 import notionService from '../utils/notionService'
+import n8nService from '../utils/n8nService'
 import { STAKEHOLDER_CATEGORIES as DEFAULT_CATEGORIES } from '../utils/stakeholderManager'
 
 const AppContext = createContext()
@@ -16,6 +17,12 @@ const initialState = {
   notion: {
     syncStatus: notionService.getSyncStatus(),
     isConfigured: notionService.isConfigured(),
+    lastSync: null,
+    isSyncing: false
+  },
+  n8n: {
+    syncStatus: n8nService.getSyncStatus(),
+    isAvailable: false,
     lastSync: null,
     isSyncing: false
   }
@@ -268,6 +275,39 @@ function appReducer(state, action) {
           ...state.notion,
           isConfigured: notionService.isConfigured(),
           syncStatus: notionService.getSyncStatus()
+        }
+      }
+
+    case 'SET_N8N_SYNCING':
+      return {
+        ...state,
+        n8n: {
+          ...state.n8n,
+          isSyncing: action.payload
+        }
+      }
+
+    case 'SYNC_N8N_DATA':
+      return {
+        ...state,
+        stakeholders: action.payload.stakeholders,
+        stakeholderCategories: action.payload.categories,
+        n8n: {
+          ...state.n8n,
+          lastSync: new Date().toISOString(),
+          syncStatus: n8nService.getSyncStatus(),
+          isSyncing: false,
+          isAvailable: true
+        }
+      }
+
+    case 'SET_N8N_ERROR':
+      return {
+        ...state,
+        n8n: {
+          ...state.n8n,
+          error: action.payload,
+          isSyncing: false
         }
       }
 
@@ -624,7 +664,55 @@ export function AppProvider({ children }) {
     refreshNotionStatus: () => dispatch({
       type: 'SET_NOTION_SYNC_STATUS',
       payload: notionService.getSyncStatus()
-    })
+    }),
+
+    // n8n integration actions
+    syncFromN8n: async () => {
+      try {
+        dispatch({ type: 'SET_N8N_SYNCING', payload: true })
+        const syncResult = await n8nService.syncFromN8n()
+
+        const mergedStakeholders = mergeNotionStakeholders(
+          state.stakeholders,
+          syncResult.stakeholders
+        )
+
+        const mergedCategories = mergeNotionCategories(
+          state.stakeholderCategories,
+          syncResult.categories
+        )
+
+        dispatch({
+          type: 'SYNC_N8N_DATA',
+          payload: {
+            stakeholders: mergedStakeholders,
+            categories: mergedCategories,
+            syncResult
+          }
+        })
+
+        return syncResult
+      } catch (error) {
+        dispatch({ type: 'SET_N8N_ERROR', payload: error.message })
+        throw error
+      }
+    },
+    exportMeetingToN8n: async (meeting, analysisResults) => {
+      try {
+        return await n8nService.exportMeeting(meeting, analysisResults)
+      } catch (error) {
+        dispatch({ type: 'SET_N8N_ERROR', payload: error.message })
+        throw error
+      }
+    },
+    testN8nConnection: async () => {
+      try {
+        return await n8nService.testConnection()
+      } catch (error) {
+        dispatch({ type: 'SET_N8N_ERROR', payload: error.message })
+        throw error
+      }
+    }
   }
 
   return (

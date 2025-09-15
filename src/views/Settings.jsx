@@ -12,6 +12,7 @@ import {
 import { setOCRApiKey, getOCRCapabilities } from '../utils/ocrService'
 import { setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
 import NotionSettings from '../components/NotionSettings'
+import N8nSettings from '../components/N8nSettings'
 
 export default function Settings() {
   const navigate = useNavigate()
@@ -104,6 +105,19 @@ export default function Settings() {
               </div>
             </button>
             <button
+              onClick={() => setActiveTab('n8n')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'n8n'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <SettingsIcon className="w-4 h-4" />
+                n8n Integration
+              </div>
+            </button>
+            <button
               onClick={() => setActiveTab('ocr')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'ocr'
@@ -135,6 +149,11 @@ export default function Settings() {
         {/* Notion Integration Tab */}
         {activeTab === 'notion' && (
           <NotionSettings />
+        )}
+
+        {/* n8n Integration Tab */}
+        {activeTab === 'n8n' && (
+          <N8nSettings />
         )}
 
 

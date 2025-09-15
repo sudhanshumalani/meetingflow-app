@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug n8n Connection</title>
+</head>
+<body>
+    <h1>Debug n8n Connection Test</h1>
+    <div id="results"></div>
+    <button onclick="testConnection()">Test Connection</button>
+
+    <script>
+        async function testConnection() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = 'Testing...';
+
+            const baseUrls = ['https://localhost:5678', 'http://localhost:5678'];
+            const endpoint = '/webhook-test/api/categories';
+
+            for (const baseUrl of baseUrls) {
+                try {
+                    console.log(`🔍 Testing n8n connection to: ${baseUrl}`);
+                    resultsDiv.innerHTML += `<br>🔍 Testing: ${baseUrl}`;
+
+                    const response = await fetch(`${baseUrl}${endpoint}`, {
+                        method: 'GET',
+                        mode: 'cors'
+                    });
+
+                    resultsDiv.innerHTML += `<br>Response status: ${response.status}`;
+                    console.log(`Response status: ${response.status}`);
+
+                    if (response.status === 404) {
+                        try {
+                            const errorData = await response.json();
+                            resultsDiv.innerHTML += `<br>Response data: ${JSON.stringify(errorData)}`;
+                            console.log('Response data:', errorData);
+
+                            if (errorData.message && errorData.message.includes('webhook') && errorData.message.includes('not registered')) {
+                                resultsDiv.innerHTML += `<br>✅ SUCCESS: n8n server responding correctly`;
+                                console.log(`✅ n8n server responding at: ${baseUrl} (webhook inactive - this is normal)`);
+                                return true;
+                            } else {
+                                resultsDiv.innerHTML += `<br>❌ Not n8n webhook 404`;
+                            }
+                        } catch (e) {
+                            resultsDiv.innerHTML += `<br>❌ Could not parse JSON: ${e.message}`;
+                            console.log(`❌ Generic 404 from ${baseUrl}`, e);
+                        }
+                    } else if (response.ok) {
+                        resultsDiv.innerHTML += `<br>✅ SUCCESS: n8n fully available`;
+                        console.log(`✅ n8n fully available at: ${baseUrl}`);
+                        return true;
+                    }
+                } catch (error) {
+                    resultsDiv.innerHTML += `<br>❌ Error: ${error.message}`;
+                    console.warn(`❌ n8n connection failed for ${baseUrl}:`, error.message);
+                    if (error.message.includes('Mixed Content')) {
+                        resultsDiv.innerHTML += `<br>💡 Mixed Content Error: HTTPS page cannot connect to HTTP n8n`;
+                    }
+                }
+            }
+
+            resultsDiv.innerHTML += `<br>❌ All connection attempts failed`;
+            return false;
+        }
+    </script>
+</body>
+</html>

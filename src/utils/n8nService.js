@@ -13,10 +13,9 @@ class N8nService {
 
     // Configure base URLs based on environment
     if (isLocalhost) {
-      // Local development - try both HTTPS and HTTP
+      // Local development - use Vite proxy to avoid CORS
       this.baseUrls = [
-        'https://localhost:5678',  // Try HTTPS first
-        'http://localhost:5678'    // Fallback to HTTP
+        '/n8n-proxy'  // Use Vite proxy endpoint
       ]
     } else if (isGitHubPages) {
       // GitHub Pages deployment - need public n8n instance or tunneling
@@ -32,9 +31,9 @@ class N8nService {
 
     this.baseUrl = this.baseUrls[0]
     this.endpoints = {
-      categories: '/webhook-test/api/categories',
-      stakeholders: '/webhook-test/api/stakeholders',
-      exportMeeting: '/webhook-test/export-meeting-and-tasks'
+      categories: '/webhook/api/categories',
+      stakeholders: '/webhook/api/stakeholders',
+      exportMeeting: '/webhook/export-meeting-and-tasks'
     }
   }
 
@@ -52,10 +51,21 @@ class N8nService {
         })
 
         if (response.status === 404) {
-          // 404 means server is running but webhook not active - that's fine for availability check
-          console.log(`✅ n8n server responding at: ${baseUrl} (webhook not active but server reachable)`)
-          this.baseUrl = baseUrl
-          return true
+          // Check if it's the expected n8n webhook 404 response
+          try {
+            const errorData = await response.json()
+            console.log(`📋 Got 404 response data:`, errorData)
+            if (errorData.message && errorData.message.includes('webhook') && errorData.message.includes('not registered')) {
+              console.log(`✅ n8n server responding at: ${baseUrl} (webhook inactive - this is normal)`)
+              this.baseUrl = baseUrl
+              return true
+            } else {
+              console.log(`❌ 404 but not n8n webhook error. Message: "${errorData.message}"`)
+            }
+          } catch (e) {
+            // If we can't parse JSON, treat as generic 404
+            console.log(`❌ Generic 404 from ${baseUrl}, JSON parse error:`, e.message)
+          }
         } else if (response.ok) {
           console.log(`✅ n8n fully available at: ${baseUrl}`)
           this.baseUrl = baseUrl
@@ -88,17 +98,66 @@ class N8nService {
       })
 
       if (!response.ok) {
+        const errorText = await response.text()
+        console.error(`❌ Categories API error: ${response.status} - ${errorText}`)
+
+        if (response.status === 404 && errorText.includes('webhook') && errorText.includes('not registered')) {
+          throw new Error(`Categories webhook not active. Please execute the Categories workflow in n8n first, then try again immediately.`)
+        }
+
         throw new Error(`n8n categories API returned ${response.status}: ${response.statusText}`)
       }
 
-      const categories = await response.json()
-      console.log(`✅ Fetched ${categories.length} categories from n8n`)
+      const responseText = await response.text()
+      console.log(`📋 Raw response from n8n (length: ${responseText.length}):`, responseText.substring(0, 500) + (responseText.length > 500 ? '...' : ''))
 
-      return categories.map(category => ({
+      let categories
+      try {
+        categories = JSON.parse(responseText)
+        console.log(`📋 Parsed JSON successfully. Type: ${typeof categories}, Keys: ${categories && typeof categories === 'object' ? Object.keys(categories) : 'N/A'}`)
+      } catch (e) {
+        console.error(`❌ Invalid JSON response:`, responseText)
+        throw new Error(`n8n returned invalid JSON: ${responseText.substring(0, 100)}`)
+      }
+
+      // Handle different response formats
+      if (!Array.isArray(categories)) {
+        console.log(`📋 Response is not array (type: ${typeof categories}), checking if it contains data...`)
+        console.log(`📋 Response object structure:`, JSON.stringify(categories, null, 2))
+
+        // Check if it's wrapped in a success response object
+        if (categories && categories.success && categories.categories && Array.isArray(categories.categories)) {
+          console.log(`📋 Found categories in success response wrapper - extracting ${categories.categories.length} items`)
+          categories = categories.categories
+        } else if (categories && categories.data && Array.isArray(categories.data)) {
+          console.log(`📋 Found categories in data wrapper - extracting ${categories.data.length} items`)
+          categories = categories.data
+        } else if (categories && Array.isArray(Object.values(categories)[0])) {
+          const firstValue = Object.values(categories)[0]
+          console.log(`📋 Found categories in first object value - extracting ${firstValue.length} items`)
+          categories = firstValue
+        } else {
+          console.warn(`❌ Unexpected response format. Available keys:`, Object.keys(categories || {}))
+          console.warn(`❌ Full response object:`, categories)
+          categories = []
+        }
+      } else {
+        console.log(`📋 Response is already an array with ${categories.length} items`)
+      }
+
+      console.log(`📊 Final categories array length: ${categories.length}`)
+      if (categories.length > 0) {
+        console.log(`📋 Sample category:`, categories[0])
+      }
+
+      const processedCategories = categories.map(category => ({
         ...category,
         source: 'n8n',
         lastSynced: new Date().toISOString()
       }))
+
+      console.log(`✅ Returning ${processedCategories.length} processed categories`)
+      return processedCategories
     } catch (error) {
       console.error('❌ Error fetching categories from n8n:', error)
       throw new Error(`Failed to fetch categories: ${error.message}`)
@@ -120,10 +179,45 @@ class N8nService {
       })
 
       if (!response.ok) {
+        const errorText = await response.text()
+        console.error(`❌ Stakeholders API error: ${response.status} - ${errorText}`)
+
+        if (response.status === 404 && errorText.includes('webhook') && errorText.includes('not registered')) {
+          throw new Error(`Stakeholders webhook not active. Please execute the Stakeholders workflow in n8n first, then try again immediately.`)
+        }
+
         throw new Error(`n8n stakeholders API returned ${response.status}: ${response.statusText}`)
       }
 
-      const stakeholders = await response.json()
+      const responseText = await response.text()
+      console.log(`📋 Raw stakeholders response from n8n:`, responseText)
+
+      let stakeholders
+      try {
+        stakeholders = JSON.parse(responseText)
+      } catch (e) {
+        console.error(`❌ Invalid JSON response:`, responseText)
+        throw new Error(`n8n returned invalid JSON: ${responseText.substring(0, 100)}`)
+      }
+
+      // Handle different response formats
+      if (!Array.isArray(stakeholders)) {
+        console.log(`📋 Stakeholders response is not array, checking if it contains data...`)
+
+        // Check if it's wrapped in a success response object
+        if (stakeholders && stakeholders.success && stakeholders.stakeholders && Array.isArray(stakeholders.stakeholders)) {
+          console.log(`📋 Found stakeholders in success response wrapper`)
+          stakeholders = stakeholders.stakeholders
+        } else if (stakeholders && stakeholders.data && Array.isArray(stakeholders.data)) {
+          stakeholders = stakeholders.data
+        } else if (stakeholders && Array.isArray(Object.values(stakeholders)[0])) {
+          stakeholders = Object.values(stakeholders)[0]
+        } else {
+          console.warn(`❌ Unexpected stakeholders response format:`, stakeholders)
+          stakeholders = []
+        }
+      }
+
       console.log(`✅ Fetched ${stakeholders.length} stakeholders from n8n`)
 
       return stakeholders.map(stakeholder => ({
@@ -206,15 +300,37 @@ class N8nService {
 
       // Fetch categories
       try {
+        console.log('🔄 Starting categories fetch in syncFromN8n...')
+        console.log('📋 About to call this.fetchCategories()')
+
         results.categories = await this.fetchCategories()
+
+        console.log(`📊 Categories fetch completed. Type: ${typeof results.categories}`)
+        console.log(`📊 Is array: ${Array.isArray(results.categories)}`)
+        console.log(`📊 Categories count: ${results.categories ? results.categories.length : 'null/undefined'}`)
+
+        if (results.categories && results.categories.length > 0) {
+          console.log(`📋 First category structure:`, JSON.stringify(results.categories[0], null, 2))
+        } else {
+          console.warn(`❌ No categories returned from fetchCategories`)
+          console.warn(`❌ Result type: ${typeof results.categories}`)
+          console.warn(`❌ Result value:`, results.categories)
+        }
+
       } catch (error) {
+        console.error('❌ Categories fetch error in syncFromN8n:', error)
+        console.error('❌ Error stack:', error.stack)
         results.errors.push(`Categories: ${error.message}`)
+        results.categories = [] // Ensure it's an array
       }
 
       // Fetch stakeholders
       try {
+        console.log('🔄 Starting stakeholders fetch in syncFromN8n...')
         results.stakeholders = await this.fetchStakeholders()
+        console.log(`📊 Stakeholders fetch result: ${results.stakeholders.length} items`)
       } catch (error) {
+        console.error('❌ Stakeholders fetch error in syncFromN8n:', error)
         results.errors.push(`Stakeholders: ${error.message}`)
       }
 
@@ -226,6 +342,16 @@ class N8nService {
         localStorage.removeItem('n8nLastError')
       } else {
         localStorage.setItem('n8nLastError', results.errors.join('; '))
+      }
+
+      console.log('📊 Final sync results summary:')
+      console.log(`   Categories: ${results.categories.length} items`)
+      console.log(`   Stakeholders: ${results.stakeholders.length} items`)
+      console.log(`   Errors: ${results.errors.length} items`)
+      console.log(`   Last synced: ${results.lastSynced}`)
+
+      if (results.errors.length > 0) {
+        console.log(`   Errors details:`, results.errors)
       }
 
       return results
@@ -241,6 +367,17 @@ class N8nService {
    * Get sync status
    */
   getSyncStatus() {
+    // Handle SSR and initial load scenarios
+    if (typeof window === 'undefined' || !localStorage) {
+      return {
+        available: false,
+        lastSynced: null,
+        lastError: null,
+        baseUrl: this.baseUrl,
+        endpoints: this.endpoints
+      }
+    }
+
     const lastSynced = localStorage.getItem('n8nLastSynced')
     const lastError = localStorage.getItem('n8nLastError')
 
@@ -258,7 +395,9 @@ class N8nService {
    */
   async testConnection() {
     try {
+      console.log('🔄 Starting n8n connection test...')
       const isAvailable = await this.isAvailable()
+      console.log(`📊 isAvailable result: ${isAvailable}`)
 
       if (!isAvailable) {
         const isGitHubPages = typeof window !== 'undefined' && window.location.hostname.includes('github.io')
@@ -273,15 +412,18 @@ class N8nService {
           suggestion = 'Make sure n8n is running on localhost:5678 and workflows are active.'
         }
 
+        console.error(`❌ n8n not available. Current baseUrl: ${this.baseUrl}`)
         throw new Error(`n8n service is not responding. ${suggestion}`)
       }
 
+      console.log(`✅ n8n connection successful at: ${this.baseUrl}`)
       return {
         success: true,
-        message: `Successfully connected to n8n service at ${this.baseUrl}`,
+        message: `✅ Connected to n8n at ${this.baseUrl}. Webhooks are ready for activation.`,
         baseUrl: this.baseUrl
       }
     } catch (error) {
+      console.error('❌ testConnection error:', error)
       throw new Error(`n8n connection failed: ${error.message}`)
     }
   }

@@ -1,16 +1,15 @@
-import notionService from './notionService'
+import n8nService from '../utils/n8nService'
 
 class ExportService {
   constructor() {
     this.exportMethods = {
-      notion: 'Direct Notion API',
       email: 'Email Export (N8N)',
       gdrive: 'Google Drive (N8N)',
       webhook: 'JSON Webhook (N8N)'
     }
     
     this.defaultSettings = {
-      preferredMethod: 'notion',
+      preferredMethod: 'email',
       emailSettings: {
         enabled: false,
         recipientEmail: '',
@@ -31,11 +30,6 @@ class ExportService {
         retryAttempts: 3,
         timeout: 30000
       },
-      notionSettings: {
-        enabled: true,
-        autoSync: true,
-        updateStakeholderContact: true
-      }
     }
     
     this.loadSettings()
@@ -60,40 +54,6 @@ class ExportService {
     return { ...this.settings }
   }
 
-  // Method 1: Direct Notion API (Real-time sync)
-  async exportToNotion(meetingData, options = {}) {
-    if (!this.settings.notionSettings.enabled) {
-      throw new Error('Notion export is disabled in settings')
-    }
-
-    try {
-      const result = await notionService.exportMeetingToNotion(meetingData)
-      
-      if (result.success && this.settings.notionSettings.updateStakeholderContact) {
-        // Update stakeholder last contact if enabled
-        if (meetingData.stakeholderNotionId) {
-          await notionService.updateStakeholderLastContact(
-            meetingData.stakeholderNotionId,
-            new Date(meetingData.date || Date.now())
-          )
-        }
-      }
-      
-      return {
-        success: true,
-        method: 'notion',
-        data: result,
-        message: 'Successfully exported to Notion'
-      }
-    } catch (error) {
-      return {
-        success: false,
-        method: 'notion',
-        error: error.message,
-        message: 'Failed to export to Notion'
-      }
-    }
-  }
 
   // Method 2: Email Export (triggers N8N workflow)
   async exportViaEmail(meetingData, options = {}) {
@@ -322,8 +282,6 @@ class ExportService {
 
   async exportByMethod(method, meetingData, options = {}) {
     switch (method) {
-      case 'notion':
-        return await this.exportToNotion(meetingData, options)
       case 'email':
         return await this.exportViaEmail(meetingData, options)
       case 'gdrive':
@@ -337,23 +295,19 @@ class ExportService {
 
   getAvailableMethods() {
     const available = []
-    
-    if (this.settings.notionSettings.enabled && notionService.isReady()) {
-      available.push('notion')
-    }
-    
+
     if (this.settings.emailSettings.enabled && this.settings.emailSettings.recipientEmail) {
       available.push('email')
     }
-    
+
     if (this.settings.gdriveSettings.enabled) {
       available.push('gdrive')
     }
-    
+
     if (this.settings.webhookSettings.enabled && this.settings.webhookSettings.url) {
       available.push('webhook')
     }
-    
+
     return available
   }
 
@@ -519,8 +473,6 @@ class ExportService {
     }
     
     switch (method) {
-      case 'notion':
-        return await notionService.testConnection()
       case 'email':
       case 'webhook':
         // For webhooks, we could send a test payload

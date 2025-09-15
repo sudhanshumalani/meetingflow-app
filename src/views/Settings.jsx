@@ -7,16 +7,16 @@ import {
   Info,
   Sparkles,
   Cloud,
-  Check
+  Check,
+  Workflow
 } from 'lucide-react'
 import { setOCRApiKey, getOCRCapabilities } from '../utils/ocrService'
 import { setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
-import NotionSettings from '../components/NotionSettings'
 import N8nSettings from '../components/N8nSettings'
 
 export default function Settings() {
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState('notion')
+  const [activeTab, setActiveTab] = useState('n8n')
 
   // OCR configuration state
   const [ocrApiKey, setOcrApiKey] = useState(localStorage.getItem('ocrApiKey') || '')
@@ -92,19 +92,6 @@ export default function Settings() {
         <div className="border-b border-gray-200 mb-8">
           <nav className="flex space-x-8">
             <button
-              onClick={() => setActiveTab('notion')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'notion'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Cloud className="w-4 h-4" />
-                Notion Integration
-              </div>
-            </button>
-            <button
               onClick={() => setActiveTab('n8n')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'n8n'
@@ -113,8 +100,8 @@ export default function Settings() {
               }`}
             >
               <div className="flex items-center gap-2">
-                <SettingsIcon className="w-4 h-4" />
-                n8n Integration
+                <Workflow className="w-4 h-4" />
+                Data Integration
               </div>
             </button>
             <button
@@ -146,12 +133,7 @@ export default function Settings() {
           </nav>
         </div>
 
-        {/* Notion Integration Tab */}
-        {activeTab === 'notion' && (
-          <NotionSettings />
-        )}
-
-        {/* n8n Integration Tab */}
+        {/* Data Integration Tab */}
         {activeTab === 'n8n' && (
           <N8nSettings />
         )}

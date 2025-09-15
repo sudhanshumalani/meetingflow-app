@@ -46,7 +46,7 @@ import {
 } from '../utils/mockData'
 import GlobalSearch from '../components/GlobalSearch'
 import NotificationCenter from '../components/NotificationCenter'
-import StakeholderSections from '../components/StakeholderSections'
+// Stakeholder management simplified - complex relationships removed
 import { SentimentAnalyzer } from '../utils/sentimentAnalysis'
 import { ExportManager } from '../utils/exportUtils'
 import { 
@@ -58,12 +58,7 @@ import {
   ResponsiveGrid,
   MobileExpandableCard
 } from '../components/MobileOptimized'
-import { 
-  NotionSyncStatus, 
-  NotionStakeholderSync 
-} from '../components/NotionIntegration'
 import { BatchExportButton, ExportOptionsButton } from '../components/ExportOptions'
-import { NotionSyncBadge } from '../components/NotionSyncStatus'
 
 export default function Home() {
   const navigate = useNavigate()
@@ -85,7 +80,6 @@ export default function Home() {
   const [exportProgress, setExportProgress] = useState(null)
   const [sortBy, setSortBy] = useState('date') // 'date', 'priority', 'sentiment'
   const [filterPriority, setFilterPriority] = useState('all')
-  const [stakeholderSortBy, setStakeholderSortBy] = useState('name') // 'name', 'priority', 'health', 'lastContact'
   
   // Mobile-specific states
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
@@ -199,7 +193,10 @@ export default function Home() {
   }
 
   const handleNewMeeting = () => {
+    // Use a UUID-like ID to ensure uniqueness
+    const meetingId = `meeting_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     const newMeeting = {
+      id: meetingId, // Pre-assign the ID so we can navigate to it
       title: '',
       description: '',
       attendees: [],
@@ -210,9 +207,8 @@ export default function Home() {
     }
 
     addMeeting(newMeeting)
-    const addedMeeting = meetings[0] // The newly added meeting will be first
-    setCurrentMeeting(addedMeeting)
-    navigate(`/meeting/${addedMeeting.id}`)
+    // Navigate using the pre-assigned ID
+    navigate(`/meeting/${meetingId}`)
   }
 
   const handleEditMeeting = (meeting) => {
@@ -515,7 +511,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-4">
               {/* Notion Sync Badge */}
-              <NotionSyncBadge />
+              {/* Data sync badge - will show n8n status when available */}
 
               {/* Batch Export Button */}
               <BatchExportButton
@@ -591,7 +587,7 @@ export default function Home() {
               </button>
 
               {/* Notion Sync Status */}
-              <NotionSyncStatus className="hidden sm:flex" />
+              {/* Data integration status - n8n integration available in Settings */}
 
               {/* Notifications Button */}
               <button
@@ -873,79 +869,10 @@ export default function Home() {
           </div>
         )}
 
-            {/* Sort and Filter Controls */}
-            <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <label className="text-sm font-medium text-gray-700">Sort meetings by:</label>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-500"
-                >
-                  <option value="date">Date</option>
-                  <option value="priority">Priority</option>
-                  <option value="sentiment">Sentiment</option>
-                </select>
-              </div>
-              <div className="flex items-center gap-4">
-                <label className="text-sm font-medium text-gray-700">Sort stakeholders by:</label>
-                <select
-                  value={stakeholderSortBy}
-                  onChange={(e) => setStakeholderSortBy(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-500"
-                >
-                  <option value="name">Name</option>
-                  <option value="priority">Priority</option>
-                  <option value="health">Relationship Health</option>
-                  <option value="lastContact">Last Contact</option>
-                </select>
-              </div>
-            </div>
 
-            {/* Stakeholder Management - Conditional for Mobile */}
-            {(activeView === 'stakeholders' || window.innerWidth >= 768) && (
-              <div className="mb-6">
-                {/* Mobile Sort Controls */}
-                <div className="md:hidden mb-4">
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm font-medium text-gray-700">Sort:</label>
-                    <select
-                      value={stakeholderSortBy}
-                      onChange={(e) => setStakeholderSortBy(e.target.value)}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-500 touch-target"
-                    >
-                      <option value="name">Name</option>
-                      <option value="priority">Priority</option>
-                      <option value="health">Relationship Health</option>
-                      <option value="lastContact">Last Contact</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between mb-4 md:mb-6">
-                  <h2 className="text-lg md:text-2xl font-semibold text-gray-900">Stakeholder Relationships</h2>
-                  <div className="text-xs md:text-sm text-gray-500">
-                    {displayStakeholders.length} stakeholder{displayStakeholders.length !== 1 ? 's' : ''} • 
-                    {displayStakeholders.filter(s => s.relationshipHealth === 'at-risk' || s.relationshipHealth === 'critical').length} need attention
-                  </div>
-                </div>
-
-                {/* Notion Stakeholder Sync Component */}
-                <div className="mb-6">
-                  <NotionStakeholderSync />
-                </div>
-                
-                <StakeholderSections 
-                  meetings={displayMeetings}
-                  stakeholders={displayStakeholders}
-                  searchTerm={searchTerm}
-                  sortBy={stakeholderSortBy}
-                />
-              </div>
-            )}
 
             {/* Desktop Sort Controls - Hidden on Mobile */}
-            <div className="hidden md:flex md:flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+            <div className="hidden md:flex md:items-center gap-4 mb-6">
               <div className="flex items-center gap-4">
                 <label className="text-sm font-medium text-gray-700">Sort meetings by:</label>
                 <select
@@ -956,19 +883,6 @@ export default function Home() {
                   <option value="date">Date</option>
                   <option value="priority">Priority</option>
                   <option value="sentiment">Sentiment</option>
-                </select>
-              </div>
-              <div className="flex items-center gap-4">
-                <label className="text-sm font-medium text-gray-700">Sort stakeholders by:</label>
-                <select
-                  value={stakeholderSortBy}
-                  onChange={(e) => setStakeholderSortBy(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-500"
-                >
-                  <option value="name">Name</option>
-                  <option value="priority">Priority</option>
-                  <option value="health">Relationship Health</option>
-                  <option value="lastContact">Last Contact</option>
                 </select>
               </div>
             </div>

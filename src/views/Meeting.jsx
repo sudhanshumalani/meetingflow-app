@@ -43,10 +43,7 @@ import {
   MobileExpandableCard,
   PullToRefresh
 } from '../components/MobileOptimized'
-import { 
-  NotionSyncStatus, 
-  NotionStakeholderDropdown 
-} from '../components/NotionIntegration'
+// Note: Data integration now available via n8n in Settings
 import { useAIAnalysis } from '../hooks/useAIAnalysis'
 import { ExportOptionsButton } from '../components/ExportOptions'
 
@@ -58,9 +55,7 @@ export default function Meeting() {
     stakeholders,
     currentMeeting,
     updateMeeting,
-    setCurrentMeeting,
-    exportMeetingToNotion,
-    notion
+    setCurrentMeeting
   } = useApp()
 
   // Form state
@@ -103,9 +98,7 @@ export default function Meeting() {
   const [isSaving, setIsSaving] = useState(false)
   const [aiProcessingResult, setAiProcessingResult] = useState(null)
 
-  // Notion export state
-  const [isExportingToNotion, setIsExportingToNotion] = useState(false)
-  const [notionExportResult, setNotionExportResult] = useState(null)
+  // Export functionality moved to n8n integration
   const [isAIProcessing, setIsAIProcessing] = useState(false)
   const [aiProcessingStage, setAiProcessingStage] = useState('')
   const [aiInsights, setAiInsights] = useState(null)
@@ -501,50 +494,8 @@ export default function Meeting() {
     }
   }
 
-  // Notion export functionality
-  const handleExportToNotion = async () => {
-    if (!notion.isConfigured) {
-      setNotionExportResult({
-        success: false,
-        error: 'Notion integration not configured. Please configure in Settings.'
-      })
-      return
-    }
-
-    setIsExportingToNotion(true)
-    setNotionExportResult(null)
-
-    try {
-      // Prepare meeting data
-      const meetingData = {
-        title: formData.title || `Meeting - ${new Date(formData.date).toLocaleDateString()}`,
-        date: formData.date,
-        type: formData.type || 'General',
-        stakeholder: formData.selectedStakeholder ?
-          stakeholders.find(s => s.id === formData.selectedStakeholder)?.name : null,
-        notes: Object.values(digitalNotes).join('\n\n').trim() ||
-               extractedText ||
-               'No notes available'
-      }
-
-      // Export to Notion with AI analysis if available
-      const result = await exportMeetingToNotion(meetingData, aiProcessingResult)
-
-      setNotionExportResult({
-        success: true,
-        url: result.url,
-        message: 'Meeting exported to Notion successfully!'
-      })
-    } catch (error) {
-      console.error('Notion export failed:', error)
-      setNotionExportResult({
-        success: false,
-        error: error.message
-      })
-    } finally {
-      setIsExportingToNotion(false)
-    }
-  }
+  // Export functionality now handled via n8n integration
+  // See ExportOptionsButton component for export options
 
   // Mobile swipe handling
   const [touchStart, setTouchStart] = useState(null)
@@ -638,7 +589,8 @@ export default function Meeting() {
             subtitle="Capture and organize insights"
             onBack={() => {
               console.log('Mobile back button clicked')
-              window.location.href = '/meetingflow-app/'
+              // Use window.location to force a proper navigation
+              window.location.pathname = '/'
             }}
             rightContent={
               <div className="flex items-center gap-2">
@@ -681,7 +633,8 @@ export default function Meeting() {
               <button
                 onClick={() => {
                   console.log('Desktop back button clicked')
-                  window.location.href = '/meetingflow-app/'
+                  // Use window.location to force a proper navigation
+                  window.location.pathname = '/'
                 }}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
@@ -708,8 +661,7 @@ export default function Meeting() {
                 </select>
               </div>
               
-              {/* Notion Sync Status */}
-              <NotionSyncStatus className="hidden sm:flex" />
+              {/* Export and data integration available via n8n (see Settings) */}
 
               {/* AI Processing Status */}
               {isAIProcessing && (
@@ -755,20 +707,6 @@ export default function Meeting() {
                   Save Meeting
                 </button>
 
-                {notion.isConfigured && (
-                  <button
-                    onClick={handleExportToNotion}
-                    disabled={isExportingToNotion || isSaving || isAIProcessing}
-                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
-                  >
-                    {isExportingToNotion ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <Cloud size={16} />
-                    )}
-                    {isExportingToNotion ? 'Exporting...' : 'Export to Notion'}
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -810,12 +748,18 @@ export default function Meeting() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Primary Stakeholder
                   </label>
-                  <NotionStakeholderDropdown
+                  <select
                     value={formData.selectedStakeholder}
-                    onChange={(value) => handleInputChange('selectedStakeholder', value)}
-                    placeholder="Select stakeholder..."
-                    className="w-full"
-                  />
+                    onChange={(e) => handleInputChange('selectedStakeholder', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="">Select stakeholder...</option>
+                    {stakeholders.map((stakeholder) => (
+                      <option key={stakeholder.id} value={stakeholder.id}>
+                        {stakeholder.name} {stakeholder.category && `(${stakeholder.category})`}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
@@ -1015,43 +959,6 @@ Action: Schedule follow-up meeting by Friday"
                   </div>
                 )}
 
-                {/* Notion Export Result */}
-                {notionExportResult && (
-                  <div className={`mb-6 p-4 rounded-lg border ${
-                    notionExportResult.success
-                      ? 'bg-green-50 border-green-200'
-                      : 'bg-red-50 border-red-200'
-                  }`}>
-                    <div className={`flex items-center gap-2 ${
-                      notionExportResult.success ? 'text-green-800' : 'text-red-800'
-                    }`}>
-                      {notionExportResult.success ? (
-                        <CheckCircle size={16} />
-                      ) : (
-                        <AlertCircle size={16} />
-                      )}
-                      <span className="font-medium">
-                        {notionExportResult.success ? 'Export Successful' : 'Export Failed'}
-                      </span>
-                    </div>
-                    <p className={`text-sm mt-1 ${
-                      notionExportResult.success ? 'text-green-700' : 'text-red-700'
-                    }`}>
-                      {notionExportResult.success ? notionExportResult.message : notionExportResult.error}
-                    </p>
-                    {notionExportResult.success && notionExportResult.url && (
-                      <a
-                        href={notionExportResult.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 mt-2 text-sm text-green-700 hover:text-green-800 underline"
-                      >
-                        <Cloud size={14} />
-                        Open in Notion
-                      </a>
-                    )}
-                  </div>
-                )}
 
                 {/* 3-Section Layout: Summary (full width), Discussion Points & Action Items (side by side) */}
                 <div className="space-y-4">

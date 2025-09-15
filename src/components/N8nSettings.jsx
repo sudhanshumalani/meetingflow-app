@@ -35,26 +35,122 @@ export default function N8nSettings() {
     }
   }
 
+  const handleAutoSyncCategories = async () => {
+    setIsSyncing(true)
+    setSyncResult(null)
+
+    try {
+      // Step 1: Trigger n8n workflow execution via manual API call
+      setSyncResult({
+        success: false,
+        message: 'Step 1: Activating Categories workflow in n8n...'
+      })
+
+      const executeResponse = await fetch('/n8n-proxy/rest/workflows/Categories/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+
+      if (executeResponse.ok) {
+        setSyncResult({
+          success: false,
+          message: 'Step 2: Waiting for workflow activation (2 seconds)...'
+        })
+
+        // Wait for webhook to become active
+        await new Promise(resolve => setTimeout(resolve, 2000))
+
+        setSyncResult({
+          success: false,
+          message: 'Step 3: Fetching categories data...'
+        })
+
+        // Step 2: Immediately fetch categories
+        const result = await n8nService.syncFromN8n()
+        console.log('📊 Auto-sync result:', result)
+
+        setSyncResult({
+          success: true,
+          stakeholdersCount: result.stakeholders.length,
+          categoriesCount: result.categories.length,
+          errors: result.errors,
+          lastSynced: result.lastSynced
+        })
+
+        // Store data and dispatch events
+        localStorage.setItem('cachedStakeholders', JSON.stringify(result.stakeholders))
+        localStorage.setItem('cachedCategories', JSON.stringify(result.categories))
+
+        window.dispatchEvent(new CustomEvent('n8nDataUpdated', {
+          detail: { stakeholders: result.stakeholders, categories: result.categories }
+        }))
+      } else {
+        throw new Error('Failed to execute n8n workflow')
+      }
+    } catch (error) {
+      console.error('❌ Auto-sync error:', error)
+      setSyncResult({
+        success: false,
+        error: error.message,
+        message: 'Auto-sync failed. Try manual sync or switch n8n to production mode.'
+      })
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
   const handleSync = async () => {
     setIsSyncing(true)
     setSyncResult(null)
 
     try {
       const result = await n8nService.syncFromN8n()
-      setSyncResult({
+      console.log('📊 Sync result received in N8nSettings:', result)
+      console.log('📊 Result type:', typeof result)
+      console.log('📊 Result keys:', result ? Object.keys(result) : 'null')
+
+      if (result.categories) {
+        console.log('📊 Categories in result:')
+        console.log('   Type:', typeof result.categories)
+        console.log('   Is array:', Array.isArray(result.categories))
+        console.log('   Length:', result.categories.length)
+        if (result.categories.length > 0) {
+          console.log('   First item:', result.categories[0])
+        }
+      } else {
+        console.warn('❌ No categories property in result')
+      }
+
+      if (result.stakeholders) {
+        console.log('📊 Stakeholders in result:')
+        console.log('   Type:', typeof result.stakeholders)
+        console.log('   Is array:', Array.isArray(result.stakeholders))
+        console.log('   Length:', result.stakeholders.length)
+      } else {
+        console.warn('❌ No stakeholders property in result')
+      }
+
+      const syncResultForUI = {
         success: true,
-        stakeholdersCount: result.stakeholders.length,
-        categoriesCount: result.categories.length,
-        errors: result.errors,
+        stakeholdersCount: result.stakeholders ? result.stakeholders.length : 0,
+        categoriesCount: result.categories ? result.categories.length : 0,
+        errors: result.errors || [],
         lastSynced: result.lastSynced
-      })
+      }
+
+      console.log('📊 Setting sync result for UI:', syncResultForUI)
+      setSyncResult(syncResultForUI)
 
       // Update sync status
       setSyncStatus(n8nService.getSyncStatus())
 
       // Store data in localStorage for the app to use
-      localStorage.setItem('cachedStakeholders', JSON.stringify(result.stakeholders))
-      localStorage.setItem('cachedCategories', JSON.stringify(result.categories))
+      console.log('📊 Storing in localStorage:')
+      console.log('   Stakeholders to store:', result.stakeholders ? result.stakeholders.length : 0)
+      console.log('   Categories to store:', result.categories ? result.categories.length : 0)
+
+      localStorage.setItem('cachedStakeholders', JSON.stringify(result.stakeholders || []))
+      localStorage.setItem('cachedCategories', JSON.stringify(result.categories || []))
 
       // Dispatch custom event to notify other components
       window.dispatchEvent(new CustomEvent('n8nDataUpdated', {
@@ -141,18 +237,32 @@ export default function N8nSettings() {
       <div className="mb-6">
         <div className="flex items-center justify-between mb-3">
           <h4 className="text-sm font-medium text-gray-700">Data Sync</h4>
-          <button
-            onClick={handleSync}
-            disabled={isSyncing}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isSyncing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
-            )}
-            Sync Data
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={handleAutoSyncCategories}
+              disabled={isSyncing}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSyncing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              Auto-Sync Categories
+            </button>
+            <button
+              onClick={handleSync}
+              disabled={isSyncing}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSyncing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              Manual Sync
+            </button>
+          </div>
         </div>
 
         {/* Sync Status */}

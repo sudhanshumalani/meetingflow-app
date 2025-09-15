@@ -90,14 +90,6 @@ export function ExportOptionsButton({ meetingData, onSuccess, onError, className
 
   const exportMethods = [
     {
-      id: 'notion',
-      name: 'Notion API',
-      description: 'Real-time sync to Notion database',
-      icon: <Database size={20} />,
-      color: 'bg-gray-100 text-gray-800 border-gray-300',
-      available: availableMethods.includes('notion')
-    },
-    {
       id: 'email',
       name: 'Email Export',
       description: 'Triggers N8N workflow via email',
@@ -314,7 +306,6 @@ export function ExportSettingsModal({ isOpen, onClose }) {
 
   const tabs = [
     { id: 'general', name: 'General', icon: <Settings size={16} /> },
-    { id: 'notion', name: 'Notion', icon: <Database size={16} /> },
     { id: 'email', name: 'Email/N8N', icon: <Mail size={16} /> },
     { id: 'gdrive', name: 'Google Drive', icon: <HardDrive size={16} /> },
     { id: 'webhook', name: 'Webhook', icon: <Webhook size={16} /> }
@@ -377,15 +368,6 @@ export function ExportSettingsModal({ isOpen, onClose }) {
                 testResults={testResults}
               />
             )}
-            {activeTab === 'notion' && (
-              <NotionSettings 
-                settings={settings} 
-                updateSettings={updateSettings}
-                onTest={() => handleTest('notion')}
-                testResult={testResults.notion}
-                isTesting={isTesting}
-              />
-            )}
             {activeTab === 'email' && (
               <EmailSettings 
                 settings={settings} 
@@ -438,7 +420,6 @@ export function ExportSettingsModal({ isOpen, onClose }) {
 // Settings Tab Components
 function GeneralSettings({ settings, updateSettings, testResults }) {
   const exportMethods = [
-    { id: 'notion', name: 'Notion API (Real-time)', description: 'Direct integration with Notion' },
     { id: 'email', name: 'Email Export (N8N)', description: 'Email trigger for N8N workflow' },
     { id: 'gdrive', name: 'Google Drive (N8N)', description: 'File upload for N8N monitoring' },
     { id: 'webhook', name: 'JSON Webhook (N8N)', description: 'Direct webhook to N8N' }
@@ -498,76 +479,6 @@ function GeneralSettings({ settings, updateSettings, testResults }) {
   )
 }
 
-function NotionSettings({ settings, updateSettings, onTest, testResult, isTesting }) {
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Notion Integration</h3>
-        <button
-          onClick={onTest}
-          disabled={isTesting}
-          className="flex items-center gap-2 px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50"
-        >
-          {isTesting ? (
-            <Loader2 size={16} className="animate-spin" />
-          ) : (
-            <TestTube size={16} />
-          )}
-          Test Connection
-        </button>
-      </div>
-
-      {testResult && (
-        <div className={`p-3 rounded-lg ${
-          testResult.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
-        }`}>
-          {testResult.success ? '✓ Connection successful' : `✗ ${testResult.error}`}
-        </div>
-      )}
-
-      <div className="space-y-4">
-        <label className="flex items-center gap-3">
-          <input
-            type="checkbox"
-            checked={settings.notionSettings.enabled}
-            onChange={(e) => updateSettings('notionSettings', 'enabled', e.target.checked)}
-            className="w-4 h-4 text-indigo-600"
-          />
-          <span className="font-medium">Enable Notion export</span>
-        </label>
-
-        <label className="flex items-center gap-3">
-          <input
-            type="checkbox"
-            checked={settings.notionSettings.autoSync}
-            onChange={(e) => updateSettings('notionSettings', 'autoSync', e.target.checked)}
-            className="w-4 h-4 text-indigo-600"
-          />
-          <span className="font-medium">Auto-sync on save</span>
-        </label>
-
-        <label className="flex items-center gap-3">
-          <input
-            type="checkbox"
-            checked={settings.notionSettings.updateStakeholderContact}
-            onChange={(e) => updateSettings('notionSettings', 'updateStakeholderContact', e.target.checked)}
-            className="w-4 h-4 text-indigo-600"
-          />
-          <span className="font-medium">Update stakeholder last contact date</span>
-        </label>
-      </div>
-
-      <div className="bg-gray-50 border rounded-lg p-4">
-        <h4 className="font-medium mb-2">Configuration</h4>
-        <div className="text-sm text-gray-600 space-y-1">
-          <p>• API Token: {import.meta.env.VITE_NOTION_API_TOKEN ? '✓ Configured' : '✗ Missing'}</p>
-          <p>• Meetings DB: {import.meta.env.VITE_NOTION_MEETINGS_DATABASE_ID ? '✓ Configured' : '✗ Missing'}</p>
-          <p>• Stakeholders DB: {import.meta.env.VITE_NOTION_STAKEHOLDERS_DATABASE_ID ? '✓ Configured' : '✗ Missing'}</p>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function EmailSettings({ settings, updateSettings, onTest, testResult, isTesting }) {
   return (

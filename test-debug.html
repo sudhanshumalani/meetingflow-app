@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Test</title>
+</head>
+<body>
+    <h1>Testing MeetingFlow App</h1>
+    <div id="status">Loading...</div>
+    <div id="errors" style="color: red;"></div>
+    <script>
+        async function testApp() {
+            const statusDiv = document.getElementById('status');
+            const errorsDiv = document.getElementById('errors');
+
+            try {
+                // Test if the app loads
+                const response = await fetch('https://localhost:5174/meetingflow-app/');
+                statusDiv.innerHTML = 'Response status: ' + response.status;
+
+                if (response.ok) {
+                    const html = await response.text();
+                    statusDiv.innerHTML += '<br>HTML loaded, length: ' + html.length;
+
+                    // Check for common issues
+                    if (html.includes('<!DOCTYPE html>')) {
+                        statusDiv.innerHTML += '<br>✅ HTML structure OK';
+                    }
+                    if (html.includes('id="root"')) {
+                        statusDiv.innerHTML += '<br>✅ Root element found';
+                    }
+                    if (html.includes('src="/meetingflow-app/src/main.jsx"')) {
+                        statusDiv.innerHTML += '<br>✅ Main.jsx reference found';
+                    }
+                }
+            } catch (error) {
+                errorsDiv.innerHTML = 'Error: ' + error.message;
+            }
+        }
+
+        testApp();
+    </script>
+</body>
+</html>

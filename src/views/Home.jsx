@@ -29,7 +29,13 @@ import {
   FileDown,
   Menu,
   X,
-  Send
+  Send,
+  Edit2,
+  Trash2,
+  MoreVertical,
+  Save,
+  XCircle,
+  Eye
 } from 'lucide-react'
 import { format, isToday, isThisWeek, startOfDay, endOfDay, differenceInDays } from 'date-fns'
 import { 
@@ -62,7 +68,7 @@ import { BatchExportButton, ExportOptionsButton } from '../components/ExportOpti
 
 export default function Home() {
   const navigate = useNavigate()
-  const { meetings, stakeholders, addMeeting, setCurrentMeeting } = useApp()
+  const { meetings, stakeholders, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting } = useApp()
   const [searchTerm, setSearchTerm] = useState('')
   const [notifications, setNotifications] = useState([])
   const [activeTab, setActiveTab] = useState('all')
@@ -85,6 +91,11 @@ export default function Home() {
   // Mobile-specific states
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
   const [activeView, setActiveView] = useState('overview') // 'overview', 'stakeholders', 'meetings'
+
+  // Meeting management states
+  const [editingMeeting, setEditingMeeting] = useState(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null)
+  const [showMeetingManagement, setShowMeetingManagement] = useState(false)
 
   // Initialize services
   const sentimentAnalyzer = new SentimentAnalyzer()
@@ -196,11 +207,41 @@ export default function Home() {
       attachments: [],
       status: 'upcoming'
     }
-    
+
     addMeeting(newMeeting)
     const addedMeeting = meetings[0] // The newly added meeting will be first
     setCurrentMeeting(addedMeeting)
     navigate(`/meeting/${addedMeeting.id}`)
+  }
+
+  const handleEditMeeting = (meeting) => {
+    setEditingMeeting({ ...meeting })
+  }
+
+  const handleSaveEdit = () => {
+    if (editingMeeting) {
+      updateMeeting(editingMeeting)
+      setEditingMeeting(null)
+    }
+  }
+
+  const handleCancelEdit = () => {
+    setEditingMeeting(null)
+  }
+
+  const handleDeleteMeeting = (meetingId) => {
+    setShowDeleteConfirm(meetingId)
+  }
+
+  const confirmDeleteMeeting = () => {
+    if (showDeleteConfirm) {
+      deleteMeeting(showDeleteConfirm)
+      setShowDeleteConfirm(null)
+    }
+  }
+
+  const cancelDeleteMeeting = () => {
+    setShowDeleteConfirm(null)
   }
 
   const toggleGroup = (category) => {
@@ -298,6 +339,11 @@ export default function Home() {
       label: 'Meetings',
       icon: <Calendar size={20} />,
       onClick: () => setActiveView('meetings')
+    },
+    {
+      label: 'Manage Meetings',
+      icon: <Edit2 size={20} />,
+      onClick: () => setShowMeetingManagement(true)
     },
     {
       label: 'Export Data',
@@ -447,6 +493,16 @@ export default function Home() {
               >
                 <Search size={16} className="sm:w-[18px] sm:h-[18px]" />
                 <span className="hidden lg:inline">Search</span>
+              </button>
+
+              {/* Manage Meetings Button */}
+              <button
+                onClick={() => setShowMeetingManagement(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                title="Manage Meetings"
+              >
+                <Edit2 size={18} />
+                <span className="hidden lg:inline">Manage Meetings</span>
               </button>
 
               {/* Settings Button */}
@@ -994,6 +1050,230 @@ export default function Home() {
         onClose={() => setIsNotificationCenterOpen(false)}
         onNavigate={handleNavigate}
       />
+
+      {/* Meeting Management Modal */}
+      {showMeetingManagement && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-6 border-b">
+              <h2 className="text-xl font-semibold text-gray-900">Manage Meetings</h2>
+              <button
+                onClick={() => setShowMeetingManagement(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+              {displayMeetings.length === 0 ? (
+                <div className="text-center py-12">
+                  <Calendar className="mx-auto text-gray-400 mb-4" size={48} />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">No meetings found</h3>
+                  <p className="text-gray-600">Create your first meeting to get started.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {displayMeetings.map(meeting => (
+                    <div key={meeting.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                      {editingMeeting && editingMeeting.id === meeting.id ? (
+                        /* Edit Mode */
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Title</label>
+                              <input
+                                type="text"
+                                value={editingMeeting.title || ''}
+                                onChange={(e) => setEditingMeeting(prev => ({ ...prev, title: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="Meeting title"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                              <select
+                                value={editingMeeting.status || 'upcoming'}
+                                onChange={(e) => setEditingMeeting(prev => ({ ...prev, status: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              >
+                                <option value="upcoming">Upcoming</option>
+                                <option value="in-progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                                <option value="cancelled">Cancelled</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                            <textarea
+                              value={editingMeeting.description || ''}
+                              onChange={(e) => setEditingMeeting(prev => ({ ...prev, description: e.target.value }))}
+                              rows={3}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              placeholder="Meeting description"
+                            />
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                              <select
+                                value={editingMeeting.priority || 'medium'}
+                                onChange={(e) => setEditingMeeting(prev => ({ ...prev, priority: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              >
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Scheduled Date</label>
+                              <input
+                                type="datetime-local"
+                                value={editingMeeting.scheduledAt ? new Date(editingMeeting.scheduledAt).toISOString().slice(0, 16) : ''}
+                                onChange={(e) => setEditingMeeting(prev => ({
+                                  ...prev,
+                                  scheduledAt: e.target.value ? new Date(e.target.value).toISOString() : null
+                                }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-3 pt-4 border-t">
+                            <button
+                              onClick={handleCancelEdit}
+                              className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                            >
+                              <XCircle size={16} />
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleSaveEdit}
+                              className="flex items-center gap-2 px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                            >
+                              <Save size={16} />
+                              Save Changes
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* View Mode */
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <h3 className="text-lg font-medium text-gray-900">
+                                {meeting.title || 'Untitled Meeting'}
+                              </h3>
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                meeting.status === 'completed' ? 'bg-green-100 text-green-800' :
+                                meeting.status === 'in-progress' ? 'bg-blue-100 text-blue-800' :
+                                meeting.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                                'bg-gray-100 text-gray-800'
+                              }`}>
+                                {meeting.status || 'upcoming'}
+                              </span>
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                meeting.priority === 'high' ? 'bg-red-100 text-red-800' :
+                                meeting.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-green-100 text-green-800'
+                              }`}>
+                                {meeting.priority || 'low'} priority
+                              </span>
+                            </div>
+                            {meeting.description && (
+                              <p className="text-gray-600 mb-3 line-clamp-2">{meeting.description}</p>
+                            )}
+                            <div className="flex items-center gap-4 text-sm text-gray-500">
+                              {meeting.scheduledAt && (
+                                <div className="flex items-center gap-1">
+                                  <Calendar size={14} />
+                                  {format(new Date(meeting.scheduledAt), 'MMM d, yyyy h:mm a')}
+                                </div>
+                              )}
+                              {meeting.attendees && meeting.attendees.length > 0 && (
+                                <div className="flex items-center gap-1">
+                                  <Users size={14} />
+                                  {meeting.attendees.length} attendees
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1">
+                                <Clock size={14} />
+                                {meeting.updatedAt ? format(new Date(meeting.updatedAt), 'MMM d, yyyy') : 'Never updated'}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 ml-4">
+                            <button
+                              onClick={() => handleStartMeeting(meeting)}
+                              className="flex items-center gap-1 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Open Meeting"
+                            >
+                              <Eye size={16} />
+                              <span className="hidden sm:inline">Open</span>
+                            </button>
+                            <button
+                              onClick={() => handleEditMeeting(meeting)}
+                              className="flex items-center gap-1 px-3 py-2 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+                              title="Edit Meeting"
+                            >
+                              <Edit2 size={16} />
+                              <span className="hidden sm:inline">Edit</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteMeeting(meeting.id)}
+                              className="flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Delete Meeting"
+                            >
+                              <Trash2 size={16} />
+                              <span className="hidden sm:inline">Delete</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-shrink-0 w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                  <Trash2 className="text-red-600" size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900">Delete Meeting</h3>
+                  <p className="text-sm text-gray-600">Are you sure you want to delete this meeting? This action cannot be undone.</p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={cancelDeleteMeeting}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDeleteMeeting}
+                  className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                >
+                  Delete Meeting
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

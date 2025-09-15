@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useEffect } from 'react'
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
-import notionService from '../services/notionService'
+import notionService from '../utils/notionService'
 import { STAKEHOLDER_CATEGORIES as DEFAULT_CATEGORIES } from '../utils/stakeholderManager'
 
 const AppContext = createContext()
@@ -15,8 +15,9 @@ const initialState = {
   error: null,
   notion: {
     syncStatus: notionService.getSyncStatus(),
-    isConfigured: notionService.isReady(),
-    lastStakeholderSync: null
+    isConfigured: notionService.isConfigured(),
+    lastSync: null,
+    isSyncing: false
   }
 }
 
@@ -225,10 +226,112 @@ function appReducer(state, action) {
             : stakeholder
         )
       }
-    
+
+    case 'SET_NOTION_SYNCING':
+      return {
+        ...state,
+        notion: {
+          ...state.notion,
+          isSyncing: action.payload
+        }
+      }
+
+    case 'SYNC_NOTION_DATA':
+      return {
+        ...state,
+        stakeholders: action.payload.stakeholders,
+        stakeholderCategories: action.payload.categories,
+        notion: {
+          ...state.notion,
+          lastSync: new Date().toISOString(),
+          syncStatus: notionService.getSyncStatus(),
+          isSyncing: false
+        }
+      }
+
+    case 'SET_NOTION_ERROR':
+      return {
+        ...state,
+        notion: {
+          ...state.notion,
+          error: action.payload,
+          isSyncing: false
+        }
+      }
+
+    case 'UPDATE_NOTION_CONFIG':
+      // Update notion service configuration
+      notionService.initialize(action.payload)
+      return {
+        ...state,
+        notion: {
+          ...state.notion,
+          isConfigured: notionService.isConfigured(),
+          syncStatus: notionService.getSyncStatus()
+        }
+      }
+
     default:
       return state
   }
+}
+
+// Helper functions for merging Notion data with local data
+function mergeNotionStakeholders(localStakeholders, notionStakeholders) {
+  const merged = [...localStakeholders]
+
+  notionStakeholders.forEach(notionStakeholder => {
+    // Check if stakeholder already exists locally (by name or notionId)
+    const existingIndex = merged.findIndex(local =>
+      local.notionId === notionStakeholder.notionId ||
+      (local.name.toLowerCase() === notionStakeholder.name.toLowerCase() && local.source !== 'notion')
+    )
+
+    if (existingIndex >= 0) {
+      // Update existing stakeholder with Notion data
+      merged[existingIndex] = {
+        ...merged[existingIndex],
+        ...notionStakeholder,
+        // Preserve local ID if it exists
+        id: merged[existingIndex].id,
+        // Mark as synced
+        lastSynced: new Date().toISOString()
+      }
+    } else {
+      // Add new stakeholder from Notion
+      merged.push(notionStakeholder)
+    }
+  })
+
+  return merged
+}
+
+function mergeNotionCategories(localCategories, notionCategories) {
+  const merged = [...localCategories]
+
+  notionCategories.forEach(notionCategory => {
+    // Check if category already exists locally
+    const existingIndex = merged.findIndex(local =>
+      local.key === notionCategory.key || local.label.toLowerCase() === notionCategory.label.toLowerCase()
+    )
+
+    if (existingIndex >= 0) {
+      // Update existing category with Notion data if it's from Notion
+      if (merged[existingIndex].source === 'notion') {
+        merged[existingIndex] = {
+          ...merged[existingIndex],
+          ...notionCategory,
+          lastSynced: new Date().toISOString()
+        }
+      }
+      // Don't overwrite local categories
+    } else {
+      // Add new category from Notion
+      merged.push(notionCategory)
+    }
+  })
+
+  return merged
 }
 
 export function AppProvider({ children }) {
@@ -265,40 +368,49 @@ export function AppProvider({ children }) {
         }
       })
       
-      // Try to fetch stakeholders from Notion if configured
-      if (notionService.isReady()) {
+      // Sync from Notion if configured
+      if (notionService.isConfigured()) {
         try {
-          const notionResult = await notionService.fetchStakeholders()
-          
-          if (notionResult.success && notionResult.data.length > 0) {
-            // Merge Notion stakeholders with local ones
-            const mergedStakeholders = mergeDuplicateStakeholders(
-              localStakeholders || [], 
-              notionResult.data
+          dispatch({ type: 'SET_NOTION_SYNCING', payload: true })
+
+          const syncResult = await notionService.syncFromNotion()
+
+          if (syncResult.stakeholders.length > 0 || syncResult.categories.length > 0) {
+            // Merge Notion data with local data
+            const mergedStakeholders = mergeNotionStakeholders(
+              localStakeholders || [],
+              syncResult.stakeholders
             )
-            
+
+            const mergedCategories = mergeNotionCategories(
+              localCategories || Object.values(DEFAULT_CATEGORIES),
+              syncResult.categories
+            )
+
             dispatch({
-              type: 'SET_NOTION_STAKEHOLDERS',
+              type: 'SYNC_NOTION_DATA',
               payload: {
                 stakeholders: mergedStakeholders,
-                merge: false
+                categories: mergedCategories,
+                syncResult
               }
             })
-            
-            console.log(`Synced ${notionResult.data.length} stakeholders from Notion`)
+
+            console.log(`Synced ${syncResult.stakeholders.length} stakeholders and ${syncResult.categories.length} categories from Notion`)
           }
-          
-          // Update sync status
-          dispatch({
-            type: 'SET_NOTION_SYNC_STATUS',
-            payload: notionService.getSyncStatus()
-          })
+
+          // Store sync timestamp
+          localStorage.setItem('notionLastSynced', new Date().toISOString())
+
         } catch (notionError) {
           console.warn('Failed to sync with Notion:', notionError.message)
+          localStorage.setItem('notionLastError', notionError.message)
           dispatch({
-            type: 'SET_NOTION_SYNC_STATUS',
-            payload: notionService.getSyncStatus()
+            type: 'SET_NOTION_ERROR',
+            payload: notionError.message
           })
+        } finally {
+          dispatch({ type: 'SET_NOTION_SYNCING', payload: false })
         }
       }
     } catch (error) {
@@ -460,7 +572,55 @@ export function AppProvider({ children }) {
     
     // Notion integration actions
     syncStakeholdersFromNotion,
-    exportMeetingToNotion,
+    syncFromNotion: async () => {
+      try {
+        dispatch({ type: 'SET_NOTION_SYNCING', payload: true })
+        const syncResult = await notionService.syncFromNotion()
+
+        const mergedStakeholders = mergeNotionStakeholders(
+          state.stakeholders,
+          syncResult.stakeholders
+        )
+
+        const mergedCategories = mergeNotionCategories(
+          state.stakeholderCategories,
+          syncResult.categories
+        )
+
+        dispatch({
+          type: 'SYNC_NOTION_DATA',
+          payload: {
+            stakeholders: mergedStakeholders,
+            categories: mergedCategories,
+            syncResult
+          }
+        })
+
+        return syncResult
+      } catch (error) {
+        dispatch({ type: 'SET_NOTION_ERROR', payload: error.message })
+        throw error
+      }
+    },
+    exportMeetingToNotion: async (meeting, analysisResults) => {
+      try {
+        return await notionService.exportMeeting(meeting, analysisResults)
+      } catch (error) {
+        dispatch({ type: 'SET_NOTION_ERROR', payload: error.message })
+        throw error
+      }
+    },
+    configureNotion: (config) => {
+      dispatch({ type: 'UPDATE_NOTION_CONFIG', payload: config })
+    },
+    testNotionConnection: async () => {
+      try {
+        return await notionService.testConnection()
+      } catch (error) {
+        dispatch({ type: 'SET_NOTION_ERROR', payload: error.message })
+        throw error
+      }
+    },
     refreshNotionStatus: () => dispatch({
       type: 'SET_NOTION_SYNC_STATUS',
       payload: notionService.getSyncStatus()

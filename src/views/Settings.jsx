@@ -26,7 +26,8 @@ import {
   Eye,
   Key,
   Info,
-  Sparkles
+  Sparkles,
+  Cloud
 } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 import {
@@ -39,6 +40,7 @@ import {
 } from '../utils/stakeholderManager'
 import { setOCRApiKey, getOCRCapabilities } from '../utils/ocrService'
 import { setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
+import NotionSettings from '../components/NotionSettings'
 
 export default function Settings() {
   const navigate = useNavigate()
@@ -242,6 +244,19 @@ export default function Settings() {
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4" />
                 Claude AI
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('notion')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'notion'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Cloud className="w-4 h-4" />
+                Notion Integration
               </div>
             </button>
           </nav>
@@ -832,6 +847,11 @@ export default function Settings() {
               </button>
             </div>
           </div>
+        )}
+
+        {/* Notion Integration Tab */}
+        {activeTab === 'notion' && (
+          <NotionSettings />
         )}
 
         {/* Add/Edit Stakeholder Modal */}

@@ -63,6 +63,7 @@ import {
   NotionStakeholderSync 
 } from '../components/NotionIntegration'
 import { BatchExportButton, ExportOptionsButton } from '../components/ExportOptions'
+import { NotionSyncBadge } from '../components/NotionSyncStatus'
 
 export default function Home() {
   const navigate = useNavigate()
@@ -513,8 +514,11 @@ export default function Home() {
               <p className="text-gray-600 mt-1">Your intelligent meeting management companion</p>
             </div>
             <div className="flex items-center gap-4">
+              {/* Notion Sync Badge */}
+              <NotionSyncBadge />
+
               {/* Batch Export Button */}
-              <BatchExportButton 
+              <BatchExportButton
                 meetings={displayMeetings}
                 className="mr-3"
               />

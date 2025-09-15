@@ -18,6 +18,7 @@ import {
   AlertCircle,
   ChevronDown,
   Sparkles,
+  Cloud,
   Grid3X3,
   Target,
   Zap,
@@ -57,9 +58,11 @@ export default function Meeting() {
     stakeholders,
     currentMeeting,
     updateMeeting,
-    setCurrentMeeting
+    setCurrentMeeting,
+    exportMeetingToNotion,
+    notion
   } = useApp()
-  
+
   // Form state
   const [formData, setFormData] = useState({
     title: '',
@@ -99,6 +102,10 @@ export default function Meeting() {
   // AI processing state
   const [isSaving, setIsSaving] = useState(false)
   const [aiProcessingResult, setAiProcessingResult] = useState(null)
+
+  // Notion export state
+  const [isExportingToNotion, setIsExportingToNotion] = useState(false)
+  const [notionExportResult, setNotionExportResult] = useState(null)
   const [isAIProcessing, setIsAIProcessing] = useState(false)
   const [aiProcessingStage, setAiProcessingStage] = useState('')
   const [aiInsights, setAiInsights] = useState(null)
@@ -493,7 +500,52 @@ export default function Meeting() {
       setIsSaving(false)
     }
   }
-  
+
+  // Notion export functionality
+  const handleExportToNotion = async () => {
+    if (!notion.isConfigured) {
+      setNotionExportResult({
+        success: false,
+        error: 'Notion integration not configured. Please configure in Settings.'
+      })
+      return
+    }
+
+    setIsExportingToNotion(true)
+    setNotionExportResult(null)
+
+    try {
+      // Prepare meeting data
+      const meetingData = {
+        title: formData.title || `Meeting - ${new Date(formData.date).toLocaleDateString()}`,
+        date: formData.date,
+        type: formData.type || 'General',
+        stakeholder: formData.selectedStakeholder ?
+          stakeholders.find(s => s.id === formData.selectedStakeholder)?.name : null,
+        notes: Object.values(digitalNotes).join('\n\n').trim() ||
+               extractedText ||
+               'No notes available'
+      }
+
+      // Export to Notion with AI analysis if available
+      const result = await exportMeetingToNotion(meetingData, aiProcessingResult)
+
+      setNotionExportResult({
+        success: true,
+        url: result.url,
+        message: 'Meeting exported to Notion successfully!'
+      })
+    } catch (error) {
+      console.error('Notion export failed:', error)
+      setNotionExportResult({
+        success: false,
+        error: error.message
+      })
+    } finally {
+      setIsExportingToNotion(false)
+    }
+  }
+
   // Mobile swipe handling
   const [touchStart, setTouchStart] = useState(null)
   const [touchEnd, setTouchEnd] = useState(null)
@@ -702,6 +754,21 @@ export default function Meeting() {
                   <Save size={16} />
                   Save Meeting
                 </button>
+
+                {notion.isConfigured && (
+                  <button
+                    onClick={handleExportToNotion}
+                    disabled={isExportingToNotion || isSaving || isAIProcessing}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
+                  >
+                    {isExportingToNotion ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Cloud size={16} />
+                    )}
+                    {isExportingToNotion ? 'Exporting...' : 'Export to Notion'}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -945,6 +1012,44 @@ Action: Schedule follow-up meeting by Friday"
                       <span className="font-medium">Analysis Error</span>
                     </div>
                     <p className="text-sm text-red-700 mt-1">{errorMessage || aiError}</p>
+                  </div>
+                )}
+
+                {/* Notion Export Result */}
+                {notionExportResult && (
+                  <div className={`mb-6 p-4 rounded-lg border ${
+                    notionExportResult.success
+                      ? 'bg-green-50 border-green-200'
+                      : 'bg-red-50 border-red-200'
+                  }`}>
+                    <div className={`flex items-center gap-2 ${
+                      notionExportResult.success ? 'text-green-800' : 'text-red-800'
+                    }`}>
+                      {notionExportResult.success ? (
+                        <CheckCircle size={16} />
+                      ) : (
+                        <AlertCircle size={16} />
+                      )}
+                      <span className="font-medium">
+                        {notionExportResult.success ? 'Export Successful' : 'Export Failed'}
+                      </span>
+                    </div>
+                    <p className={`text-sm mt-1 ${
+                      notionExportResult.success ? 'text-green-700' : 'text-red-700'
+                    }`}>
+                      {notionExportResult.success ? notionExportResult.message : notionExportResult.error}
+                    </p>
+                    {notionExportResult.success && notionExportResult.url && (
+                      <a
+                        href={notionExportResult.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 mt-2 text-sm text-green-700 hover:text-green-800 underline"
+                      >
+                        <Cloud size={14} />
+                        Open in Notion
+                      </a>
+                    )}
                   </div>
                 )}
 

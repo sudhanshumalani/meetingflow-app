@@ -84,6 +84,7 @@ export default function Meeting() {
   // Manual text input for Claude processing
   const [manualText, setManualText] = useState('')
   const [showManualInput, setShowManualInput] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
   
   // Photo/OCR state
   const [showCamera, setShowCamera] = useState(false)

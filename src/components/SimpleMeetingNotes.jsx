@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
-import { Edit3, Save, Camera, Upload, AlertCircle, CheckCircle, Loader2, Sparkles } from 'lucide-react'
-import { extractTextFromImage, processWithClaude, setOCRApiKey, setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
+import { Edit3, Save, Camera, Upload, AlertCircle, CheckCircle, Loader2, Sparkles, Zap, Clock, Download } from 'lucide-react'
+import { extractTextFromImage, setOCRApiKey, setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
+import { useAIAnalysis } from '../hooks/useAIAnalysis'
 
 export default function SimpleMeetingNotes() {
   // Core state
@@ -14,7 +15,21 @@ export default function SimpleMeetingNotes() {
   const [ocrProgress, setOcrProgress] = useState(0)
   const [ocrStatus, setOcrStatus] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
-  const [claudeResult, setClaudeResult] = useState(null)
+
+  // Enhanced AI Analysis Hook
+  const {
+    result: aiResult,
+    isAnalyzing,
+    error: aiError,
+    progress: aiProgress,
+    analyze,
+    cancel: cancelAnalysis,
+    clear: clearAnalysis,
+    exportResults,
+    hasResult,
+    isStreaming,
+    capabilities
+  } = useAIAnalysis()
 
   // Section definitions
   const sections = [
@@ -63,9 +78,9 @@ export default function SimpleMeetingNotes() {
         // If it's real OCR text (not fallback), process with AI first
         if (!result.isFallback && result.text.length > 20) {
           // Try Claude AI first for smart categorization
-          if (getCapabilities().claude) {
+          if (capabilities.claude) {
             console.log('Processing with Claude AI for smart categorization...')
-            await processTextWithClaude(result.text)
+            await handleAIAnalysis(result.text)
           } else {
             console.log('No Claude AI available, using simple distribution')
             distributeTextToSections(result.text)
@@ -101,17 +116,24 @@ export default function SimpleMeetingNotes() {
     console.log('Text distributed across 2 sections')
   }
 
-  // Process with Claude AI
-  const processTextWithClaude = async (text) => {
-    console.log('Starting Claude AI processing...')
-    setOcrStatus('Processing with Claude AI...')
+  // Enhanced AI Processing with seamless UX
+  const handleAIAnalysis = async (text) => {
+    if (!text?.trim()) {
+      setOcrStatus('No text to analyze')
+      return
+    }
+
+    console.log('🚀 Starting enhanced Claude AI analysis...')
+    setOcrStatus('Analyzing with Claude AI...')
 
     try {
-      const result = await processWithClaude(text, { meetingType: 'general' })
-      console.log('Claude AI result:', result)
+      // Use the enhanced AI analysis hook
+      const result = await analyze(text, {
+        meetingType: 'general',
+        timestamp: new Date().toISOString()
+      })
 
       if (result) {
-        setClaudeResult(result)
         setOcrStatus('AI analysis complete!')
 
         // Populate sections with AI-structured data
@@ -120,29 +142,27 @@ export default function SimpleMeetingNotes() {
           actionItems: ''
         }
 
-        // Map Claude AI results to sections
-        if (result.keyDiscussionPoints && result.keyDiscussionPoints.length > 0) {
-          newNotes.keyDiscussionPoints = result.keyDiscussionPoints.join('\n')
+        // Handle key discussion points
+        if (Array.isArray(result.keyDiscussionPoints)) {
+          newNotes.keyDiscussionPoints = result.keyDiscussionPoints.join('\n\n')
+        } else if (typeof result.keyDiscussionPoints === 'string') {
+          newNotes.keyDiscussionPoints = result.keyDiscussionPoints
         }
 
-        if (result.actionItems && result.actionItems.length > 0) {
+        // Handle action items with enhanced formatting
+        if (Array.isArray(result.actionItems)) {
           newNotes.actionItems = result.actionItems.map(item => {
-            if (typeof item === 'string') {
-              return `• ${item}`
-            } else {
-              let formatted = `• ${item.task}`
-              if (item.assignee && item.assignee !== 'Unassigned') {
-                formatted += ` (${item.assignee})`
-              }
-              if (item.priority && item.priority !== 'medium') {
-                formatted += ` [${item.priority.toUpperCase()}]`
-              }
-              if (item.dueDate) {
-                formatted += ` - Due: ${item.dueDate}`
-              }
-              return formatted
+            if (typeof item === 'object' && item.task) {
+              const priority = item.priority ? `[${item.priority.toUpperCase()}]` : ''
+              const assignee = item.assignee && item.assignee !== 'Unassigned' ? `@${item.assignee}` : ''
+              const dueDate = item.dueDate ? `(Due: ${item.dueDate})` : ''
+              const confidence = item.confidence ? `(${Math.round(item.confidence * 100)}% confidence)` : ''
+              return `• ${item.task} ${assignee} ${priority} ${dueDate} ${confidence}`.trim()
             }
-          }).join('\n')
+            return `• ${item}`
+          }).join('\n\n')
+        } else if (typeof result.actionItems === 'string') {
+          newNotes.actionItems = result.actionItems
         }
 
         // If no specific AI categorization, fall back to simple distribution
@@ -150,16 +170,16 @@ export default function SimpleMeetingNotes() {
           console.log('No AI categorization available, using simple distribution')
           distributeTextToSections(text)
         } else {
-          console.log('Using AI-categorized content for sections')
+          console.log('✅ Using AI-categorized content for sections')
           setNotes(newNotes)
         }
       } else {
-        console.log('No Claude AI result, falling back to simple distribution')
+        console.log('No AI result, falling back to simple distribution')
         distributeTextToSections(text)
       }
     } catch (error) {
-      console.error('Claude processing failed:', error)
-      setOcrStatus('AI processing failed, using simple distribution')
+      console.error('❌ Claude AI processing error:', error)
+      setOcrStatus(`AI processing failed: ${error.message || 'Unknown error'}`)
       // Fallback to simple distribution
       distributeTextToSections(text)
     }
@@ -218,11 +238,26 @@ export default function SimpleMeetingNotes() {
           />
           <div className="flex gap-2">
             <button
-              onClick={() => processTextWithClaude(extractedText)}
-              disabled={!extractedText.trim() || !getCapabilities().claude}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => handleAIAnalysis(extractedText)}
+              disabled={!extractedText.trim() || isAnalyzing}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
-              🧠 Analyze with AI
+              {isAnalyzing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Analyzing...
+                </>
+              ) : capabilities.claudeAPI ? (
+                <>
+                  <Zap className="w-4 h-4" />
+                  Claude API Analysis
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Claude Workflow
+                </>
+              )}
             </button>
             <button
               onClick={() => distributeTextToSections(extractedText)}
@@ -270,30 +305,128 @@ export default function SimpleMeetingNotes() {
         </div>
       )}
 
-      {/* Claude AI Results */}
-      {claudeResult && (
+      {/* Enhanced AI Results */}
+      {(aiResult || isAnalyzing) && (
         <div className="bg-white rounded-lg shadow-sm border p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-purple-600" />
-            AI Analysis
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              {isAnalyzing ? (
+                <>
+                  <Loader2 className="w-5 h-5 text-purple-600 animate-spin" />
+                  Analyzing with Claude...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-5 h-5 text-purple-600" />
+                  AI Analysis Results
+                </>
+              )}
+            </h2>
+            {hasResult && !isStreaming && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={exportResults}
+                  className="flex items-center gap-1 px-3 py-1 text-sm bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                >
+                  <Download className="w-3 h-3" />
+                  Export
+                </button>
+                <button
+                  onClick={clearAnalysis}
+                  className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <h3 className="font-medium text-gray-900 mb-2">Summary</h3>
-              <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded">{claudeResult.summary}</p>
-            </div>
-            <div>
-              <h3 className="font-medium text-gray-900 mb-2">Sentiment: {claudeResult.sentiment}</h3>
-              <div className="space-y-1">
-                {claudeResult.insights?.map((insight, index) => (
-                  <div key={index} className="text-sm text-gray-700 bg-blue-50 p-2 rounded">
-                    {insight}
-                  </div>
-                ))}
+          {isAnalyzing && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${aiProgress}%` }}
+                  />
+                </div>
+                <span className="text-sm text-gray-600">{aiProgress}%</span>
+              </div>
+              <div className="text-sm text-gray-600">
+                {capabilities.claudeAPI ?
+                  '🚀 Using direct Claude API for instant analysis...' :
+                  '🧠 Processing with Claude workflow...'
+                }
               </div>
             </div>
-          </div>
+          )}
+
+          {aiResult && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h3 className="font-medium text-gray-900 mb-2">Summary</h3>
+                  <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded leading-relaxed">
+                    {aiResult.summary}
+                  </p>
+                </div>
+                <div>
+                  <h3 className="font-medium text-gray-900 mb-2">Analysis Details</h3>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-600">Sentiment:</span>
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        aiResult.sentiment === 'positive' ? 'bg-green-100 text-green-800' :
+                        aiResult.sentiment === 'negative' ? 'bg-red-100 text-red-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {aiResult.sentiment}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-600">Provider:</span>
+                      <span className="text-purple-600 font-medium">{aiResult.provider}</span>
+                    </div>
+                    {aiResult.processingTime && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-600">Processing Time:</span>
+                        <span className="text-gray-800">{aiResult.processingTime}ms</span>
+                      </div>
+                    )}
+                    {aiResult.cost && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-600">Cost:</span>
+                        <span className="text-green-600">${aiResult.cost.toFixed(6)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {aiResult.insights && aiResult.insights.length > 0 && (
+                <div>
+                  <h3 className="font-medium text-gray-900 mb-2">AI Insights</h3>
+                  <div className="space-y-1">
+                    {aiResult.insights.map((insight, index) => (
+                      <div key={index} className="text-sm text-gray-700 bg-blue-50 p-2 rounded">
+                        💡 {insight}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {aiError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-center gap-2 text-red-800">
+                <AlertCircle className="w-4 h-4" />
+                <span className="font-medium">Analysis Error</span>
+              </div>
+              <p className="text-sm text-red-700 mt-1">{aiError}</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -310,11 +443,21 @@ export default function SimpleMeetingNotes() {
               Simple Distribution
             </button>
             <button
-              onClick={() => processTextWithClaude(extractedText)}
-              disabled={!extractedText || !getCapabilities().claude}
-              className="px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => handleAIAnalysis(extractedText)}
+              disabled={!extractedText || isAnalyzing}
+              className="flex items-center gap-1 px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
-              AI Analysis
+              {isAnalyzing ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3 h-3" />
+                  AI Analysis
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -347,13 +490,17 @@ export default function SimpleMeetingNotes() {
           <div>Capabilities: {JSON.stringify(getCapabilities())}</div>
           <div>Notes state: {Object.keys(notes).map(key => `${key}: ${notes[key].length} chars`).join(', ')}</div>
           <div>Extracted text: {extractedText.length} characters</div>
-          <div>Claude result: {claudeResult ? 'Available' : 'None'}</div>
-          {claudeResult && (
+          <div>AI Analysis: {hasResult ? 'Complete' : isAnalyzing ? 'Processing...' : 'None'}</div>
+          <div>Capabilities: {JSON.stringify(capabilities)}</div>
+          {aiResult && (
             <div className="mt-2 p-2 bg-white rounded border">
-              <div>AI Analysis Summary: {claudeResult.summary}</div>
-              <div>Key Discussion Points: {claudeResult.keyDiscussionPoints?.length || 0}</div>
-              <div>Action Items: {claudeResult.actionItems?.length || 0}</div>
-              <div>Sentiment: {claudeResult.sentiment}</div>
+              <div>AI Analysis Summary: {aiResult.summary}</div>
+              <div>Key Discussion Points: {aiResult.keyDiscussionPoints?.length || 0}</div>
+              <div>Action Items: {aiResult.actionItems?.length || 0}</div>
+              <div>Sentiment: {aiResult.sentiment}</div>
+              <div>Provider: {aiResult.provider}</div>
+              <div>Processing Time: {aiResult.processingTime}ms</div>
+              {aiResult.cost && <div>Cost: ${aiResult.cost.toFixed(6)}</div>}
             </div>
           )}
         </div>

@@ -118,9 +118,25 @@ export class SimpleOCRService {
     console.log('Text length:', text.length)
     console.log('Meeting context:', meetingContext)
 
-    // Always offer the copy-paste workflow option first
-    console.log('🤖 Offering Claude Web Interface workflow...')
+    // Try direct Claude API first (seamless experience)
+    if (this.claudeApiKey) {
+      try {
+        console.log('🧠 Using direct Claude API...')
+        const { ClaudeProvider } = await import('./aiProviders/ClaudeProvider.js')
+        const claudeProvider = new ClaudeProvider(this.claudeApiKey)
 
+        if (await claudeProvider.isAvailable()) {
+          const result = await claudeProvider.analyze(text, meetingContext)
+          console.log('✅ Claude API analysis complete:', result)
+          return result
+        }
+      } catch (error) {
+        console.warn('⚠️ Claude API failed, falling back to copy-paste workflow:', error)
+      }
+    }
+
+    // Fallback to copy-paste workflow if no API key or API fails
+    console.log('🤖 Offering Claude Web Interface workflow...')
     try {
       const useClaudeWebInterface = await this.offerClaudeWebWorkflow(text, meetingContext)
       if (useClaudeWebInterface) {
@@ -132,7 +148,7 @@ export class SimpleOCRService {
     }
 
     console.log('📝 Using enhanced local AI simulation...')
-    // Use enhanced local simulation
+    // Final fallback to enhanced local simulation
     return this.enhancedClaudeSimulation(text, meetingContext)
   }
 
@@ -756,7 +772,8 @@ export const setClaudeApiKey = (key) => {
 export const getCapabilities = () => {
   return {
     ocrSpace: !!ocrService.apiKey,
-    claude: true, // Always enable Claude workflow (copy-paste + enhanced local analysis)
+    claude: true, // Always enable Claude workflow (API + copy-paste + enhanced local analysis)
+    claudeAPI: !!ocrService.claudeApiKey, // Direct API access available
     manual: true
   }
 }

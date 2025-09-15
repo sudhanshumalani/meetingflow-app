@@ -5,8 +5,18 @@
 
 class N8nService {
   constructor() {
-    // Use localhost for development, replace with your deployed n8n URL for production
-    this.baseUrl = 'http://localhost:5678'
+    // Detect if we're on HTTPS and adjust n8n URL accordingly
+    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:'
+
+    // For development: try HTTPS first if the page is HTTPS, fallback to HTTP
+    this.baseUrls = isHttps ? [
+      'https://localhost:5678',  // Try HTTPS first (if n8n supports it)
+      'http://localhost:5678'    // Fallback to HTTP (will cause mixed content warning)
+    ] : [
+      'http://localhost:5678'
+    ]
+
+    this.baseUrl = this.baseUrls[0]
     this.endpoints = {
       categories: '/webhook-test/api/categories',
       stakeholders: '/webhook-test/api/stakeholders',
@@ -18,13 +28,35 @@ class N8nService {
    * Check if n8n service is available
    */
   async isAvailable() {
-    try {
-      const response = await fetch(`${this.baseUrl}${this.endpoints.categories}`)
-      return response.ok
-    } catch (error) {
-      console.warn('n8n service availability check failed:', error)
-      return false
+    // Try each URL until one works
+    for (const baseUrl of this.baseUrls) {
+      try {
+        console.log(`🔍 Testing n8n connection to: ${baseUrl}`)
+        const response = await fetch(`${baseUrl}${this.endpoints.categories}`, {
+          method: 'GET',
+          mode: 'cors'
+        })
+
+        if (response.status === 404) {
+          // 404 means server is running but webhook not active - that's fine for availability check
+          console.log(`✅ n8n server responding at: ${baseUrl} (webhook not active but server reachable)`)
+          this.baseUrl = baseUrl
+          return true
+        } else if (response.ok) {
+          console.log(`✅ n8n fully available at: ${baseUrl}`)
+          this.baseUrl = baseUrl
+          return true
+        }
+      } catch (error) {
+        console.warn(`❌ n8n connection failed for ${baseUrl}:`, error.message)
+        if (error.message.includes('Mixed Content')) {
+          console.warn('💡 Mixed Content Error: HTTPS page cannot connect to HTTP n8n. Try accessing the app via http://localhost:5173 instead.')
+        }
+      }
     }
+
+    console.error('❌ All n8n connection attempts failed')
+    return false
   }
 
   /**
@@ -215,12 +247,17 @@ class N8nService {
       const isAvailable = await this.isAvailable()
 
       if (!isAvailable) {
-        throw new Error('n8n service is not responding')
+        const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:'
+        const suggestion = isHttps
+          ? 'Try accessing MeetingFlow via http://localhost:5173 instead of https://, or configure n8n to support HTTPS.'
+          : 'Make sure n8n is running on localhost:5678 and workflows are active.'
+
+        throw new Error(`n8n service is not responding. ${suggestion}`)
       }
 
       return {
         success: true,
-        message: 'Successfully connected to n8n service',
+        message: `Successfully connected to n8n service at ${this.baseUrl}`,
         baseUrl: this.baseUrl
       }
     } catch (error) {

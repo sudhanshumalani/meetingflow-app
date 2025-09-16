@@ -615,8 +615,8 @@ export default function Meeting() {
             subtitle="Capture and organize insights"
             onBack={() => {
               console.log('Mobile back button clicked')
-              // Use navigate instead of window.location for proper routing
-              navigate('/')
+              // Use navigate(-1) for reliable back navigation or explicit path
+              navigate(-1) || navigate('/')
             }}
             rightContent={
               <div className="flex items-center gap-2">
@@ -659,8 +659,8 @@ export default function Meeting() {
               <button
                 onClick={() => {
                   console.log('Desktop back button clicked')
-                  // Use navigate instead of window.location for proper routing
-                  navigate('/')
+                  // Use navigate(-1) for reliable back navigation or explicit path
+                  navigate(-1) || navigate('/')
                 }}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
@@ -1449,6 +1449,184 @@ Action: Schedule follow-up meeting by Friday"
                       {isAnalyzing ? 'Processing...' : 'AI Insights'}
                     </TouchButton>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* AI Analysis Results from useAIAnalysis Hook */}
+            {aiResult && (
+              <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200 p-6 mt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold text-blue-900 flex items-center gap-2">
+                    <span className="text-xl">🧠</span>
+                    Claude AI Analysis Results
+                  </h3>
+                  <div className="flex gap-2">
+                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                      {aiResult.provider || 'Claude Analysis'}
+                    </span>
+                    {isAnalyzing && (
+                      <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded animate-pulse">
+                        Processing...
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Summary */}
+                  {aiResult.summary && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        📝 Summary
+                      </h4>
+                      <p className="text-sm text-gray-700 leading-relaxed bg-white rounded p-3 border border-gray-200">
+                        {aiResult.summary}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Key Discussion Points */}
+                  {aiResult.keyDiscussionPoints && aiResult.keyDiscussionPoints.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        💡 Key Discussion Points
+                      </h4>
+                      <div className="bg-white rounded p-3 border border-gray-200">
+                        <ul className="space-y-2">
+                          {aiResult.keyDiscussionPoints.slice(0, 10).map((point, index) => (
+                            <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
+                              <span className="text-blue-500 font-bold mt-1">•</span>
+                              <span className="flex-1">{point}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action Items */}
+                  {aiResult.actionItems && aiResult.actionItems.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        ✅ Action Items
+                      </h4>
+                      <div className="bg-white rounded p-3 border border-gray-200">
+                        <div className="space-y-3">
+                          {aiResult.actionItems.slice(0, 10).map((item, index) => (
+                            <div key={index} className="p-3 bg-gray-50 rounded border-l-4 border-blue-400">
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="text-sm text-gray-900 flex-1 font-medium">
+                                  {typeof item === 'string' ? item : item.task}
+                                </p>
+                                {typeof item === 'object' && (
+                                  <div className="flex gap-2 flex-wrap">
+                                    {item.assignee && item.assignee !== 'Unassigned' && (
+                                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">
+                                        👤 {item.assignee}
+                                      </span>
+                                    )}
+                                    {item.priority && (
+                                      <span className={`text-xs px-2 py-1 rounded font-medium ${
+                                        item.priority === 'high' ? 'bg-red-100 text-red-700' :
+                                        item.priority === 'low' ? 'bg-gray-100 text-gray-700' :
+                                        'bg-yellow-100 text-yellow-700'
+                                      }`}>
+                                        🎯 {item.priority}
+                                      </span>
+                                    )}
+                                    {item.dueDate && (
+                                      <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded font-medium">
+                                        📅 {item.dueDate}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sentiment & Confidence */}
+                  <div className="flex items-center justify-between text-sm text-gray-600 bg-white rounded p-3 border border-gray-200">
+                    <div className="flex items-center gap-4">
+                      {aiResult.sentiment && (
+                        <span className="flex items-center gap-2">
+                          <span className="text-lg">
+                            {aiResult.sentiment === 'positive' ? '😊' :
+                             aiResult.sentiment === 'negative' ? '😟' : '😐'}
+                          </span>
+                          <span className="capitalize font-medium">{aiResult.sentiment} tone</span>
+                        </span>
+                      )}
+                      {aiResult.confidence && (
+                        <span className="flex items-center gap-1">
+                          <span>🎯</span>
+                          <span className="font-medium">Confidence: {Math.round(aiResult.confidence * 100)}%</span>
+                        </span>
+                      )}
+                    </div>
+                    {aiResult.analyzedAt && (
+                      <span className="text-xs text-gray-500">
+                        Analyzed: {new Date(aiResult.analyzedAt).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="mt-4 flex gap-2 flex-wrap">
+                  <button
+                    onClick={clearAnalysis}
+                    className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-white rounded border border-gray-300 transition-colors"
+                  >
+                    Clear Analysis
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (audioTranscript && audioTranscript.length > 100) {
+                        analyze(audioTranscript, 'Re-analysis of Meeting Transcript')
+                      }
+                    }}
+                    disabled={isAnalyzing || !audioTranscript || audioTranscript.length < 100}
+                    className="px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-white rounded border border-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isAnalyzing ? 'Re-analyzing...' : 'Re-analyze'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Copy analysis to digital notes
+                      const analysisText = [
+                        aiResult.summary && `Summary: ${aiResult.summary}`,
+                        aiResult.keyDiscussionPoints && aiResult.keyDiscussionPoints.length > 0 &&
+                          `Key Points: ${aiResult.keyDiscussionPoints.join('; ')}`,
+                        aiResult.actionItems && aiResult.actionItems.length > 0 &&
+                          `Action Items: ${aiResult.actionItems.map(item =>
+                            typeof item === 'string' ? item : item.task
+                          ).join('; ')}`
+                      ].filter(Boolean).join('\n\n')
+
+                      setDigitalNotes(prev => ({
+                        ...prev,
+                        summary: analysisText
+                      }))
+                      setActiveMode('digital')
+                    }}
+                    className="px-3 py-1 text-sm text-green-600 hover:text-green-800 hover:bg-white rounded border border-green-300 transition-colors"
+                  >
+                    📝 Use as Notes
+                  </button>
+                  {exportResults && (
+                    <button
+                      onClick={exportResults}
+                      className="px-3 py-1 text-sm text-purple-600 hover:text-purple-800 hover:bg-white rounded border border-purple-300 transition-colors"
+                    >
+                      📄 Export Analysis
+                    </button>
+                  )}
                 </div>
               </div>
             )}

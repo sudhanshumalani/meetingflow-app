@@ -46,6 +46,7 @@ import {
 // Note: Data integration now available via n8n in Settings
 import { useAIAnalysis } from '../hooks/useAIAnalysis'
 import { ExportOptionsButton } from '../components/ExportOptions'
+import AudioRecorder from '../components/AudioRecorder'
 
 export default function Meeting() {
   const { id } = useParams()
@@ -68,7 +69,7 @@ export default function Meeting() {
   })
   
   // Mode state
-  const [activeMode, setActiveMode] = useState('digital') // 'digital' or 'photo'
+  const [activeMode, setActiveMode] = useState('digital') // 'digital', 'photo', or 'audio'
   
   // Digital notes state (3-section with Claude summary)
   const [digitalNotes, setDigitalNotes] = useState({
@@ -94,6 +95,10 @@ export default function Meeting() {
   const [extractedText, setExtractedText] = useState('')
   const [isEditingExtractedText, setIsEditingExtractedText] = useState(false)
   
+  // Audio transcription state
+  const [audioTranscript, setAudioTranscript] = useState('')
+  const [isRecordingMode, setIsRecordingMode] = useState(false)
+
   // AI processing state
   const [isSaving, setIsSaving] = useState(false)
   const [aiProcessingResult, setAiProcessingResult] = useState(null)
@@ -155,6 +160,11 @@ export default function Meeting() {
       // Load existing notes if any
       if (meeting.digitalNotes && Object.values(meeting.digitalNotes).some(v => v)) {
         setDigitalNotes(meeting.digitalNotes)
+      }
+
+      // Load existing audio transcript if any
+      if (meeting.audioTranscript) {
+        setAudioTranscript(meeting.audioTranscript)
       }
     }
   }, [id, meetings, setCurrentMeeting])
@@ -473,12 +483,20 @@ export default function Meeting() {
         id: currentMeeting?.id || id,
         ...formData,
         digitalNotes,
+        audioTranscript,
         notes: Object.values(digitalNotes).map((content, index) => ({
           id: `note_${index}`,
           content,
           timestamp: new Date().toISOString(),
           type: 'digital'
-        })).filter(note => note.content.trim()),
+        })).filter(note => note.content.trim()).concat(
+          audioTranscript ? [{
+            id: 'audio_transcript',
+            content: audioTranscript,
+            timestamp: new Date().toISOString(),
+            type: 'audio'
+          }] : []
+        ),
         ocrResults: ocrResult,
         uploadedFiles: uploadedFiles.map(f => f.name),
         lastSaved: new Date().toISOString(),
@@ -518,11 +536,19 @@ export default function Meeting() {
     const isLeftSwipe = distance > minSwipeDistance
     const isRightSwipe = distance < -minSwipeDistance
 
-    if (isLeftSwipe && activeMode === 'digital') {
-      setActiveMode('photo')
+    if (isLeftSwipe) {
+      if (activeMode === 'digital') {
+        setActiveMode('photo')
+      } else if (activeMode === 'photo') {
+        setActiveMode('audio')
+      }
     }
-    if (isRightSwipe && activeMode === 'photo') {
-      setActiveMode('digital')
+    if (isRightSwipe) {
+      if (activeMode === 'audio') {
+        setActiveMode('photo')
+      } else if (activeMode === 'photo') {
+        setActiveMode('digital')
+      }
     }
   }
 
@@ -830,6 +856,21 @@ export default function Meeting() {
                 >
                   <Camera size={16} />
                   Photo Capture
+                </TouchButton>
+                <TouchButton
+                  onClick={() => setActiveMode('audio')}
+                  variant={activeMode === 'audio' ? 'primary' : 'secondary'}
+                  size="medium"
+                  fullWidth
+                  className="justify-center"
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                    <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                    <line x1="12" y1="19" x2="12" y2="23"/>
+                    <line x1="8" y1="23" x2="16" y2="23"/>
+                  </svg>
+                  Audio Recording
                 </TouchButton>
               </div>
               
@@ -1278,6 +1319,137 @@ Action: Schedule follow-up meeting by Friday"
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {activeMode === 'audio' && (
+              <div className="space-y-6">
+                {/* Audio Recording Section */}
+                <div className="bg-white rounded-lg shadow-md p-6">
+                  <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                      <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                      <line x1="12" y1="19" x2="12" y2="23"/>
+                      <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                    Audio Recording & Transcription
+                  </h2>
+
+                  <AudioRecorder
+                    onTranscriptUpdate={(transcript) => {
+                      setAudioTranscript(transcript)
+                      // Automatically populate digital notes when we have transcript
+                      if (transcript && transcript.length > 50) {
+                        setDigitalNotes(prev => ({
+                          ...prev,
+                          summary: transcript
+                        }))
+                      }
+                    }}
+                    className="mb-4"
+                  />
+
+                  {/* Transcript Display and Actions */}
+                  {audioTranscript && (
+                    <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="font-medium text-gray-900">Meeting Transcript</h3>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              // Process transcript with AI
+                              if (audioTranscript.length > 100) {
+                                const textToAnalyze = audioTranscript
+                                analyze(textToAnalyze, 'Enhanced Meeting Analysis')
+                              }
+                            }}
+                            disabled={isAnalyzing || audioTranscript.length < 100}
+                            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                          >
+                            <Sparkles className="w-3 h-3" />
+                            {isAnalyzing ? 'Processing...' : 'AI Analysis'}
+                          </button>
+                          <button
+                            onClick={() => {
+                              // Copy transcript to summary section
+                              setDigitalNotes(prev => ({
+                                ...prev,
+                                summary: audioTranscript
+                              }))
+                              setActiveMode('digital')
+                            }}
+                            className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-1"
+                          >
+                            <FileText className="w-3 h-3" />
+                            Use as Notes
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="max-h-60 overflow-y-auto text-sm text-gray-700 leading-relaxed">
+                        {audioTranscript}
+                      </div>
+
+                      <div className="mt-3 text-xs text-gray-500">
+                        Word count: {audioTranscript.split(' ').length} |
+                        Characters: {audioTranscript.length}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Audio Recording Tips */}
+                  <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+                    <h4 className="font-medium text-blue-900 mb-2">📱 Mobile Recording Tips</h4>
+                    <ul className="text-sm text-blue-700 space-y-1">
+                      <li>• Position device 2-3 feet from speakers</li>
+                      <li>• Minimize background noise when possible</li>
+                      <li>• Speak clearly and at normal pace</li>
+                      <li>• Use "Hybrid" mode for best accuracy</li>
+                      <li>• Recording works offline on your device</li>
+                    </ul>
+                  </div>
+                </div>
+
+                {/* Quick Actions */}
+                <div className="bg-white rounded-lg shadow-md p-6">
+                  <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <TouchButton
+                      onClick={() => {
+                        if (audioTranscript) {
+                          setDigitalNotes(prev => ({
+                            ...prev,
+                            summary: audioTranscript
+                          }))
+                          setActiveMode('digital')
+                        }
+                      }}
+                      variant="secondary"
+                      size="medium"
+                      disabled={!audioTranscript}
+                      className="justify-center"
+                    >
+                      <Grid3X3 size={16} />
+                      Edit Notes
+                    </TouchButton>
+
+                    <TouchButton
+                      onClick={() => {
+                        if (audioTranscript && audioTranscript.length > 100) {
+                          analyze(audioTranscript, 'Meeting Analysis from Audio')
+                        }
+                      }}
+                      variant="secondary"
+                      size="medium"
+                      disabled={!audioTranscript || audioTranscript.length < 100 || isAnalyzing}
+                      className="justify-center"
+                    >
+                      <Sparkles size={16} />
+                      {isAnalyzing ? 'Processing...' : 'AI Insights'}
+                    </TouchButton>
+                  </div>
+                </div>
               </div>
             )}
 

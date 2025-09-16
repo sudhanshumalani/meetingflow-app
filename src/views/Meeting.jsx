@@ -835,20 +835,11 @@ export default function Meeting() {
               </div>
             )}
 
-            {/* Mode Toggle */}
+            {/* Input Method Selection */}
             <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
-              <h3 className="text-lg font-semibold mb-4">Note Taking Mode</h3>
+              <h3 className="text-lg font-semibold mb-2">Choose Input Method</h3>
+              <p className="text-sm text-gray-600 mb-4">Select how you want to capture your meeting notes. All methods use Claude AI to create organized summaries.</p>
               <div className="flex flex-col sm:flex-row gap-2 sm:gap-1 sm:rounded-lg sm:border sm:border-gray-200 sm:p-1">
-                <TouchButton
-                  onClick={() => setActiveMode('digital')}
-                  variant={activeMode === 'digital' ? 'primary' : 'secondary'}
-                  size="medium"
-                  fullWidth
-                  className="justify-center"
-                >
-                  <Grid3X3 size={16} />
-                  Digital Notes
-                </TouchButton>
                 <TouchButton
                   onClick={() => setActiveMode('photo')}
                   variant={activeMode === 'photo' ? 'primary' : 'secondary'}
@@ -857,7 +848,7 @@ export default function Meeting() {
                   className="justify-center"
                 >
                   <Camera size={16} />
-                  Photo Capture
+                  OCR from Image
                 </TouchButton>
                 <TouchButton
                   onClick={() => setActiveMode('audio')}
@@ -873,6 +864,16 @@ export default function Meeting() {
                     <line x1="8" y1="23" x2="16" y2="23"/>
                   </svg>
                   Audio Recording
+                </TouchButton>
+                <TouchButton
+                  onClick={() => setActiveMode('digital')}
+                  variant={activeMode === 'digital' ? 'primary' : 'secondary'}
+                  size="medium"
+                  fullWidth
+                  className="justify-center"
+                >
+                  <Edit3 size={16} />
+                  Copy-Paste Notes
                 </TouchButton>
               </div>
               
@@ -896,8 +897,8 @@ export default function Meeting() {
               <div className="bg-white rounded-lg shadow-md p-6">
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-xl font-semibold flex items-center gap-2">
-                    <Sparkles size={24} />
-                    AI-Enhanced Meeting Notes
+                    <Edit3 size={24} />
+                    Copy-Paste Notes
                   </h2>
                   <div className="flex items-center gap-2">
                     {template && (
@@ -910,7 +911,7 @@ export default function Meeting() {
                       className="flex items-center gap-1 px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
                     >
                       <Edit3 size={14} />
-                      Add Notes
+                      Paste Your Notes
                     </button>
                   </div>
                 </div>
@@ -920,18 +921,20 @@ export default function Meeting() {
                   <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
                     <h3 className="font-medium text-purple-900 mb-2 flex items-center gap-2">
                       <Zap size={16} />
-                      Paste Meeting Notes for AI Analysis
+                      Paste Your Rough Meeting Notes
                     </h3>
                     <textarea
                       value={manualText}
                       onChange={(e) => setManualText(e.target.value)}
-                      placeholder="Paste your meeting notes here and Claude AI will automatically organize them into Summary, Key Discussion Points, and Action Items...
+                      placeholder="Copy and paste your rough meeting notes here. Claude AI will organize them into a structured summary with key discussion points and action items.
 
-Example:
-We decided to move forward with the new project
-John will handle the backend development
-Sarah mentioned concerns about the timeline
-Action: Schedule follow-up meeting by Friday"
+Example notes you might paste:
+• Discussed Q4 goals and priorities
+• John will lead the backend development
+• Sarah raised concerns about timeline - need to address
+• Marketing wants to launch by December
+• Action: Follow-up meeting scheduled for Friday
+• Budget approved for additional resources"
                       className="w-full h-32 p-3 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm resize-none"
                     />
                     <div className="flex items-center justify-between mt-3">
@@ -1360,10 +1363,9 @@ Action: Schedule follow-up meeting by Friday"
                         <div className="flex gap-2">
                           <button
                             onClick={() => {
-                              // Process transcript with AI
+                              // Process transcript with AI using standardized method
                               if (audioTranscript.length > 100) {
-                                const textToAnalyze = audioTranscript
-                                analyze(textToAnalyze, 'Enhanced Meeting Analysis')
+                                handleAIAnalysis(audioTranscript)
                               }
                             }}
                             disabled={isAnalyzing || audioTranscript.length < 100}
@@ -1439,7 +1441,7 @@ Action: Schedule follow-up meeting by Friday"
                     <TouchButton
                       onClick={() => {
                         if (audioTranscript && audioTranscript.length > 100) {
-                          analyze(audioTranscript, 'Meeting Analysis from Audio')
+                          handleAIAnalysis(audioTranscript)
                         }
                       }}
                       variant="secondary"
@@ -1590,7 +1592,7 @@ Action: Schedule follow-up meeting by Friday"
                   <button
                     onClick={() => {
                       if (audioTranscript && audioTranscript.length > 100) {
-                        analyze(audioTranscript, 'Re-analysis of Meeting Transcript')
+                        handleAIAnalysis(audioTranscript)
                       }
                     }}
                     disabled={isAnalyzing || !audioTranscript || audioTranscript.length < 100}

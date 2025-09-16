@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Mic, MicOff, Square, Play, Pause, Volume2, Settings } from 'lucide-react'
 import audioTranscriptionService from '../services/audioTranscriptionService'
+import { processWithClaude } from '../utils/ocrServiceNew'
 
 const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
@@ -13,6 +14,8 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
   const [permissions, setPermissions] = useState('unknown')
   const [audioLevel, setAudioLevel] = useState(0)
   const [recordingDuration, setRecordingDuration] = useState(0)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisResult, setAnalysisResult] = useState(null)
 
   const timerRef = useRef(null)
   const audioContextRef = useRef(null)
@@ -198,10 +201,57 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
+  // Analyze transcript with AI
+  const analyzeTranscript = async () => {
+    if (!transcript || transcript.length < 100) {
+      setError('Transcript too short for analysis (minimum 100 characters)')
+      return
+    }
+
+    try {
+      setIsAnalyzing(true)
+      setError(null)
+
+      const result = await processWithClaude(transcript, {
+        source: 'audio_recording',
+        timestamp: new Date().toISOString(),
+        mode: mode
+      })
+
+      setAnalysisResult(result)
+      console.log('✅ AI analysis complete:', result)
+
+      // Call the parent callback if analysis results should be passed up
+      if (onTranscriptUpdate && typeof onTranscriptUpdate === 'function') {
+        onTranscriptUpdate(transcript, result)
+      }
+
+    } catch (error) {
+      console.error('❌ AI analysis failed:', error)
+      setError(`AI analysis failed: ${error.message}`)
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
+
+  // Auto-analyze when recording stops and transcript is sufficient
+  useEffect(() => {
+    if (!isRecording && transcript && transcript.length >= 200 && !isAnalyzing && !analysisResult) {
+      // Auto-analyze after a short delay
+      const autoAnalyzeTimer = setTimeout(() => {
+        console.log('🤖 Auto-analyzing transcript...')
+        analyzeTranscript()
+      }, 2000)
+
+      return () => clearTimeout(autoAnalyzeTimer)
+    }
+  }, [isRecording, transcript, isAnalyzing, analysisResult])
+
   // Clear transcript
   const clearTranscript = () => {
     setTranscript('')
     setInterimText('')
+    setAnalysisResult(null)
     if (onTranscriptUpdate) {
       onTranscriptUpdate('')
     }
@@ -370,12 +420,131 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
             )}
           </div>
 
-          {isProcessing && (
+          {(isProcessing || isAnalyzing) && (
             <div className="mt-2 flex items-center space-x-2">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-              <span className="text-xs text-gray-500">Processing with AI...</span>
+              <span className="text-xs text-gray-500">
+                {isAnalyzing ? 'Analyzing with AI...' : 'Processing with AI...'}
+              </span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* AI Analysis Results */}
+      {analysisResult && (
+        <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-medium text-blue-900 flex items-center gap-2">
+              <span className="text-lg">🧠</span>
+              AI Analysis Results
+            </h3>
+            <div className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded">
+              {analysisResult.provider || 'AI Analysis'}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {/* Summary */}
+            {analysisResult.summary && (
+              <div>
+                <h4 className="font-medium text-gray-900 mb-2">📝 Summary</h4>
+                <p className="text-sm text-gray-700 leading-relaxed">
+                  {analysisResult.summary}
+                </p>
+              </div>
+            )}
+
+            {/* Key Discussion Points */}
+            {analysisResult.keyDiscussionPoints && analysisResult.keyDiscussionPoints.length > 0 && (
+              <div>
+                <h4 className="font-medium text-gray-900 mb-2">💡 Key Discussion Points</h4>
+                <ul className="space-y-1">
+                  {analysisResult.keyDiscussionPoints.slice(0, 5).map((point, index) => (
+                    <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
+                      <span className="text-blue-500 font-bold">•</span>
+                      <span>{point}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Action Items */}
+            {analysisResult.actionItems && analysisResult.actionItems.length > 0 && (
+              <div>
+                <h4 className="font-medium text-gray-900 mb-2">✅ Action Items</h4>
+                <div className="space-y-2">
+                  {analysisResult.actionItems.slice(0, 5).map((item, index) => (
+                    <div key={index} className="bg-white rounded p-3 border border-gray-200">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm text-gray-900 flex-1">
+                          {typeof item === 'string' ? item : item.task}
+                        </p>
+                        {typeof item === 'object' && (
+                          <div className="flex gap-2">
+                            {item.assignee && item.assignee !== 'Unassigned' && (
+                              <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
+                                {item.assignee}
+                              </span>
+                            )}
+                            {item.priority && (
+                              <span className={`text-xs px-2 py-1 rounded ${
+                                item.priority === 'high' ? 'bg-red-100 text-red-700' :
+                                item.priority === 'low' ? 'bg-gray-100 text-gray-700' :
+                                'bg-yellow-100 text-yellow-700'
+                              }`}>
+                                {item.priority}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Sentiment & Confidence */}
+            <div className="flex items-center justify-between text-xs text-gray-600">
+              <div className="flex items-center gap-3">
+                {analysisResult.sentiment && (
+                  <span className="flex items-center gap-1">
+                    <span>
+                      {analysisResult.sentiment === 'positive' ? '😊' :
+                       analysisResult.sentiment === 'negative' ? '😟' : '😐'}
+                    </span>
+                    <span className="capitalize">{analysisResult.sentiment}</span>
+                  </span>
+                )}
+                {analysisResult.confidence && (
+                  <span>
+                    Confidence: {Math.round(analysisResult.confidence * 100)}%
+                  </span>
+                )}
+              </div>
+              <span>
+                {new Date(analysisResult.analyzedAt).toLocaleTimeString()}
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={() => setAnalysisResult(null)}
+              className="text-xs text-gray-600 hover:text-gray-800"
+            >
+              Clear Analysis
+            </button>
+            <button
+              onClick={analyzeTranscript}
+              disabled={isAnalyzing}
+              className="text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50"
+            >
+              Re-analyze
+            </button>
+          </div>
         </div>
       )}
 

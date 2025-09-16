@@ -615,8 +615,8 @@ export default function Meeting() {
             subtitle="Capture and organize insights"
             onBack={() => {
               console.log('Mobile back button clicked')
-              // Use window.location to force a proper navigation
-              window.location.pathname = '/'
+              // Use navigate instead of window.location for proper routing
+              navigate('/')
             }}
             rightContent={
               <div className="flex items-center gap-2">
@@ -659,8 +659,8 @@ export default function Meeting() {
               <button
                 onClick={() => {
                   console.log('Desktop back button clicked')
-                  // Use window.location to force a proper navigation
-                  window.location.pathname = '/'
+                  // Use navigate instead of window.location for proper routing
+                  navigate('/')
                 }}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >

@@ -1598,20 +1598,36 @@ Action: Schedule follow-up meeting by Friday"
                   </button>
                   <button
                     onClick={() => {
-                      // Copy analysis to digital notes
-                      const analysisText = [
-                        aiResult.summary && `Summary: ${aiResult.summary}`,
-                        aiResult.keyDiscussionPoints && aiResult.keyDiscussionPoints.length > 0 &&
-                          `Key Points: ${aiResult.keyDiscussionPoints.join('; ')}`,
-                        aiResult.actionItems && aiResult.actionItems.length > 0 &&
-                          `Action Items: ${aiResult.actionItems.map(item =>
-                            typeof item === 'string' ? item : item.task
-                          ).join('; ')}`
-                      ].filter(Boolean).join('\n\n')
+                      // Properly map Claude analysis results to correct digital notes fields
+                      const keyDiscussionPointsText = aiResult.keyDiscussionPoints && aiResult.keyDiscussionPoints.length > 0
+                        ? aiResult.keyDiscussionPoints.map((point, index) => `${index + 1}. ${point}`).join('\n\n')
+                        : ''
+
+                      const actionItemsText = aiResult.actionItems && aiResult.actionItems.length > 0
+                        ? aiResult.actionItems.map((item, index) => {
+                            if (typeof item === 'string') {
+                              return `${index + 1}. ${item}`
+                            } else {
+                              let itemText = `${index + 1}. ${item.task}`
+                              if (item.assignee && item.assignee !== 'Unassigned') {
+                                itemText += ` (Assigned: ${item.assignee})`
+                              }
+                              if (item.priority && item.priority !== 'medium') {
+                                itemText += ` [Priority: ${item.priority}]`
+                              }
+                              if (item.dueDate) {
+                                itemText += ` [Due: ${item.dueDate}]`
+                              }
+                              return itemText
+                            }
+                          }).join('\n\n')
+                        : ''
 
                       setDigitalNotes(prev => ({
                         ...prev,
-                        summary: analysisText
+                        summary: aiResult.summary || '',
+                        keyDiscussionPoints: keyDiscussionPointsText,
+                        actionItems: actionItemsText
                       }))
                       setActiveMode('digital')
                     }}

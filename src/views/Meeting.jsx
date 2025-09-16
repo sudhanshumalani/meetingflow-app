@@ -1711,36 +1711,11 @@ Example notes you might paste:
                   </div>
                 )}
                 
-                {/* AI Insights */}
-                {aiInsights && aiInsights.insights && (
-                  <div className="bg-white rounded-lg shadow-md p-6">
-                    <AIInsightsDisplay 
-                      insights={aiInsights.insights}
-                      onActionClick={handleAIInsightAction}
-                    />
-                  </div>
-                )}
+                {/* REMOVED: AI Insights - Now using Claude AI analysis display */}
                 
-                {/* AI Notifications */}
-                {aiNotifications.length > 0 && (
-                  <div className="bg-white rounded-lg shadow-md p-6">
-                    <PredictiveNotificationsDisplay
-                      notifications={aiNotifications}
-                      onActionClick={handleAIActionClick}
-                      onDismiss={handleAINotificationDismiss}
-                    />
-                  </div>
-                )}
+                {/* REMOVED: AI Notifications - Now using Claude AI analysis display */}
                 
-                {/* AI Processing Summary */}
-                {aiProcessingResult && (
-                  <div className="bg-white rounded-lg shadow-md p-6">
-                    <AIProcessingSummary
-                      results={aiProcessingResult}
-                      onExport={() => console.log('Export AI results')}
-                    />
-                  </div>
-                )}
+                {/* REMOVED: AI Processing Summary - Now using Claude AI analysis display */}
 
               </div>
             )} */}

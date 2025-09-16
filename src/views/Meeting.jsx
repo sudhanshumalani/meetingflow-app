@@ -29,12 +29,13 @@ import { format } from 'date-fns'
 import { mockStakeholders, getCategoryDisplayName, STAKEHOLDER_CATEGORIES } from '../utils/mockData'
 import { getTemplateForCategory, getColorClasses, PRIORITY_LEVELS } from '../utils/meetingTemplates'
 import { extractTextFromImage, setOCRApiKey, setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
-import {
-  AIProcessingStatus,
-  AIInsightsDisplay,
-  PredictiveNotificationsDisplay,
-  AIProcessingSummary
-} from '../components/AIProcessing'
+// Removed: Old AI Processing components - now using Claude AI analysis display
+// import {
+//   AIProcessingStatus,
+//   AIInsightsDisplay,
+//   PredictiveNotificationsDisplay,
+//   AIProcessingSummary
+// } from '../components/AIProcessing'
 import { 
   MobileHeader,
   TouchButton,
@@ -101,13 +102,14 @@ export default function Meeting() {
 
   // AI processing state
   const [isSaving, setIsSaving] = useState(false)
-  const [aiProcessingResult, setAiProcessingResult] = useState(null)
+  // Removed: Old AI processing state - now using Claude AI analysis display
+  // const [aiProcessingResult, setAiProcessingResult] = useState(null)
 
   // Export functionality moved to n8n integration
   const [isAIProcessing, setIsAIProcessing] = useState(false)
-  const [aiProcessingStage, setAiProcessingStage] = useState('')
-  const [aiInsights, setAiInsights] = useState(null)
-  const [aiNotifications, setAiNotifications] = useState([])
+  // const [aiProcessingStage, setAiProcessingStage] = useState('')
+  // const [aiInsights, setAiInsights] = useState(null)
+  // const [aiNotifications, setAiNotifications] = useState([])
   const [aiMode, setAiMode] = useState('auto') // 'auto', 'manual', 'off'
 
   // Enhanced AI Analysis Hook
@@ -552,20 +554,20 @@ export default function Meeting() {
     }
   }
 
-  // AI notification handlers
-  const handleAIActionClick = (action, notification) => {
-    console.log('AI Action clicked:', action, notification)
-    // Implement specific actions based on action.action type
-  }
-  
-  const handleAINotificationDismiss = (notificationId) => {
-    setAiNotifications(prev => prev.filter(n => n.id !== notificationId))
-  }
-  
-  const handleAIInsightAction = (insight) => {
-    console.log('AI Insight action:', insight)
-    // Implement insight-specific actions
-  }
+  // Removed: Old AI notification handlers - now using Claude AI analysis display
+  // const handleAIActionClick = (action, notification) => {
+  //   console.log('AI Action clicked:', action, notification)
+  //   // Implement specific actions based on action.action type
+  // }
+
+  // const handleAINotificationDismiss = (notificationId) => {
+  //   setAiNotifications(prev => prev.filter(n => n.id !== notificationId))
+  // }
+
+  // const handleAIInsightAction = (insight) => {
+  //   console.log('AI Insight action:', insight)
+  //   // Implement insight-specific actions
+  // }
 
   if (!currentMeeting && !id) {
     return (
@@ -1647,7 +1649,7 @@ Action: Schedule follow-up meeting by Friday"
               </div>
             )}
 
-            {/* AI Processing Results */}
+            {/* REMOVED: Old AI Processing Results - Now using Claude AI analysis display
             {aiProcessingResult && (
               <div className="bg-white rounded-lg shadow-md p-6 mt-6">
                 <div className="flex items-center gap-3 mb-4">
@@ -1737,19 +1739,19 @@ Action: Schedule follow-up meeting by Friday"
                     />
                   </div>
                 )}
-                
+
               </div>
-            )}
+            )} */}
           </div>
         </ResponsiveGrid>
       </main>
       
-        {/* AI Processing Status Overlay */}
-        <AIProcessingStatus 
+        {/* REMOVED: AI Processing Status Overlay - Now using Claude AI analysis display
+        <AIProcessingStatus
           isProcessing={isAIProcessing}
           stage={aiProcessingStage}
           progress={isAIProcessing ? 65 : 0}
-        />
+        /> */}
       </div>
     </PullToRefresh>
   )

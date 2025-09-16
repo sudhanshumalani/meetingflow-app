@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:prod": "cross-env NODE_ENV=production vite build",
+    "build:gh-pages": "cross-env NODE_ENV=production vite build",
     "build:pwa": "vite build && echo 'PWA build complete! Deploy the dist/ folder to your hosting service.'",
     "lint": "eslint .",
     "preview": "vite preview",

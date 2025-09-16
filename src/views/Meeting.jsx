@@ -1744,16 +1744,15 @@ Example notes you might paste:
 
               </div>
             )} */}
-          </div>
         </ResponsiveGrid>
       </main>
-      
-        {/* REMOVED: AI Processing Status Overlay - Now using Claude AI analysis display
-        <AIProcessingStatus
-          isProcessing={isAIProcessing}
-          stage={aiProcessingStage}
-          progress={isAIProcessing ? 65 : 0}
-        /> */}
+
+      {/* REMOVED: AI Processing Status Overlay - Now using Claude AI analysis display
+      <AIProcessingStatus
+        isProcessing={isAIProcessing}
+        stage={aiProcessingStage}
+        progress={isAIProcessing ? 65 : 0}
+      /> */}
       </div>
     </PullToRefresh>
   )

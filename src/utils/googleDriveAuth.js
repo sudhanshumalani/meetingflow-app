@@ -8,7 +8,7 @@ const GOOGLE_CONFIG = {
   // For development/demo: Use environment variables or replace with actual credentials
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
   redirectUri: window.location.origin + '/meetingflow-app/auth/google/callback',
-  scope: 'https://www.googleapis.com/auth/drive.file',
+  scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
   responseType: 'token', // Changed from 'code' to 'token' for implicit flow
   prompt: 'consent'
 }
@@ -19,10 +19,61 @@ if (import.meta.env.DEV) {
   console.log('Client ID length:', GOOGLE_CONFIG.clientId?.length)
 }
 
+// Token storage manager for automatic re-authentication
+class TokenManager {
+  constructor() {
+    this.token = null
+    this.expiresAt = null
+    this.refreshCallback = null
+  }
+
+  setToken(accessToken, expiresIn) {
+    this.token = accessToken
+    this.expiresAt = Date.now() + (expiresIn * 1000)
+
+    // Set up automatic refresh 5 minutes before expiry
+    const refreshIn = (expiresIn - 300) * 1000 // 5 minutes before expiry
+    if (refreshIn > 0 && this.refreshCallback) {
+      setTimeout(() => {
+        console.log('Token expiring soon, triggering re-authentication...')
+        this.refreshCallback()
+      }, refreshIn)
+    }
+  }
+
+  getToken() {
+    // Check if token is still valid (with 1 minute buffer)
+    if (this.token && this.expiresAt && Date.now() < (this.expiresAt - 60000)) {
+      return this.token
+    }
+    return null
+  }
+
+  isExpired() {
+    return !this.token || !this.expiresAt || Date.now() >= this.expiresAt
+  }
+
+  clear() {
+    this.token = null
+    this.expiresAt = null
+  }
+
+  setRefreshCallback(callback) {
+    this.refreshCallback = callback
+  }
+}
+
 export class GoogleDriveAuth {
   constructor() {
     this.authWindow = null
     this.authPromise = null
+    this.tokenManager = new TokenManager()
+    this.silentAuthFrame = null
+
+    // Set up automatic re-authentication
+    this.tokenManager.setRefreshCallback(() => {
+      this.silentReauthenticate()
+    })
   }
 
   /**
@@ -93,6 +144,9 @@ export class GoogleDriveAuth {
           this.authPromise = null
 
           // With implicit flow, we get the token directly
+          // Store in token manager
+          this.tokenManager.setToken(event.data.accessToken, event.data.expiresIn || 3600)
+
           resolve({
             accessToken: event.data.accessToken,
             expiresAt: Date.now() + (event.data.expiresIn * 1000),
@@ -115,18 +169,89 @@ export class GoogleDriveAuth {
   }
 
   /**
+   * Silently re-authenticate using an iframe (no user interaction required)
+   */
+  async silentReauthenticate() {
+    console.log('Attempting silent re-authentication...')
+
+    return new Promise((resolve, reject) => {
+      // Create hidden iframe for silent auth
+      const iframe = document.createElement('iframe')
+      iframe.style.display = 'none'
+      iframe.src = this.buildAuthUrl(true) // true for silent mode
+
+      const timeout = setTimeout(() => {
+        document.body.removeChild(iframe)
+        reject(new Error('Silent authentication timeout'))
+      }, 10000) // 10 second timeout
+
+      const messageHandler = (event) => {
+        if (event.origin !== window.location.origin) return
+
+        if (event.data.type === 'google-auth-success') {
+          clearTimeout(timeout)
+          window.removeEventListener('message', messageHandler)
+          document.body.removeChild(iframe)
+
+          // Update token manager
+          this.tokenManager.setToken(event.data.accessToken, event.data.expiresIn || 3600)
+
+          resolve({
+            accessToken: event.data.accessToken,
+            expiresAt: Date.now() + (event.data.expiresIn * 1000)
+          })
+        } else if (event.data.type === 'google-auth-error') {
+          clearTimeout(timeout)
+          window.removeEventListener('message', messageHandler)
+          document.body.removeChild(iframe)
+
+          // If silent auth fails, trigger interactive re-authentication
+          console.log('Silent auth failed, triggering interactive authentication...')
+          this.authenticate().then(resolve).catch(reject)
+        }
+      }
+
+      window.addEventListener('message', messageHandler)
+      document.body.appendChild(iframe)
+    })
+  }
+
+  /**
    * Build Google OAuth2 authorization URL
    */
-  buildAuthUrl() {
+  buildAuthUrl(silent = false) {
     const params = new URLSearchParams({
       client_id: GOOGLE_CONFIG.clientId,
       redirect_uri: GOOGLE_CONFIG.redirectUri,
       scope: GOOGLE_CONFIG.scope,
       response_type: GOOGLE_CONFIG.responseType,
-      prompt: GOOGLE_CONFIG.prompt
+      prompt: silent ? 'none' : GOOGLE_CONFIG.prompt // Use 'none' for silent auth
     })
 
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
+  }
+
+  /**
+   * Get current access token (automatically re-authenticates if expired)
+   */
+  async getValidToken() {
+    const token = this.tokenManager.getToken()
+
+    if (token) {
+      return token
+    }
+
+    // Token expired or not available, re-authenticate
+    console.log('Token expired, re-authenticating...')
+    try {
+      const result = await this.silentReauthenticate()
+      return result.accessToken
+    } catch (error) {
+      console.error('Re-authentication failed:', error)
+      // Fall back to interactive authentication
+      const result = await this.authenticate()
+      return result.accessToken
+    }
   }
 
   /**
@@ -182,7 +307,8 @@ export class GoogleDriveAuth {
       })
 
       if (!response.ok) {
-        throw new Error(`Failed to get user info: ${response.statusText}`)
+        const errorText = await response.text().catch(() => '')
+        throw new Error(`Failed to get user info: ${response.status} ${response.statusText || errorText || 'Unknown error'}`)
       }
 
       return await response.json()

@@ -163,7 +163,7 @@ function AppContent() {
 
   return (
     <>
-      <main id="main-content" className="min-h-screen">
+      <main id="main-content">
         <PageTransition>
           <Routes>
             <Route path="/" element={<Home />} />

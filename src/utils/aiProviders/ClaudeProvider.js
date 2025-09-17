@@ -8,9 +8,20 @@ export class ClaudeProvider {
   }
 
   async isAvailable() {
-    if (!this.apiKey) return false
+    console.log('🔍 ClaudeProvider.isAvailable() called')
+    console.log('🔍 API Key exists:', !!this.apiKey)
+    console.log('🔍 API Key length:', this.apiKey?.length || 0)
+    console.log('🔍 API Key preview:', this.apiKey ? this.apiKey.substring(0, 10) + '...' : 'none')
+
+    if (!this.apiKey) {
+      console.log('❌ No API key provided to ClaudeProvider')
+      return false
+    }
 
     try {
+      console.log('🔍 Making availability check request to:', `${this.baseUrl}/messages`)
+      console.log('🔍 Headers:', this.getHeaders())
+
       // Quick availability check
       const response = await fetch(`${this.baseUrl}/messages`, {
         method: 'POST',
@@ -21,9 +32,18 @@ export class ClaudeProvider {
           messages: [{ role: 'user', content: 'Hi' }]
         })
       })
+
+      console.log('🔍 Response status:', response.status)
+      console.log('🔍 Response ok:', response.ok)
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.log('🔍 Error response:', errorText)
+      }
+
       return response.ok
     } catch (error) {
-      console.warn('Claude availability check failed:', error)
+      console.error('❌ Claude availability check failed with error:', error)
       return false
     }
   }

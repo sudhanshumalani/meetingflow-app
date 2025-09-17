@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useEffect } from 'react'
+import { createContext, useContext, useReducer, useEffect, useRef, useCallback } from 'react'
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
 import n8nService from '../utils/n8nService'
@@ -39,16 +39,35 @@ function appReducer(state, action) {
       }
     
     case 'ADD_MEETING':
+      // UUID must be provided - never generate inside reducer to avoid duplicates
+      if (!action.payload.id) {
+        console.error('❌ ADD_MEETING: Missing required ID. UUID generation must happen before dispatch.')
+        return state
+      }
+
       const newMeeting = {
-        id: action.payload.id || uuidv4(), // Use provided ID or generate new one
         ...action.payload,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       }
-      return {
+
+      console.log('🔥 ADD_MEETING REDUCER: Adding meeting:', newMeeting.id)
+      console.log('🔥 ADD_MEETING REDUCER: Current count:', state.meetings.length)
+
+      // Check for duplicates - prevent adding same meeting twice
+      const existingMeetingIndex = state.meetings.findIndex(m => m.id === newMeeting.id)
+      if (existingMeetingIndex >= 0) {
+        console.log('⚠️ ADD_MEETING: Meeting already exists, skipping duplicate:', newMeeting.id)
+        return state // Meeting already exists, no need to add
+      }
+
+      const newState = {
         ...state,
         meetings: [newMeeting, ...state.meetings]
       }
+
+      console.log('🔥 ADD_MEETING REDUCER: New count:', newState.meetings.length)
+      return newState
     
     case 'UPDATE_MEETING':
       return {
@@ -299,16 +318,70 @@ function mergeN8nCategories(localCategories, n8nCategories) {
   return merged
 }
 
+// Helper function to deduplicate meetings
+function deduplicateMeetings(meetings) {
+  const seen = new Map()
+  const deduplicated = []
+
+  meetings.forEach(meeting => {
+    if (!seen.has(meeting.id)) {
+      seen.set(meeting.id, meeting)
+      deduplicated.push(meeting)
+    } else {
+      // Keep the more recent version
+      const existing = seen.get(meeting.id)
+      const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime()
+      const currentTime = new Date(meeting.updatedAt || meeting.createdAt || 0).getTime()
+
+      if (currentTime > existingTime) {
+        // Replace with newer version
+        const index = deduplicated.findIndex(m => m.id === meeting.id)
+        if (index !== -1) {
+          deduplicated[index] = meeting
+          seen.set(meeting.id, meeting)
+        }
+      }
+    }
+  })
+
+  console.log('🧹 Deduplication:', {
+    original: meetings.length,
+    deduplicated: deduplicated.length,
+    removed: meetings.length - deduplicated.length
+  })
+
+  return deduplicated
+}
+
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(appReducer, initialState)
+  const saveTimeoutRef = useRef(null)
 
   useEffect(() => {
     loadData()
   }, [])
 
+
+  // Save immediately when data changes (no debouncing to avoid issues)
   useEffect(() => {
+    console.log('🔥 SAVE EFFECT: Triggered', {
+      isLoading: state.isLoading,
+      meetingsLength: state.meetings.length,
+      shouldSave: !state.isLoading
+    })
+
     if (!state.isLoading) {
-      saveData()
+      console.log('💾 AppContext: SYNCHRONOUS save triggered')
+      console.log('💾 AppContext: Saving meetings count:', state.meetings.length)
+      console.log('💾 AppContext: Meeting IDs being saved:', state.meetings.map(m => m.id))
+
+      localStorage.setItem('meetingflow_meetings', JSON.stringify(state.meetings))
+      localStorage.setItem('meetingflow_stakeholders', JSON.stringify(state.stakeholders))
+      localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(state.stakeholderCategories))
+
+      const saved = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+      console.log('✅ AppContext: VERIFIED save - meetings in storage:', saved.length)
+      console.log('✅ AppContext: VERIFIED IDs:', saved.map(m => m.id))
     }
   }, [state.meetings, state.stakeholders, state.stakeholderCategories, state.isLoading])
 
@@ -348,75 +421,52 @@ export function AppProvider({ children }) {
     try {
       dispatch({ type: 'SET_LOADING', payload: true })
       
-      // Load local data first
-      const [meetings, localStakeholders, localCategories] = await Promise.all([
-        localforage.getItem('meetingflow_meetings'),
-        localforage.getItem('meetingflow_stakeholders'),
-        localforage.getItem('meetingflow_stakeholder_categories')
-      ])
+      // Load from localStorage ONLY (synchronous, reliable)
+      let meetings, localStakeholders, localCategories
+
+      try {
+        meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+        localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+
+        // Use defaults if empty
+        if (!localCategories.length) {
+          localCategories = Object.values(DEFAULT_CATEGORIES)
+        }
+
+        console.log('📂 LOAD: Loaded from localStorage - meetings:', meetings.length)
+        console.log('📂 LOAD: Meeting IDs loaded:', meetings.map(m => m.id))
+
+      } catch (error) {
+        console.warn('⚠️ localStorage failed, using defaults:', error)
+        meetings = []
+        localStakeholders = []
+        localCategories = Object.values(DEFAULT_CATEGORIES)
+      }
       
+      // Deduplicate meetings before loading
+      console.log('📂 LOAD: Raw meetings from storage:', meetings?.length || 0)
+      const deduplicatedMeetings = deduplicateMeetings(meetings || [])
+      console.log('📂 LOAD: Deduplicated meetings:', deduplicatedMeetings.length)
+
       // Load local data immediately
       dispatch({
         type: 'LOAD_DATA',
         payload: {
-          meetings: meetings || [],
+          meetings: deduplicatedMeetings,
           stakeholders: localStakeholders || [],
           stakeholderCategories: localCategories || Object.values(DEFAULT_CATEGORIES)
         }
       })
       
-      // Try to load cached n8n data
-      try {
-        const cachedStakeholders = localStorage.getItem('cachedStakeholders')
-        const cachedCategories = localStorage.getItem('cachedCategories')
-
-        if (cachedStakeholders || cachedCategories) {
-          const n8nStakeholders = cachedStakeholders ? JSON.parse(cachedStakeholders) : []
-          const n8nCategories = cachedCategories ? JSON.parse(cachedCategories) : []
-
-          if (n8nStakeholders.length > 0 || n8nCategories.length > 0) {
-            // Merge n8n data with local data
-            const mergedStakeholders = mergeN8nStakeholders(
-              localStakeholders || [],
-              n8nStakeholders
-            )
-
-            const mergedCategories = mergeN8nCategories(
-              localCategories || Object.values(DEFAULT_CATEGORIES),
-              n8nCategories
-            )
-
-            dispatch({
-              type: 'SYNC_N8N_DATA',
-              payload: {
-                stakeholders: mergedStakeholders,
-                categories: mergedCategories,
-                syncResult: { success: true }
-              }
-            })
-
-            console.log(`Loaded ${n8nStakeholders.length} stakeholders and ${n8nCategories.length} categories from n8n cache`)
-          }
-        }
-      } catch (n8nError) {
-        console.warn('Failed to load cached n8n data:', n8nError.message)
-      }
+      // Skip n8n cache for now to avoid interference with core functionality
+      console.log('🔄 LOAD: Skipping n8n cache to focus on core persistence')
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: 'Failed to load data from storage' })
     }
   }
 
-  const saveData = async () => {
-    try {
-      await Promise.all([
-        localforage.setItem('meetingflow_meetings', state.meetings),
-        localforage.setItem('meetingflow_stakeholders', state.stakeholders),
-        localforage.setItem('meetingflow_stakeholder_categories', state.stakeholderCategories)
-      ])
-    } catch (error) {
-      console.error('Failed to save data:', error)
-    }
-  }
+  // saveData is now inline in debouncedSave to prevent stale closure issues
 
   // Helper function to merge stakeholders and avoid duplicates
   const mergeDuplicateStakeholders = (localStakeholders, n8nStakeholders) => {
@@ -516,8 +566,24 @@ export function AppProvider({ children }) {
   }
 
   const actions = {
-    addMeeting: (meeting) => dispatch({ type: 'ADD_MEETING', payload: meeting }),
-    updateMeeting: (meeting) => dispatch({ type: 'UPDATE_MEETING', payload: meeting }),
+    addMeeting: async (meeting) => {
+      // Always generate UUID before dispatch to prevent duplicates
+      const meetingWithId = {
+        ...meeting,
+        id: meeting.id || uuidv4()
+      }
+      console.log('📝 AppContext: Adding meeting with ID:', meetingWithId.id)
+      console.log('📝 AppContext: Current meetings count before add:', state.meetings.length)
+      dispatch({ type: 'ADD_MEETING', payload: meetingWithId })
+
+      // Save will be triggered automatically by useEffect when state changes
+    },
+    updateMeeting: async (meeting) => {
+      console.log('📝 AppContext: Updating meeting with ID:', meeting.id)
+      dispatch({ type: 'UPDATE_MEETING', payload: meeting })
+
+      // Save will be triggered automatically by useEffect when state changes
+    },
     deleteMeeting: (meetingId) => dispatch({ type: 'DELETE_MEETING', payload: meetingId }),
     setCurrentMeeting: (meeting) => dispatch({ type: 'SET_CURRENT_MEETING', payload: meeting }),
     

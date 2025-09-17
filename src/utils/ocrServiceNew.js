@@ -3,6 +3,12 @@ export class SimpleOCRService {
   constructor() {
     this.apiKey = localStorage.getItem('ocrApiKey') || null
     this.claudeApiKey = localStorage.getItem('claudeApiKey') || null
+    console.log('🔧 SimpleOCRService constructor:', {
+      hasOcrKey: !!this.apiKey,
+      hasClaudeKey: !!this.claudeApiKey,
+      claudeKeyLength: this.claudeApiKey?.length || 0,
+      claudeKeyPreview: this.claudeApiKey ? this.claudeApiKey.substring(0, 10) + '...' : 'none'
+    })
   }
 
   setOCRApiKey(key) {
@@ -15,12 +21,20 @@ export class SimpleOCRService {
   }
 
   setClaudeApiKey(key) {
+    console.log('🔧 setClaudeApiKey called with:', {
+      hasKey: !!key,
+      keyLength: key?.length || 0,
+      keyPreview: key ? key.substring(0, 10) + '...' : 'none'
+    })
     this.claudeApiKey = key?.trim() || null
     if (key) {
       localStorage.setItem('claudeApiKey', key)
+      console.log('✅ Claude API key saved to localStorage')
     } else {
       localStorage.removeItem('claudeApiKey')
+      console.log('🗑️ Claude API key removed from localStorage')
     }
+    console.log('🔧 After setClaudeApiKey - instance has key:', !!this.claudeApiKey)
   }
 
   async extractTextFromImage(imageFile, onProgress = () => {}) {
@@ -114,9 +128,25 @@ export class SimpleOCRService {
 
   // Claude AI integration for processing extracted text
   async processWithClaude(text, meetingContext = {}) {
-    console.log('🎯 Processing text with Claude AI integration...')
+    console.log('🚨🚨🚨 MODIFIED PROCESSWITCHLAUDE FUNCTION CALLED 🚨🚨🚨')
+    console.log('🎯 === PROCESSING WITH CLAUDE DEBUG ===')
     console.log('Text length:', text.length)
     console.log('Meeting context:', meetingContext)
+
+    // ALWAYS check localStorage for the latest API key first
+    const latestClaudeApiKey = localStorage.getItem('claudeApiKey')
+    console.log('localStorage claudeApiKey:', latestClaudeApiKey ? 'EXISTS' : 'MISSING')
+    console.log('Instance claudeApiKey:', this.claudeApiKey ? 'EXISTS' : 'MISSING')
+
+    // Update instance if localStorage has a different key
+    if (latestClaudeApiKey !== this.claudeApiKey) {
+      console.log('🔄 Updating instance with latest API key from localStorage')
+      this.claudeApiKey = latestClaudeApiKey
+    }
+
+    console.log('Final API key check - has key:', !!this.claudeApiKey)
+    console.log('Final API key length:', this.claudeApiKey?.length || 0)
+    console.log('Final API key preview:', this.claudeApiKey ? this.claudeApiKey.substring(0, 10) + '...' : 'none')
 
     // Try direct Claude API first (seamless experience)
     if (this.claudeApiKey) {
@@ -125,17 +155,25 @@ export class SimpleOCRService {
         const { ClaudeProvider } = await import('./aiProviders/ClaudeProvider.js')
         const claudeProvider = new ClaudeProvider(this.claudeApiKey)
 
-        if (await claudeProvider.isAvailable()) {
-          const result = await claudeProvider.analyze(text, meetingContext)
-          console.log('✅ Claude API analysis complete:', result)
-          return result
-        }
+        console.log('✅ API key exists, attempting direct analysis (skipping availability check)...')
+        const result = await claudeProvider.analyze(text, meetingContext)
+        console.log('✅ Claude API analysis complete:', result)
+        console.log('🎉 SUCCESS! Returning Claude API result without popup!')
+        return result
       } catch (error) {
-        console.warn('⚠️ Claude API failed, falling back to copy-paste workflow:', error)
+        console.error('❌❌❌ CLAUDE API FAILED - THIS IS WHY POPUP APPEARS ❌❌❌')
+        console.error('❌ Claude API error details:', error)
+        console.error('❌ Error name:', error.name)
+        console.error('❌ Error message:', error.message)
+        console.error('❌ Error stack:', error.stack)
+        console.warn('⚠️ Claude API failed, falling back to copy-paste workflow:', error.message)
       }
+    } else {
+      console.log('❌❌❌ NO API KEY - THIS IS WHY POPUP APPEARS ❌❌❌')
     }
 
     // Fallback to copy-paste workflow if no API key or API fails
+    console.log('🚨🚨🚨 SHOWING POPUP BECAUSE API KEY MISSING OR API FAILED 🚨🚨🚨')
     console.log('🤖 Offering Claude Web Interface workflow...')
     try {
       const useClaudeWebInterface = await this.offerClaudeWebWorkflow(text, meetingContext)
@@ -509,6 +547,62 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
       .filter(word => !['this', 'that', 'with', 'they', 'were', 'been', 'have', 'will', 'from', 'about'].includes(word))
 
     return words.slice(0, 3).join(' ')
+  }
+
+  // Extract main topics from text content
+  extractMainTopics(text) {
+    if (!text || typeof text !== 'string') return ['general discussion']
+
+    // Split into sentences and find important phrases
+    const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 10)
+    const topics = new Set()
+
+    // Business/meeting keywords that indicate topics
+    const topicKeywords = [
+      'budget', 'project', 'timeline', 'deadline', 'revenue', 'strategy', 'planning',
+      'development', 'marketing', 'sales', 'product', 'team', 'resources', 'goals',
+      'objectives', 'performance', 'review', 'analysis', 'implementation', 'launch',
+      'quarterly', 'annual', 'meeting', 'discussion', 'decision', 'proposal'
+    ]
+
+    sentences.forEach(sentence => {
+      const words = sentence.toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
+        .split(/\s+/)
+        .filter(word => word.length > 3)
+
+      // Find topic keywords and extract context
+      words.forEach((word, index) => {
+        if (topicKeywords.includes(word)) {
+          // Get surrounding context (2 words before and after)
+          const start = Math.max(0, index - 2)
+          const end = Math.min(words.length, index + 3)
+          const topic = words.slice(start, end).join(' ')
+          if (topic.length > 5 && topic.length < 50) {
+            topics.add(topic)
+          }
+        }
+      })
+    })
+
+    // If no specific topics found, extract general phrases
+    if (topics.size === 0) {
+      const words = text.toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
+        .split(/\s+/)
+        .filter(word => word.length > 4)
+        .filter(word => !['this', 'that', 'with', 'they', 'were', 'been', 'have', 'will', 'from', 'about', 'there', 'where', 'would', 'could', 'should'].includes(word))
+
+      // Group words into meaningful phrases
+      for (let i = 0; i < Math.min(words.length - 1, 10); i += 2) {
+        const phrase = words.slice(i, i + 2).join(' ')
+        if (phrase.length > 6) {
+          topics.add(phrase)
+        }
+      }
+    }
+
+    return Array.from(topics).slice(0, 5) // Return top 5 topics
   }
 
   // Generate professional summary

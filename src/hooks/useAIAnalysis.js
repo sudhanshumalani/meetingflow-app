@@ -139,6 +139,7 @@ export const useAIAnalysis = () => {
     cancel,
     clear,
     exportResults,
+    setResult, // Allow direct setting of result for loading saved data
 
     // Computed
     hasResult: !!result && !result.isStreaming,

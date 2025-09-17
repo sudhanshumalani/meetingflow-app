@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
 import { 
@@ -9,8 +9,6 @@ import {
   Users, 
   Clock, 
   FileText, 
-  Bell, 
-  BellDot,
   Sparkles,
   AlertTriangle,
   Info,
@@ -35,7 +33,12 @@ import {
   MoreVertical,
   Save,
   XCircle,
-  Eye
+  Eye,
+  Brain,
+  Gauge,
+  BarChart3,
+  Users2,
+  Lightbulb
 } from 'lucide-react'
 import { format, isToday, isThisWeek, startOfDay, endOfDay, differenceInDays } from 'date-fns'
 import {
@@ -73,6 +76,7 @@ export default function Home() {
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [showExportMenu, setShowExportMenu] = useState(false)
+  const [showUserMenu, setShowUserMenu] = useState(false)
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false)
   const [meetingSentiments, setMeetingSentiments] = useState({})
@@ -100,13 +104,30 @@ export default function Home() {
   const [newCategory, setNewCategory] = useState({ label: '', description: '', color: 'blue' })
   const [activeStakeholderTab, setActiveStakeholderTab] = useState('stakeholders')
 
+  // Filter states
+  const [selectedStakeholder, setSelectedStakeholder] = useState('')
+  const [stakeholderSearchTerm, setStakeholderSearchTerm] = useState('')
+  const [showStakeholderDropdown, setShowStakeholderDropdown] = useState(false)
+
+  // Bulk selection states
+  const [selectedMeetings, setSelectedMeetings] = useState(new Set())
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false)
+
+  // Bulk stakeholder selection states
+  const [selectedStakeholders, setSelectedStakeholders] = useState(new Set())
+  const [showBulkStakeholderActions, setShowBulkStakeholderActions] = useState(false)
+  const [bulkCategoryAssignment, setBulkCategoryAssignment] = useState('')
+  const [showBulkStakeholderDeleteConfirm, setShowBulkStakeholderDeleteConfirm] = useState(false)
+
   // Initialize services
   const sentimentAnalyzer = new SentimentAnalyzer()
   const exportManager = new ExportManager()
 
-  // Use real data only
+  // Use real data directly - AppContext handles deduplication
   const displayStakeholders = stakeholders
-  const displayMeetings = meetings
+  const displayMeetings = meetings // Trust AppContext deduplication
+
+  // Generate AI insights and sentiment analysis
 
   useEffect(() => {
     const insights = generateAIInsights(displayMeetings, displayStakeholders)
@@ -126,6 +147,18 @@ export default function Home() {
       { id: 3, message: 'Weekly report ready for review', type: 'info', urgent: false }
     ])
   }, [displayMeetings, displayStakeholders])
+
+  // Close stakeholder dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showStakeholderDropdown && !event.target.closest('.relative')) {
+        setShowStakeholderDropdown(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showStakeholderDropdown])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -165,12 +198,136 @@ export default function Home() {
     needsAttention: displayStakeholders.filter(s => s.health === 'needs-attention').length
   }
 
-  const filteredMeetings = displayMeetings.filter(meeting =>
-    meeting.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    meeting.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    meeting.attendees?.some(attendee => 
-      attendee.toLowerCase().includes(searchTerm.toLowerCase())
+  // AI-Powered Dashboard Metrics
+  const calculateMeetingProductivityScore = () => {
+    if (displayMeetings.length === 0) return 0
+
+    const completedMeetings = displayMeetings.filter(m => m.status === 'completed')
+    const meetingsWithOutcomes = completedMeetings.filter(m =>
+      (m.actionItems && m.actionItems.length > 0) ||
+      (m.summary && m.summary.length > 50)
     )
+    const avgActionItems = completedMeetings.reduce((acc, m) => acc + (m.actionItems?.length || 0), 0) / Math.max(completedMeetings.length, 1)
+
+    const productivityScore = Math.round(
+      (meetingsWithOutcomes.length / Math.max(completedMeetings.length, 1)) * 0.6 * 100 +
+      Math.min(avgActionItems * 10, 40)
+    )
+
+    return Math.min(productivityScore, 100)
+  }
+
+  const calculateActionItemsPerformance = () => {
+    const completedItems = allActionItems.filter(item => item.completed).length
+    const totalItems = allActionItems.length
+    const completionRate = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0
+
+    const onTimeItems = allActionItems.filter(item =>
+      item.completed && item.dueDate && new Date(item.completedAt || Date.now()) <= new Date(item.dueDate)
+    ).length
+
+    const onTimeRate = completedItems > 0 ? Math.round((onTimeItems / completedItems) * 100) : 0
+
+    return { completionRate, onTimeRate, totalItems, completedItems, overdueItems: overdueActionItems.length }
+  }
+
+  const calculateCommunicationHealth = () => {
+    const recentMeetings = displayMeetings.filter(m => {
+      const meetingDate = new Date(m.createdAt || m.scheduledAt)
+      const daysDiff = differenceInDays(new Date(), meetingDate)
+      return daysDiff <= 30
+    })
+
+    const meetingsWithGoodEngagement = recentMeetings.filter(m =>
+      (m.attendees && m.attendees.length >= 2) &&
+      (m.summary && m.summary.length > 100)
+    ).length
+
+    const healthScore = recentMeetings.length > 0 ?
+      Math.round((meetingsWithGoodEngagement / recentMeetings.length) * 100) : 0
+
+    const avgMeetingLength = recentMeetings.reduce((acc, m) => {
+      const duration = m.duration || 60 // Default 60 minutes
+      return acc + duration
+    }, 0) / Math.max(recentMeetings.length, 1)
+
+    return {
+      healthScore,
+      avgMeetingLength: Math.round(avgMeetingLength),
+      recentMeetings: recentMeetings.length,
+      engagedMeetings: meetingsWithGoodEngagement
+    }
+  }
+
+  const generateSmartRecommendations = () => {
+    const recommendations = []
+
+    if (overdueActionItems.length > 3) {
+      recommendations.push({
+        type: 'action',
+        title: 'Review Overdue Tasks',
+        description: `You have ${overdueActionItems.length} overdue action items that need attention.`,
+        priority: 'high'
+      })
+    }
+
+    if (todaysMeetings.length > 4) {
+      recommendations.push({
+        type: 'schedule',
+        title: 'Heavy Meeting Day',
+        description: 'Consider rescheduling some meetings to avoid burnout.',
+        priority: 'medium'
+      })
+    }
+
+    if (stakeholderHealth.needsAttention > 0) {
+      recommendations.push({
+        type: 'relationship',
+        title: 'Stakeholder Follow-up',
+        description: `${stakeholderHealth.needsAttention} stakeholders need attention.`,
+        priority: 'medium'
+      })
+    }
+
+    const unscheduledMeetings = displayMeetings.filter(m => !m.scheduledAt).length
+    if (unscheduledMeetings > 0) {
+      recommendations.push({
+        type: 'planning',
+        title: 'Schedule Meetings',
+        description: `${unscheduledMeetings} meetings need to be scheduled.`,
+        priority: 'low'
+      })
+    }
+
+    return recommendations.slice(0, 3) // Return top 3 recommendations
+  }
+
+  // Calculate AI metrics
+  const productivityScore = calculateMeetingProductivityScore()
+  const actionItemsPerformance = calculateActionItemsPerformance()
+  const communicationHealth = calculateCommunicationHealth()
+  const smartRecommendations = generateSmartRecommendations()
+
+  // Filter meetings by search term and stakeholder
+  const filteredMeetings = displayMeetings.filter(meeting => {
+    const matchesSearch = meeting.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      meeting.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      meeting.attendees?.some(attendee =>
+        attendee.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+
+    const matchesStakeholder = !selectedStakeholder ||
+      meeting.stakeholderIds?.includes(selectedStakeholder) ||
+      meeting.attendees?.some(attendee =>
+        displayStakeholders.find(s => s.id === selectedStakeholder)?.name === attendee
+      )
+
+    return matchesSearch && matchesStakeholder
+  })
+
+  // Filter stakeholders for dropdown
+  const filteredStakeholdersForDropdown = displayStakeholders.filter(stakeholder =>
+    stakeholder.name.toLowerCase().includes(stakeholderSearchTerm.toLowerCase())
   )
 
   // Filter stakeholders by category
@@ -188,7 +345,8 @@ export default function Home() {
   }, {})
 
   const handleStartMeeting = (meeting) => {
-    setCurrentMeeting(meeting)
+    console.log('🚀 Starting meeting:', meeting.id, meeting.title)
+    // Don't set currentMeeting here - let Meeting component handle it based on URL
     navigate(`/meeting/${meeting.id}`)
   }
 
@@ -228,6 +386,93 @@ export default function Home() {
 
   const handleDeleteMeeting = (meetingId) => {
     setShowDeleteConfirm(meetingId)
+  }
+
+  // Bulk selection handlers
+  const handleSelectMeeting = (meetingId, checked) => {
+    const newSelectedMeetings = new Set(selectedMeetings)
+    if (checked) {
+      newSelectedMeetings.add(meetingId)
+    } else {
+      newSelectedMeetings.delete(meetingId)
+    }
+    setSelectedMeetings(newSelectedMeetings)
+  }
+
+  const handleSelectAllMeetings = (checked) => {
+    if (checked) {
+      setSelectedMeetings(new Set(sortedMeetings.map(m => m.id)))
+    } else {
+      setSelectedMeetings(new Set())
+    }
+  }
+
+  const handleBulkDelete = () => {
+    setShowBulkDeleteConfirm(true)
+  }
+
+  const confirmBulkDelete = () => {
+    selectedMeetings.forEach(meetingId => {
+      deleteMeeting(meetingId)
+    })
+    setSelectedMeetings(new Set())
+    setShowBulkDeleteConfirm(false)
+  }
+
+  const cancelBulkDelete = () => {
+    setShowBulkDeleteConfirm(false)
+  }
+
+  // Bulk stakeholder selection handlers
+  const handleSelectStakeholder = (stakeholderId, checked) => {
+    const newSelectedStakeholders = new Set(selectedStakeholders)
+    if (checked) {
+      newSelectedStakeholders.add(stakeholderId)
+    } else {
+      newSelectedStakeholders.delete(stakeholderId)
+    }
+    setSelectedStakeholders(newSelectedStakeholders)
+  }
+
+  const handleSelectAllStakeholders = (checked) => {
+    if (checked) {
+      setSelectedStakeholders(new Set(stakeholders.map(s => s.id)))
+    } else {
+      setSelectedStakeholders(new Set())
+    }
+  }
+
+  const handleBulkAssignCategory = () => {
+    if (bulkCategoryAssignment && selectedStakeholders.size > 0) {
+      selectedStakeholders.forEach(stakeholderId => {
+        const stakeholder = stakeholders.find(s => s.id === stakeholderId)
+        if (stakeholder) {
+          updateStakeholder({
+            ...stakeholder,
+            category: bulkCategoryAssignment
+          })
+        }
+      })
+      setSelectedStakeholders(new Set())
+      setBulkCategoryAssignment('')
+      setShowBulkStakeholderActions(false)
+    }
+  }
+
+  const handleBulkDeleteStakeholders = () => {
+    setShowBulkStakeholderDeleteConfirm(true)
+  }
+
+  const confirmBulkDeleteStakeholders = () => {
+    selectedStakeholders.forEach(stakeholderId => {
+      deleteStakeholder(stakeholderId)
+    })
+    setSelectedStakeholders(new Set())
+    setShowBulkStakeholderDeleteConfirm(false)
+  }
+
+  const cancelBulkDeleteStakeholders = () => {
+    setShowBulkStakeholderDeleteConfirm(false)
   }
 
   const confirmDeleteMeeting = () => {
@@ -445,7 +690,7 @@ export default function Home() {
   ]
 
   return (
-    <div className="min-h-screen bg-gray-50 mobile-full-height">
+    <div className="w-full">
       {/* Mobile Navigation Drawer */}
       <MobileNavDrawer
         isOpen={isMobileNavOpen}
@@ -470,23 +715,6 @@ export default function Home() {
                 <Search size={20} />
               </button>
 
-              {/* Notifications Button */}
-              <button
-                onClick={() => setIsNotificationCenterOpen(true)}
-                className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors touch-target"
-                title="Notifications (Ctrl+N)"
-              >
-                {notifications.some(n => n.priority === 'high' && !n.read) ? (
-                  <BellDot className="text-red-600" size={20} />
-                ) : (
-                  <Bell className="text-gray-600" size={20} />
-                )}
-                {notifications.filter(n => !n.read).length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                    {notifications.filter(n => !n.read).length}
-                  </span>
-                )}
-              </button>
             </>
           }
         />
@@ -501,142 +729,125 @@ export default function Home() {
         />
       </div>
 
-      {/* Desktop Header - Hidden on Mobile */}
+      {/* Modern Desktop Header */}
       <header className="bg-white shadow-sm border-b hidden md:block">
         <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">MeetingFlow</h1>
-              <p className="text-gray-600 mt-1">Your intelligent meeting management companion</p>
+          <div className="flex items-center justify-between">
+            {/* Logo Section */}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+                <span className="text-white text-xl font-bold">M</span>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">MeetingFlow</h1>
+                <p className="text-sm text-gray-500">Your intelligent meeting companion</p>
+              </div>
             </div>
-            <div className="flex items-center gap-4">
-              {/* Notion Sync Badge */}
-              {/* Data sync badge - will show n8n status when available */}
 
-              {/* Batch Export Button */}
-              <BatchExportButton
-                meetings={displayMeetings}
-                className="mr-3"
-              />
+            {/* Center - Universal Search */}
+            <div className="flex-1 max-w-md mx-8">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
+                <input
+                  type="text"
+                  placeholder="Search meetings, notes, people... ⌘K"
+                  onClick={() => setIsGlobalSearchOpen(true)}
+                  className="w-full pl-10 pr-4 py-2.5 bg-gray-50 hover:bg-gray-100 focus:bg-white border border-gray-200 rounded-xl transition-all focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
+                  readOnly
+                />
+              </div>
+            </div>
 
-              {/* Legacy Export Button */}
+            {/* Right Section */}
+            <div className="flex items-center gap-3">
+              {/* New Meeting CTA */}
+              <button
+                onClick={() => navigate('/meeting/new')}
+                className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-xl font-medium transition-all transform hover:scale-105 shadow-lg"
+              >
+                <Plus size={18} />
+                New Meeting
+              </button>
+
+
+              {/* User Menu */}
               <div className="relative">
                 <button
-                  onClick={() => setShowExportMenu(!showExportMenu)}
-                  disabled={isExporting}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  className="flex items-center gap-2 p-2.5 hover:bg-gray-100 rounded-xl transition-colors"
+                  title="Menu"
                 >
-                  <FileDown size={18} />
-                  Export (Legacy)
+                  <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                    <span className="text-white text-sm font-semibold">U</span>
+                  </div>
+                  <ChevronDown size={16} className="text-gray-500" />
                 </button>
-                {showExportMenu && (
-                  <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-lg shadow-lg border z-10">
-                    <div className="p-2 space-y-1">
-                      {exportManager.supportedFormats.map(format => (
-                        <button
-                          key={format}
-                          onClick={() => handleExportAllMeetings(format)}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 rounded"
-                        >
-                          Export as {format.toUpperCase()}
-                        </button>
-                      ))}
+
+                {/* User Menu Dropdown */}
+                {showUserMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-200 z-20 py-2">
+                    <div className="px-4 py-3 border-b border-gray-100">
+                      <p className="text-sm font-medium text-gray-900">Menu</p>
+                      <p className="text-xs text-gray-500">Manage your meetings and data</p>
+                    </div>
+
+                    <div className="py-1">
+                      <button
+                        onClick={() => {
+                          setShowMeetingManagement(true)
+                          setShowUserMenu(false)
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        <Edit2 size={16} />
+                        Manage Meetings
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setShowStakeholderManagement(true)
+                          setShowUserMenu(false)
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        <Users size={16} />
+                        Manage Stakeholders
+                      </button>
+
+                      <div className="relative">
+                        <BatchExportButton
+                          meetings={displayMeetings}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                          variant="menu"
+                        />
+                      </div>
+
+                      <div className="border-t border-gray-100 my-1"></div>
+
+                      <button
+                        onClick={() => {
+                          navigate('/settings')
+                          setShowUserMenu(false)
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        <Settings size={16} />
+                        Settings
+                      </button>
                     </div>
                   </div>
                 )}
               </div>
-
-              {/* Global Search Button */}
-              <button
-                onClick={() => setIsGlobalSearchOpen(true)}
-                className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-sm sm:text-base"
-                title="Search (Ctrl+K)"
-              >
-                <Search size={16} className="sm:w-[18px] sm:h-[18px]" />
-                <span className="hidden lg:inline">Search</span>
-              </button>
-
-              {/* Manage Meetings Button */}
-              <button
-                onClick={() => setShowMeetingManagement(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                title="Manage Meetings"
-              >
-                <Edit2 size={18} />
-                <span className="hidden lg:inline">Manage Meetings</span>
-              </button>
-
-              {/* Manage Stakeholders Button */}
-              <button
-                onClick={() => setShowStakeholderManagement(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                title="Manage Stakeholders"
-              >
-                <Users size={18} />
-                <span className="hidden lg:inline">Manage Stakeholders</span>
-              </button>
-
-              {/* Settings Button */}
-              <button
-                onClick={() => navigate('/settings')}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                title="Settings"
-              >
-                <Settings size={18} />
-                <span className="hidden lg:inline">Settings</span>
-              </button>
-
-              {/* Notion Sync Status */}
-              {/* Data integration status - n8n integration available in Settings */}
-
-              {/* Notifications Button */}
-              <button
-                onClick={() => setIsNotificationCenterOpen(true)}
-                className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Notifications (Ctrl+N)"
-              >
-                {notifications.some(n => n.priority === 'high' && !n.read) ? (
-                  <BellDot className="text-red-600 w-5 h-5 sm:w-6 sm:h-6" />
-                ) : (
-                  <Bell className="text-gray-600 w-5 h-5 sm:w-6 sm:h-6" />
-                )}
-                {notifications.filter(n => !n.read).length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center text-xs">
-                    {notifications.filter(n => !n.read).length}
-                  </span>
-                )}
-              </button>
             </div>
-          </div>
-          
-          {/* Search Bar */}
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-              <input
-                type="text"
-                placeholder="Search meetings, stakeholders... (Ctrl+K for advanced search)"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onFocus={() => setIsGlobalSearchOpen(true)}
-                className="w-full pl-10 pr-4 py-2 sm:py-3 text-sm sm:text-base border border-gray-300 rounded-lg focus:border-blue-500"
-              />
-            </div>
-            <button
-              onClick={handleNewMeeting}
-              className="flex items-center justify-center gap-2 px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base whitespace-nowrap"
-            >
-              <Plus size={18} className="sm:w-5 sm:h-5" />
-              New Meeting
-            </button>
           </div>
         </div>
       </header>
 
       {/* Mobile Content with Pull-to-Refresh */}
-      <main className="max-w-7xl mx-auto">
+      <main className="w-full bg-gray-50">
+        <div className="max-w-7xl mx-auto">
         <PullToRefresh onRefresh={handleMobileRefresh}>
-          <div className="px-4 py-4 md:py-8 space-y-6">
+          <div className="px-4 py-4 md:py-8 space-y-6 min-h-screen">
             {/* Mobile New Meeting Button */}
             <div className="md:hidden">
               <TouchButton
@@ -650,212 +861,7 @@ export default function Home() {
               </TouchButton>
             </div>
 
-            {/* AI Insights Banner */}
-            {aiInsights.length > 0 && (activeView === 'overview' || window.innerWidth >= 768) && (
-              <div className="mb-6">
-                <div className="bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg p-4 md:p-6 text-white">
-                  <div className="flex items-start gap-3 md:gap-4">
-                    <Sparkles size={20} className="md:w-6 md:h-6 flex-shrink-0 mt-1" />
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-base md:text-lg font-semibold mb-2">AI Insights</h3>
-                      <div className="space-y-2">
-                        {aiInsights.slice(0, 2).map((insight, index) => (
-                          <div key={index} className="flex items-start gap-2 md:gap-3 bg-white/10 rounded-lg p-2 md:p-3">
-                            {insight.type === 'urgent' && <AlertTriangle size={14} className="md:w-4 md:h-4 mt-0.5 text-yellow-300" />}
-                            {insight.type === 'warning' && <Info size={14} className="md:w-4 md:h-4 mt-0.5 text-blue-300" />}
-                            {insight.type === 'info' && <CheckCircle size={14} className="md:w-4 md:h-4 mt-0.5 text-green-300" />}
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium">{insight.title}</p>
-                              <p className="text-xs md:text-sm opacity-90 line-clamp-2">{insight.message}</p>
-                              <button className="text-xs underline mt-1 hover:no-underline touch-target">
-                                {insight.action}
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Dashboard Cards - Overview Tab or Desktop */}
-            {(activeView === 'overview' || window.innerWidth >= 768) && (
-              <ResponsiveGrid minItemWidth="240px" className="mb-6">
-                {[
-                  {
-                    title: "Today's Meetings",
-                    value: todaysMeetings.length,
-                    icon: <Calendar className="text-blue-600" size={24} />,
-                    details: todaysMeetings.slice(0, 2).map(meeting => 
-                      `${meeting.title || 'Untitled'} • ${format(new Date(meeting.scheduledAt), 'h:mm a')}`
-                    ),
-                    moreText: todaysMeetings.length > 2 ? `+${todaysMeetings.length - 2} more` : null
-                  },
-                  {
-                    title: "Action Items",
-                    value: pendingActionItems.length,
-                    icon: <Target className="text-orange-600" size={24} />,
-                    details: [
-                      `Overdue: ${overdueActionItems.length}`,
-                      `Due Soon: ${pendingActionItems.filter(item => {
-                        const dueDate = new Date(item.dueDate)
-                        const today = new Date()
-                        const daysDiff = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24))
-                        return daysDiff >= 0 && daysDiff <= 3
-                      }).length}`
-                    ]
-                  },
-                  {
-                    title: "This Week",
-                    value: weeklyMeetings.length,
-                    icon: <TrendingUp className="text-green-600" size={24} />,
-                    details: [
-                      `Completed: ${weeklyMeetings.filter(m => m.status === 'completed').length}`,
-                      `Upcoming: ${weeklyMeetings.filter(m => m.status === 'upcoming').length}`
-                    ]
-                  },
-                  {
-                    title: "Stakeholder Health",
-                    value: displayStakeholders.length,
-                    icon: <Activity className="text-purple-600" size={24} />,
-                    details: [
-                      `Excellent: ${stakeholderHealth.excellent}`,
-                      `Good: ${stakeholderHealth.good}`,
-                      `Needs Attention: ${stakeholderHealth.needsAttention}`
-                    ]
-                  }
-                ].map((card, index) => (
-                  <MobileExpandableCard
-                    key={index}
-                    title={card.title}
-                    subtitle={
-                      <div className="flex items-center gap-2 mt-2">
-                        {card.icon}
-                        <span className="text-2xl font-bold text-gray-900">{card.value}</span>
-                      </div>
-                    }
-                    defaultExpanded={false}
-                  >
-                    <div className="pt-3 space-y-1">
-                      {card.details.map((detail, i) => (
-                        <div key={i} className="text-sm text-gray-600">
-                          {detail}
-                        </div>
-                      ))}
-                      {card.moreText && (
-                        <p className="text-xs text-gray-500">{card.moreText}</p>
-                      )}
-                    </div>
-                  </MobileExpandableCard>
-                ))}
-              </ResponsiveGrid>
-            )}
-
-            {/* Desktop Dashboard - Hidden on Mobile */}
-            <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {/* Today's Meetings */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Today's Meetings</p>
-                <p className="text-2xl font-bold text-gray-900">{todaysMeetings.length}</p>
-              </div>
-              <Calendar className="text-blue-600" size={28} />
-            </div>
-            <div className="space-y-2">
-              {todaysMeetings.slice(0, 2).map(meeting => (
-                <div key={meeting.id} className="text-sm text-gray-600 truncate">
-                  {meeting.title || 'Untitled'} • {format(new Date(meeting.scheduledAt), 'h:mm a')}
-                </div>
-              ))}
-              {todaysMeetings.length > 2 && (
-                <p className="text-xs text-gray-500">+{todaysMeetings.length - 2} more</p>
-              )}
-            </div>
-          </div>
-
-          {/* Action Items */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Action Items</p>
-                <p className="text-2xl font-bold text-gray-900">{pendingActionItems.length}</p>
-              </div>
-              <Target className="text-orange-600" size={28} />
-            </div>
-            <div className="space-y-1">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Overdue</span>
-                <span className="text-red-600 font-medium">{overdueActionItems.length}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Due Soon</span>
-                <span className="text-yellow-600 font-medium">
-                  {pendingActionItems.filter(item => {
-                    const dueDate = new Date(item.dueDate)
-                    const today = new Date()
-                    const daysDiff = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24))
-                    return daysDiff >= 0 && daysDiff <= 3
-                  }).length}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Weekly Stats */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <p className="text-sm font-medium text-gray-600">This Week</p>
-                <p className="text-2xl font-bold text-gray-900">{weeklyMeetings.length}</p>
-              </div>
-              <TrendingUp className="text-green-600" size={28} />
-            </div>
-            <div className="space-y-1">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Completed</span>
-                <span className="text-green-600 font-medium">
-                  {weeklyMeetings.filter(m => m.status === 'completed').length}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Upcoming</span>
-                <span className="text-blue-600 font-medium">
-                  {weeklyMeetings.filter(m => m.status === 'upcoming').length}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Stakeholder Health */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Stakeholder Health</p>
-                <p className="text-2xl font-bold text-gray-900">{displayStakeholders.length}</p>
-              </div>
-              <Activity className="text-purple-600" size={28} />
-            </div>
-            <div className="space-y-1">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Excellent</span>
-                <span className="text-green-600 font-medium">{stakeholderHealth.excellent}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Good</span>
-                <span className="text-blue-600 font-medium">{stakeholderHealth.good}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Needs Attention</span>
-                <span className="text-red-600 font-medium">{stakeholderHealth.needsAttention}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Export Progress */}
+            {/* Export Progress */}
         {exportProgress && (
           <div className="mb-6">
             <div className={`p-4 rounded-lg ${exportProgress.status === 'error' ? 'bg-red-50 text-red-800' : 'bg-blue-50 text-blue-800'}`}>
@@ -865,6 +871,139 @@ export default function Home() {
                 )}
                 <span className="font-medium">{exportProgress.message}</span>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Stakeholder Filter Section */}
+        {(activeView === 'meetings' || window.innerWidth >= 768) && (
+          <div className="mb-6 bg-white rounded-lg shadow-sm border p-4">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Filter Meetings</h3>
+            <div className="flex flex-col md:flex-row gap-4">
+              {/* Stakeholder Filter */}
+              <div className="flex-1 relative">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Stakeholder</label>
+                <div className="relative">
+                  <div
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer bg-white flex items-center justify-between"
+                    onClick={() => setShowStakeholderDropdown(!showStakeholderDropdown)}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Users size={16} className="text-gray-400" />
+                      {selectedStakeholder ? (
+                        displayStakeholders.find(s => s.id === selectedStakeholder)?.name || 'Unknown Stakeholder'
+                      ) : (
+                        'All Stakeholders'
+                      )}
+                    </span>
+                    <ChevronDown size={16} className={`text-gray-400 transition-transform ${
+                      showStakeholderDropdown ? 'rotate-180' : ''
+                    }`} />
+                  </div>
+
+                  {showStakeholderDropdown && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-10 max-h-64 overflow-hidden">
+                      {/* Search Input */}
+                      <div className="p-3 border-b border-gray-200">
+                        <div className="relative">
+                          <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                          <input
+                            type="text"
+                            placeholder="Search stakeholders..."
+                            value={stakeholderSearchTerm}
+                            onChange={(e) => setStakeholderSearchTerm(e.target.value)}
+                            className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Dropdown Options */}
+                      <div className="max-h-48 overflow-y-auto">
+                        {/* All Stakeholders Option */}
+                        <div
+                          className={`px-3 py-2 cursor-pointer hover:bg-gray-50 flex items-center gap-2 ${
+                            !selectedStakeholder ? 'bg-blue-50 text-blue-600' : 'text-gray-700'
+                          }`}
+                          onClick={() => {
+                            setSelectedStakeholder('')
+                            setShowStakeholderDropdown(false)
+                            setStakeholderSearchTerm('')
+                          }}
+                        >
+                          <Users size={16} />
+                          <span className="font-medium">All Stakeholders</span>
+                          {!selectedStakeholder && (
+                            <CheckCircle size={16} className="ml-auto text-blue-600" />
+                          )}
+                        </div>
+
+                        {filteredStakeholdersForDropdown.length > 0 ? (
+                          filteredStakeholdersForDropdown.map(stakeholder => {
+                            const categoryInfo = stakeholderCategories.find(cat => cat.key === stakeholder.category)
+                            return (
+                              <div
+                                key={stakeholder.id}
+                                className={`px-3 py-2 cursor-pointer hover:bg-gray-50 flex items-center gap-2 ${
+                                  selectedStakeholder === stakeholder.id ? 'bg-blue-50 text-blue-600' : 'text-gray-700'
+                                }`}
+                                onClick={() => {
+                                  setSelectedStakeholder(stakeholder.id)
+                                  setShowStakeholderDropdown(false)
+                                  setStakeholderSearchTerm('')
+                                }}
+                              >
+                                <div className={`w-3 h-3 rounded-full bg-${categoryInfo?.color || 'gray'}-500`}></div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium truncate">{stakeholder.name}</div>
+                                  <div className="text-xs text-gray-500">
+                                    {categoryInfo?.label || stakeholder.category || 'Uncategorized'}
+                                  </div>
+                                </div>
+                                {selectedStakeholder === stakeholder.id && (
+                                  <CheckCircle size={16} className="text-blue-600" />
+                                )}
+                              </div>
+                            )
+                          })
+                        ) : (
+                          <div className="px-3 py-4 text-center text-gray-500 text-sm">
+                            No stakeholders found
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Clear Filters */}
+              {selectedStakeholder && (
+                <div className="flex items-end">
+                  <button
+                    onClick={() => {
+                      setSelectedStakeholder('')
+                      setStakeholderSearchTerm('')
+                    }}
+                    className="px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <XCircle size={16} />
+                    Clear Filter
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Filter Results Summary */}
+            <div className="mt-3 text-sm text-gray-600">
+              {selectedStakeholder ? (
+                <span>
+                  Showing {filteredMeetings.length} meeting{filteredMeetings.length !== 1 ? 's' : ''} for{' '}
+                  <strong>{displayStakeholders.find(s => s.id === selectedStakeholder)?.name}</strong>
+                </span>
+              ) : (
+                <span>Showing all {filteredMeetings.length} meeting{filteredMeetings.length !== 1 ? 's' : ''}</span>
+              )}
             </div>
           </div>
         )}
@@ -906,55 +1045,110 @@ export default function Home() {
                   </div>
                 </div>
 
-                <h2 className="text-lg md:text-xl font-semibold text-gray-900 mb-4">Recent Meetings</h2>
-                <ResponsiveGrid minItemWidth="280px">
-                  {sortedMeetings.slice(0, window.innerWidth < 768 ? 4 : 6).map(meeting => {
-                    const sentiment = meetingSentiments[meeting.id]
-                    return (
-                      <MobileExpandableCard
-                        key={meeting.id}
-                        title={meeting.title || 'Untitled Meeting'}
-                        subtitle={
-                          <div className="flex items-center justify-between mt-2">
-                            <div className="flex items-center gap-2 text-xs text-gray-500">
-                              {meeting.scheduledAt && (
-                                <>
-                                  <Clock size={12} />
-                                  {format(new Date(meeting.scheduledAt), 'MMM d, yyyy')}
-                                </>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1">
-                              {sentiment && (
-                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                  sentiment.overall === 'positive' ? 'bg-green-100 text-green-800' :
-                                  sentiment.overall === 'negative' ? 'bg-red-100 text-red-800' :
-                                  'bg-gray-100 text-gray-800'
-                                }`}>
-                                  {sentiment.overall === 'positive' ? '😊' : sentiment.overall === 'negative' ? '😟' : '😐'}
-                                </span>
-                              )}
-                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                meeting.priority === 'high' ? 'bg-red-100 text-red-800' :
-                                meeting.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                                'bg-green-100 text-green-800'
-                              }`}>
-                                {meeting.priority || 'low'}
-                              </span>
-                            </div>
-                          </div>
-                        }
-                        actions={
-                          <TouchButton
-                            onClick={() => handleStartMeeting(meeting)}
-                            variant="ghost"
-                            size="small"
-                          >
-                            Open
-                          </TouchButton>
-                        }
-                        defaultExpanded={false}
+                {/* Header with Bulk Actions */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-4">
+                    <h2 className="text-lg md:text-xl font-semibold text-gray-900">All Meetings</h2>
+                    {sortedMeetings.length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedMeetings.size === sortedMeetings.length && sortedMeetings.length > 0}
+                          onChange={(e) => handleSelectAllMeetings(e.target.checked)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <label className="text-sm text-gray-600">
+                          Select all ({sortedMeetings.length})
+                        </label>
+                      </div>
+                    )}
+                  </div>
+
+                  {selectedMeetings.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-600">
+                        {selectedMeetings.size} selected
+                      </span>
+                      <button
+                        onClick={handleBulkDelete}
+                        className="flex items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                       >
+                        <Trash2 size={16} />
+                        Delete Selected
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <ResponsiveGrid minItemWidth="280px">
+                  {sortedMeetings.map((meeting, index) => {
+                    const sentiment = meetingSentiments[meeting.id]
+                    const isSelected = selectedMeetings.has(meeting.id)
+                    return (
+                      <div
+                        key={`${meeting.id}-${index}`}
+                        onClick={(e) => {
+                          // Don't navigate if clicking on checkbox or its label
+                          if (e.target.type === 'checkbox' || e.target.closest('input[type="checkbox"]')) {
+                            e.stopPropagation()
+                            return
+                          }
+                          console.log('🖡️ CLICK EVENT DETAILS:')
+                          console.log('- Meeting object:', meeting)
+                          console.log('- Meeting ID:', meeting.id)
+                          console.log('- Meeting title:', meeting.title)
+                          console.log('- Meeting index in sortedMeetings:', sortedMeetings.findIndex(m => m.id === meeting.id))
+                          console.log('- Original meeting from displayMeetings:', displayMeetings.find(m => m.id === meeting.id))
+                          handleStartMeeting(meeting)
+                        }}
+                        className={`cursor-pointer hover:shadow-lg transition-shadow ${isSelected ? 'ring-2 ring-blue-500 bg-blue-50' : ''}`}
+                      >
+                        <MobileExpandableCard
+                          title={
+                            <div className="flex items-center gap-3">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  e.stopPropagation()
+                                  handleSelectMeeting(meeting.id, e.target.checked)
+                                }}
+                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              />
+                              <span>{meeting.title || 'Untitled Meeting'}</span>
+                            </div>
+                          }
+                          subtitle={
+                            <div className="flex items-center justify-between mt-2">
+                              <div className="flex items-center gap-2 text-xs text-gray-500">
+                                {meeting.scheduledAt && (
+                                  <>
+                                    <Clock size={12} />
+                                    {format(new Date(meeting.scheduledAt), 'MMM d, yyyy')}
+                                  </>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                {sentiment && (
+                                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                    sentiment.overall === 'positive' ? 'bg-green-100 text-green-800' :
+                                    sentiment.overall === 'negative' ? 'bg-red-100 text-red-800' :
+                                    'bg-gray-100 text-gray-800'
+                                  }`}>
+                                    {sentiment.overall === 'positive' ? '😊' : sentiment.overall === 'negative' ? '😟' : '😐'}
+                                  </span>
+                                )}
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                  meeting.priority === 'high' ? 'bg-red-100 text-red-800' :
+                                  meeting.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-green-100 text-green-800'
+                                }`}>
+                                  {meeting.priority || 'low'}
+                                </span>
+                              </div>
+                            </div>
+                          }
+                          defaultExpanded={false}
+                        >
                         <div className="pt-3 space-y-3">
                           {meeting.description && (
                             <p className="text-sm text-gray-600 line-clamp-3">{meeting.description}</p>
@@ -974,28 +1168,10 @@ export default function Home() {
                                 <span>{meeting.attendees.length} attendees</span>
                               </div>
                             )}
-                            <div className="flex items-center gap-2">
-                              <ExportOptionsButton
-                                meetingData={meeting}
-                                onSuccess={(result) => {
-                                  console.log('Meeting exported:', result)
-                                }}
-                                onError={(error) => {
-                                  console.error('Export failed:', error)
-                                }}
-                                className="px-2 py-1 text-xs"
-                              />
-                              <TouchButton
-                                onClick={() => handleStartMeeting(meeting)}
-                                variant="primary"
-                                size="small"
-                              >
-                                View Meeting
-                              </TouchButton>
-                            </div>
                           </div>
                         </div>
                       </MobileExpandableCard>
+                    </div>
                     )
                   })}
                 </ResponsiveGrid>
@@ -1021,6 +1197,7 @@ export default function Home() {
             )}
           </div>
         </PullToRefresh>
+        </div>
       </main>
 
       {/* Global Search Modal */}
@@ -1233,21 +1410,22 @@ export default function Home() {
 
       {/* Stakeholder Management Modal */}
       {showStakeholderManagement && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-hidden">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 pt-6 pb-6 overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[calc(100vh-3rem)] overflow-hidden flex flex-col my-6">
             {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b">
+            <div className="flex items-center justify-between p-6 border-b flex-shrink-0">
               <h2 className="text-xl font-semibold text-gray-900">Manage Stakeholders</h2>
               <button
                 onClick={() => setShowStakeholderManagement(false)}
-                className="text-gray-500 hover:text-gray-700"
+                className="p-3 text-gray-700 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border-2 border-gray-300 hover:border-red-300 bg-white shadow-sm"
+                title="Close Modal"
               >
                 <X size={24} />
               </button>
             </div>
 
             {/* Tabs */}
-            <div className="flex border-b">
+            <div className="flex border-b flex-shrink-0 bg-gray-50">
               <button
                 onClick={() => setActiveStakeholderTab('stakeholders')}
                 className={`px-6 py-3 font-medium transition-colors ${
@@ -1271,7 +1449,7 @@ export default function Home() {
             </div>
 
             {/* Modal Content */}
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-180px)]">
+            <div className="p-6 overflow-y-auto flex-1">
               {activeStakeholderTab === 'stakeholders' && (
                 <>
                   {/* Add New Stakeholder Button */}
@@ -1435,6 +1613,47 @@ export default function Home() {
                   </div>
                 ) : (
                   <div className="space-y-4">
+                    {/* Bulk Selection Controls */}
+                    <div className="flex items-center justify-between bg-gray-50 p-4 rounded-lg border">
+                      <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedStakeholders.size === stakeholders.length && stakeholders.length > 0}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedStakeholders(new Set(stakeholders.map(s => s.id)))
+                              } else {
+                                setSelectedStakeholders(new Set())
+                              }
+                            }}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          />
+                          <span className="text-sm font-medium text-gray-700">
+                            Select All ({selectedStakeholders.size} of {stakeholders.length} selected)
+                          </span>
+                        </label>
+                      </div>
+
+                      {selectedStakeholders.size > 0 && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setShowBulkStakeholderActions(true)}
+                            className="flex items-center gap-2 px-3 py-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                          >
+                            <Edit2 size={16} />
+                            Assign Category
+                          </button>
+                          <button
+                            onClick={handleBulkDeleteStakeholders}
+                            className="flex items-center gap-2 px-3 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+                          >
+                            <Trash2 size={16} />
+                            Delete Selected
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     {stakeholders.map(stakeholder => {
                       const categoryInfo = stakeholderCategories.find(cat => cat.key === stakeholder.category)
                       return (
@@ -1484,8 +1703,26 @@ export default function Home() {
                             </div>
                           ) : (
                             /* View Mode */
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
+                            <div className="flex items-start gap-4">
+                              {/* Checkbox for bulk selection */}
+                              <div className="flex items-center pt-1">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedStakeholders.has(stakeholder.id)}
+                                  onChange={(e) => {
+                                    const newSelection = new Set(selectedStakeholders)
+                                    if (e.target.checked) {
+                                      newSelection.add(stakeholder.id)
+                                    } else {
+                                      newSelection.delete(stakeholder.id)
+                                    }
+                                    setSelectedStakeholders(newSelection)
+                                  }}
+                                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                />
+                              </div>
+
+                              <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-3 mb-2">
                                   <h3 className="text-lg font-medium text-gray-900">
                                     {stakeholder.name}
@@ -1711,6 +1948,130 @@ export default function Home() {
                   className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
                 >
                   Delete Meeting
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {showBulkDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-shrink-0 w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                  <Trash2 className="text-red-600" size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900">Delete Multiple Meetings</h3>
+                  <p className="text-sm text-gray-600">
+                    Are you sure you want to delete {selectedMeetings.size} meeting{selectedMeetings.size !== 1 ? 's' : ''}? This action cannot be undone.
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={cancelBulkDelete}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmBulkDelete}
+                  className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                >
+                  Delete {selectedMeetings.size} Meeting{selectedMeetings.size !== 1 ? 's' : ''}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Stakeholder Category Assignment Modal */}
+      {showBulkStakeholderActions && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-shrink-0 w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                  <Edit2 className="text-blue-600" size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900">Assign Category</h3>
+                  <p className="text-sm text-gray-600">
+                    Select a category to assign to {selectedStakeholders.size} stakeholder{selectedStakeholders.size !== 1 ? 's' : ''}.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
+                <select
+                  value={bulkCategoryAssignment}
+                  onChange={(e) => setBulkCategoryAssignment(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Select a category</option>
+                  {stakeholderCategories.map(cat => (
+                    <option key={cat.key} value={cat.key}>{cat.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setShowBulkStakeholderActions(false)
+                    setBulkCategoryAssignment('')
+                  }}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleBulkAssignCategory}
+                  disabled={!bulkCategoryAssignment}
+                  className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 rounded-lg transition-colors"
+                >
+                  Assign Category
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Stakeholder Delete Confirmation Modal */}
+      {showBulkStakeholderDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-shrink-0 w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                  <Trash2 className="text-red-600" size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900">Delete Multiple Stakeholders</h3>
+                  <p className="text-sm text-gray-600">
+                    Are you sure you want to delete {selectedStakeholders.size} stakeholder{selectedStakeholders.size !== 1 ? 's' : ''}? This action cannot be undone.
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowBulkStakeholderDeleteConfirm(false)}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmBulkDeleteStakeholders}
+                  className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                >
+                  Delete {selectedStakeholders.size} Stakeholder{selectedStakeholders.size !== 1 ? 's' : ''}
                 </button>
               </div>
             </div>

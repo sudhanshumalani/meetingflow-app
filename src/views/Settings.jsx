@@ -11,7 +11,7 @@ import {
   Workflow
 } from 'lucide-react'
 import { setOCRApiKey, getOCRCapabilities } from '../utils/ocrService'
-import { setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
+import { setClaudeApiKey as updateClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
 import N8nSettings from '../components/N8nSettings'
 
 export default function Settings() {
@@ -57,17 +57,31 @@ export default function Settings() {
   }
 
   const handleSaveClaudeKey = () => {
+    console.log('🚨🚨🚨 SETTINGS: handleSaveClaudeKey CALLED 🚨🚨🚨')
+    console.log('🔧 SETTINGS: Saving Claude API key:', {
+      hasKey: !!claudeApiKey,
+      keyLength: claudeApiKey?.length || 0,
+      keyPreview: claudeApiKey ? claudeApiKey.substring(0, 10) + '...' : 'none'
+    })
+
     localStorage.setItem('claudeApiKey', claudeApiKey)
-    setClaudeApiKey(claudeApiKey)
+    console.log('✅ SETTINGS: Saved to localStorage')
+
+    updateClaudeApiKey(claudeApiKey)
+    console.log('✅ SETTINGS: Called updateClaudeApiKey service')
+
     setCapabilities(getCapabilities())
+    console.log('✅ SETTINGS: Updated capabilities')
+
     setClaudeKeySaved(true)
     setTimeout(() => setClaudeKeySaved(false), 3000)
+    console.log('✅ SETTINGS: handleSaveClaudeKey COMPLETE')
   }
 
   const handleClearClaudeKey = () => {
     setClaudeApiKey('')
     localStorage.removeItem('claudeApiKey')
-    setClaudeApiKey('')
+    updateClaudeApiKey('')
     setCapabilities(getCapabilities())
   }
 

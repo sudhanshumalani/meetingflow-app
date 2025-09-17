@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import { useApp } from '../contexts/AppContext'
+import { v4 as uuidv4 } from 'uuid'
 import {
   ArrowLeft,
   Save,
@@ -23,9 +24,10 @@ import {
   Target,
   Zap,
   Eye,
-  Edit3
+  Edit3,
+  Search,
+  XCircle
 } from 'lucide-react'
-import { format } from 'date-fns'
 import { mockStakeholders, getCategoryDisplayName, STAKEHOLDER_CATEGORIES } from '../utils/mockData'
 import { getTemplateForCategory, getColorClasses, PRIORITY_LEVELS } from '../utils/meetingTemplates'
 import { extractTextFromImage, setOCRApiKey, setClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
@@ -49,6 +51,15 @@ import { useAIAnalysis } from '../hooks/useAIAnalysis'
 import { ExportOptionsButton } from '../components/ExportOptions'
 import AudioRecorder from '../components/AudioRecorder'
 
+// Constants for better maintainability
+const CHAR_LIMITS = {
+  TITLE_WARNING: 20,
+  TITLE_MAX: 50,
+  NOTES_WARNING: 100
+}
+
+const SAVE_CONFIRMATION_TIMEOUT = 3000
+
 export default function Meeting() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -56,6 +67,7 @@ export default function Meeting() {
     meetings,
     stakeholders,
     currentMeeting,
+    addMeeting,
     updateMeeting,
     setCurrentMeeting
   } = useApp()
@@ -98,19 +110,23 @@ export default function Meeting() {
   
   // Audio transcription state
   const [audioTranscript, setAudioTranscript] = useState('')
-  const [isRecordingMode, setIsRecordingMode] = useState(false)
 
   // AI processing state
   const [isSaving, setIsSaving] = useState(false)
-  // Removed: Old AI processing state - now using Claude AI analysis display
-  // const [aiProcessingResult, setAiProcessingResult] = useState(null)
+  // Removed complex ID caching - will generate fresh IDs based on URL
 
-  // Export functionality moved to n8n integration
+  // Stakeholder dropdown states
+  const [stakeholderSearchTerm, setStakeholderSearchTerm] = useState('')
+  const [showStakeholderDropdown, setShowStakeholderDropdown] = useState(false)
+
+  // Save confirmation state
+  const [showSaveConfirmation, setShowSaveConfirmation] = useState(false)
+  // AI processing state (uses Claude AI analysis hook)
   const [isAIProcessing, setIsAIProcessing] = useState(false)
-  // const [aiProcessingStage, setAiProcessingStage] = useState('')
-  // const [aiInsights, setAiInsights] = useState(null)
-  // const [aiNotifications, setAiNotifications] = useState([])
   const [aiMode, setAiMode] = useState('auto') // 'auto', 'manual', 'off'
+
+  // Track if we're currently restoring a meeting to prevent unwanted AI analysis
+  const [isRestoringMeeting, setIsRestoringMeeting] = useState(false)
 
   // Enhanced AI Analysis Hook
   const {
@@ -122,6 +138,7 @@ export default function Meeting() {
     cancel: cancelAnalysis,
     clear: clearAnalysis,
     exportResults,
+    setResult: setAiResult,
     hasResult,
     isStreaming,
     capabilities
@@ -130,6 +147,14 @@ export default function Meeting() {
 
   // Use real stakeholders from app context, fallback to mock data for demo
   const displayStakeholders = stakeholders.length > 0 ? stakeholders : mockStakeholders
+
+  // Filter stakeholders for dropdown
+  // Memoized stakeholder filtering for performance
+  const filteredStakeholdersForDropdown = useMemo(() =>
+    displayStakeholders.filter(stakeholder =>
+      stakeholder.name.toLowerCase().includes(stakeholderSearchTerm.toLowerCase())
+    ), [displayStakeholders, stakeholderSearchTerm]
+  )
 
   // Cleanup object URLs when component unmounts
   useEffect(() => {
@@ -141,35 +166,174 @@ export default function Meeting() {
   }, [uploadedImageUrls])
 
   useEffect(() => {
-    const meeting = meetings.find(m => m.id === id)
+    console.log('🔄 useEffect triggered for ID:', id, 'Run count:', Math.random())
+    console.log('📝 Meeting component loading with ID:', id)
+    console.log('📝 Available meetings count:', meetings.length)
+    console.log('📝 CurrentMeeting ID:', currentMeeting?.id)
+
+    // Only run this effect when ID changes or when meetings array is first loaded
+    if (!id || id === 'new') {
+      console.log('📝 New meeting mode - no restoration needed')
+      return
+    }
+
+    // Find meeting from currentMeeting or fallback to meetings array
+    const meeting = (currentMeeting && currentMeeting.id === id)
+      ? currentMeeting
+      : meetings.find(m => m.id === id) || null
+    console.log('📝 Found meeting:', meeting ? {id: meeting.id, title: meeting.title} : 'NOT FOUND')
+
     if (meeting) {
+      console.log('🔍 DEBUG: Loading meeting data:', {
+        digitalNotes: meeting.digitalNotes,
+        aiResult: meeting.aiResult,
+        notes: meeting.notes,
+        originalInputs: meeting.originalInputs,
+        audioTranscript: meeting.audioTranscript
+      })
+
       setCurrentMeeting(meeting)
-      // Only set initial values if not already set
-      setFormData(prev => {
-        // If title is already set (user typed something), don't overwrite
-        if (prev.title && prev.title !== '') {
-          return prev
-        }
-        return {
-          title: meeting.title || '',
-          selectedStakeholder: meeting.stakeholderIds?.[0] || '',
-          date: meeting.scheduledAt ? meeting.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
-          priority: meeting.priority || 'medium',
-          template: meeting.template || null
-        }
+
+      // Set form data
+      setFormData({
+        title: meeting.title || '',
+        selectedStakeholder: meeting.stakeholderIds?.[0] || '',
+        date: meeting.scheduledAt ? meeting.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
+        priority: meeting.priority || 'medium',
+        template: meeting.template || null
       })
 
       // Load existing notes if any
       if (meeting.digitalNotes && Object.values(meeting.digitalNotes).some(v => v)) {
+        console.log('🔄 LOADING: Restoring digital notes:', meeting.digitalNotes)
         setDigitalNotes(meeting.digitalNotes)
       }
 
-      // Load existing audio transcript if any
-      if (meeting.audioTranscript) {
-        setAudioTranscript(meeting.audioTranscript)
+      // Load existing AI result if any
+      if (meeting.aiResult) {
+        console.log('🔄 LOADING: Restoring AI result:', meeting.aiResult)
+        setAiResult(meeting.aiResult)
       }
+
+      // Load original input sources if any - this is the critical part
+      if (meeting.originalInputs) {
+        console.log('🔄 LOADING: Restoring original inputs:', meeting.originalInputs)
+
+        // Set restoration flag to prevent unwanted AI analysis during restoration
+        setIsRestoringMeeting(true)
+
+        // Use setTimeout to ensure state updates are batched properly
+        setTimeout(() => {
+          let restoredContentType = null
+          let hasManualText = false
+          let hasOcrResults = false
+          let hasAudioTranscript = false
+
+          // Restore all content types first
+
+          // Restore manual text (copy-pasted notes)
+          if (meeting.originalInputs.manualText) {
+            console.log('📝 RESTORING manual text:', meeting.originalInputs.manualText.substring(0, 100) + '...')
+            setManualText(meeting.originalInputs.manualText)
+            setShowManualInput(true) // Show the manual input section
+            hasManualText = true
+            console.log('✅ Manual text restored and section shown')
+          }
+
+          // Restore OCR results and extracted text
+          if (meeting.originalInputs.ocrResults) {
+            console.log('📝 RESTORING OCR results:', meeting.originalInputs.ocrResults)
+            setOcrResult(meeting.originalInputs.ocrResults)
+            if (meeting.originalInputs.extractedText) {
+              console.log('📝 RESTORING extracted text:', meeting.originalInputs.extractedText.substring(0, 100) + '...')
+              setExtractedText(meeting.originalInputs.extractedText)
+            }
+            hasOcrResults = true
+            console.log('✅ OCR data restored')
+          }
+
+          // Restore audio transcript from originalInputs (this takes precedence)
+          if (meeting.originalInputs.audioTranscript) {
+            console.log('📝 RESTORING audio transcript from originalInputs:', meeting.originalInputs.audioTranscript.substring(0, 100) + '...')
+            setAudioTranscript(meeting.originalInputs.audioTranscript)
+            hasAudioTranscript = true
+            console.log('✅ Audio transcript restored from originalInputs')
+          } else if (meeting.audioTranscript) {
+            // Fallback to top-level audioTranscript
+            console.log('📝 RESTORING audio transcript from meeting:', meeting.audioTranscript.substring(0, 100) + '...')
+            setAudioTranscript(meeting.audioTranscript)
+            hasAudioTranscript = true
+            console.log('✅ Audio transcript restored from meeting')
+          }
+
+          // Determine which mode to switch to (priority: manual text > OCR > audio)
+          if (hasManualText) {
+            restoredContentType = 'digital'
+            console.log('🎯 PRIORITY: Manual text found - switching to digital mode')
+          } else if (hasOcrResults) {
+            restoredContentType = 'photo'
+            console.log('🎯 PRIORITY: OCR results found - switching to photo mode')
+          } else if (hasAudioTranscript) {
+            restoredContentType = 'audio'
+            console.log('🎯 PRIORITY: Audio transcript found - switching to audio mode')
+          }
+
+          // Auto-switch to the appropriate mode to show the restored content
+          if (restoredContentType) {
+            console.log('🔄 AUTO-SWITCHING to mode:', restoredContentType, 'to show restored content')
+            setActiveMode(restoredContentType)
+          }
+
+          // Clear restoration flag after restoration is complete
+          setTimeout(() => {
+            console.log('🏁 Restoration complete - clearing restoration flag')
+            setIsRestoringMeeting(false)
+          }, 200)
+        }, 0)
+
+      } else {
+        // Clear all input states when loading a meeting without original inputs
+        setManualText('')
+        setShowManualInput(false)
+        setOcrResult(null)
+        setExtractedText('')
+
+        // Still check for top-level audioTranscript if no originalInputs
+        if (meeting.audioTranscript) {
+          console.log('🔄 LOADING: Restoring audio transcript (no originalInputs):', meeting.audioTranscript.substring(0, 100) + '...')
+          setAudioTranscript(meeting.audioTranscript)
+        } else {
+          setAudioTranscript('')
+        }
+
+        setUploadedFiles([])
+        setUploadedImageUrls([])
+      }
+
+      console.log('✅ Meeting loaded successfully:', meeting.title)
+    } else {
+      console.log('📝 No meeting found - this is a new meeting')
     }
-  }, [id, meetings, setCurrentMeeting])
+  }, [id]) // Only depend on ID to prevent excessive re-runs
+
+  // Debug: Check state after restoration (with delay to account for setTimeout)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      console.log('🔍 STATE CHECK - detailed debug:', {
+        ocrResult: ocrResult ? 'HAS DATA' : 'NULL',
+        extractedText: extractedText ? extractedText.substring(0, 50) + '...' : 'NULL',
+        manualText: manualText ? manualText.substring(0, 50) + '...' : 'NULL',
+        audioTranscript: audioTranscript ? audioTranscript.substring(0, 50) + '...' : 'NULL',
+        showManualInput,
+        activeMode,
+        manualTextLength: manualText?.length || 0,
+        shouldShowManualTextSection: !!manualText,
+        isRestoringMeeting
+      })
+    }, 100) // Check after setTimeout in restoration has had time to execute
+
+    return () => clearTimeout(timer)
+  }, [ocrResult, extractedText, manualText, audioTranscript, showManualInput, activeMode, isRestoringMeeting])
 
   // Update template when stakeholder changes
   useEffect(() => {
@@ -181,6 +345,18 @@ export default function Meeting() {
       }
     }
   }, [formData.selectedStakeholder, displayStakeholders])
+
+  // Close stakeholder dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showStakeholderDropdown && !event.target.closest('.stakeholder-dropdown-container')) {
+        setShowStakeholderDropdown(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showStakeholderDropdown])
 
   const handleInputChange = (field, value) => {
     console.log('Input change:', field, value)
@@ -196,11 +372,14 @@ export default function Meeting() {
   }
 
   // Enhanced Claude AI processing function
-  const handleAIAnalysis = async (text) => {
+  const handleAIAnalysis = async (text, options = {}) => {
     console.log('🚀 handleAIAnalysis CALLED with:', {
       hasText: !!text,
       textLength: text?.length,
-      textPreview: text?.substring(0, 50) + '...'
+      textPreview: text?.substring(0, 50) + '...',
+      isRestoration: options.isRestoration,
+      isRestoringMeetingFlag: isRestoringMeeting,
+      callStack: new Error().stack.split('\n')[2]?.trim()
     })
 
     if (!text?.trim()) {
@@ -270,8 +449,13 @@ export default function Meeting() {
 
         console.log('🔧 handleAIAnalysis: Updating digitalNotes with:', newNotes)
         setDigitalNotes(newNotes)
-        setManualText('') // Clear manual input
-        setShowManualInput(false) // Hide manual input
+
+        // Always preserve manual text - don't clear it after Claude analysis
+        // The original input should remain visible for reference
+        console.log('💾 Preserving manual input (after Claude analysis)')
+        // Note: We no longer clear setManualText('') or setShowManualInput(false)
+        // This ensures the original input remains visible in the "Your Original Notes" section
+
         setErrorMessage('')
 
         console.log('✅ Meeting notes populated from Claude AI successfully!')
@@ -372,8 +556,8 @@ export default function Meeting() {
 
           const text = result.text
 
-          // Process with Claude AI for intelligent analysis
-          if (text.length > 20) {
+          // Process with Claude AI for intelligent analysis (but NOT during restoration)
+          if (text.length > 20 && !isRestoringMeeting) {
             console.log('🧠 TRIGGERING Claude AI analysis...')
             console.log('🔧 About to call handleAIAnalysis with text:', text.substring(0, 50) + '...')
 
@@ -384,6 +568,8 @@ export default function Meeting() {
               console.error('❌ handleAIAnalysis failed:', error)
               setErrorMessage(`Claude AI failed: ${error.message}`)
             }
+          } else if (isRestoringMeeting) {
+            console.log('⏸️ SKIPPING Claude AI analysis - restoration mode active')
           } else {
             console.log('⚠️ Text too short for AI analysis:', text.length, 'characters')
           }
@@ -441,51 +627,30 @@ export default function Meeting() {
   
   
 
-  // AI Processing simulation (keeping for backward compatibility)
-  const simulateAIProcessing = async () => {
-    const processingSteps = [
-      { step: 'Analyzing meeting content...', delay: 1000 },
-      { step: 'Extracting key insights...', delay: 1500 },
-      { step: 'Generating action items...', delay: 1200 },
-      { step: 'Creating summary...', delay: 800 },
-      { step: 'Updating meeting records...', delay: 500 }
-    ]
 
-    for (const { step, delay } of processingSteps) {
-      setAiProcessingResult({ status: 'processing', message: step })
-      await new Promise(resolve => setTimeout(resolve, delay))
-    }
-
-    // Generate AI insights
-    const insights = {
-      keyTopics: ['Budget planning', 'Resource allocation', 'Timeline adjustments'],
-      actionItems: [
-        { text: 'Finalize Q4 budget proposal', assignee: 'Sarah Chen', priority: 'high' },
-        { text: 'Schedule team planning meeting', assignee: 'Marcus Johnson', priority: 'medium' },
-        { text: 'Update project timeline', assignee: 'Elena Rodriguez', priority: 'medium' }
-      ],
-      sentiment: 'positive',
-      nextMeetingRecommendation: 'Follow-up in 1 week to review action item progress'
-    }
-
-    setAiProcessingResult({ 
-      status: 'completed', 
-      insights,
-      message: 'Meeting processed successfully!' 
-    })
-  }
-
-  // Save functionality
-  const handleSave = async () => {
-    setIsSaving(true)
-    
-    try {
-      // Prepare meeting data
-      const meetingData = {
-        id: currentMeeting?.id || id,
+  // Extract meeting data builder for better performance
+  const buildMeetingData = useMemo(() => (meetingId) => ({
+        id: meetingId,
         ...formData,
         digitalNotes,
         audioTranscript,
+        aiResult,
+        originalInputs: {
+          manualText: manualText || null,
+          uploadedImages: uploadedFiles.map(file => ({
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            lastModified: file.lastModified
+          })),
+          uploadedImageUrls: uploadedImageUrls.map(img => ({
+            name: img.name,
+            url: img.url
+          })),
+          ocrResults: ocrResult,
+          audioTranscript: audioTranscript || null,
+          extractedText: extractedText || null
+        },
         notes: Object.values(digitalNotes).map((content, index) => ({
           id: `note_${index}`,
           content,
@@ -499,16 +664,51 @@ export default function Meeting() {
             type: 'audio'
           }] : []
         ),
-        ocrResults: ocrResult,
         uploadedFiles: uploadedFiles.map(f => f.name),
         lastSaved: new Date().toISOString(),
         status: 'completed'
+      }), [formData, digitalNotes, audioTranscript, aiResult, manualText, uploadedFiles, uploadedImageUrls, ocrResult, extractedText])
+
+  // Save functionality
+  const handleSave = async () => {
+    // Save operation starting
+    setIsSaving(true)
+
+    try {
+      // SIMPLE ARCHITECTURE: URL determines the operation
+      const isCreatingNew = (id === 'new')
+
+      if (isCreatingNew) {
+        // CREATE NEW MEETING
+        const newMeetingId = uuidv4()
+        const newMeetingData = buildMeetingData(newMeetingId)
+
+        console.log('🔍 DEBUG: Saving new meeting data:', {
+          digitalNotes: newMeetingData.digitalNotes,
+          aiResult: newMeetingData.aiResult,
+          notes: newMeetingData.notes,
+          originalInputs: newMeetingData.originalInputs
+        })
+
+        // Add to context and navigate immediately
+        addMeeting(newMeetingData)
+        setCurrentMeeting(newMeetingData)
+        navigate(`/meeting/${newMeetingId}`, { replace: true })
+      } else {
+        // UPDATE EXISTING MEETING
+        const updatedMeetingData = buildMeetingData(id)
+
+        // Update in context
+        updateMeeting(updatedMeetingData)
+        setCurrentMeeting(updatedMeetingData)
       }
-      
-      updateMeeting(meetingData)
-      
+
+      // Show success confirmation
+      setShowSaveConfirmation(true)
+      setTimeout(() => setShowSaveConfirmation(false), SAVE_CONFIRMATION_TIMEOUT)
+
     } catch (error) {
-      console.error('Save failed:', error)
+      console.error('❌ SAVE FAILED:', error)
     } finally {
       setIsSaving(false)
     }
@@ -772,22 +972,102 @@ export default function Meeting() {
                   />
                 </div>
 
-                <div>
+                {/* Searchable Stakeholder Dropdown */}
+                <div className="stakeholder-dropdown-container">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Primary Stakeholder
                   </label>
-                  <select
-                    value={formData.selectedStakeholder}
-                    onChange={(e) => handleInputChange('selectedStakeholder', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="">Select stakeholder...</option>
-                    {stakeholders.map((stakeholder) => (
-                      <option key={stakeholder.id} value={stakeholder.id}>
-                        {stakeholder.name} {stakeholder.category && `(${stakeholder.category})`}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <div
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer bg-white flex items-center justify-between"
+                      onClick={() => setShowStakeholderDropdown(!showStakeholderDropdown)}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Users size={16} className="text-gray-400" />
+                        {formData.selectedStakeholder ? (
+                          displayStakeholders.find(s => s.id === formData.selectedStakeholder)?.name || 'Unknown Stakeholder'
+                        ) : (
+                          'Select stakeholder...'
+                        )}
+                      </span>
+                      <ChevronDown size={16} className={`text-gray-400 transition-transform ${
+                        showStakeholderDropdown ? 'rotate-180' : ''
+                      }`} />
+                    </div>
+
+                    {showStakeholderDropdown && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-20 max-h-64 overflow-hidden">
+                        {/* Search Input */}
+                        <div className="p-3 border-b border-gray-200">
+                          <div className="relative">
+                            <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                            <input
+                              type="text"
+                              placeholder="Search stakeholders..."
+                              value={stakeholderSearchTerm}
+                              onChange={(e) => setStakeholderSearchTerm(e.target.value)}
+                              className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Dropdown Options */}
+                        <div className="max-h-48 overflow-y-auto">
+                          {/* No Selection Option */}
+                          <div
+                            className={`px-3 py-2 cursor-pointer hover:bg-gray-50 flex items-center gap-2 ${
+                              !formData.selectedStakeholder ? 'bg-blue-50 text-blue-600' : 'text-gray-700'
+                            }`}
+                            onClick={() => {
+                              handleInputChange('selectedStakeholder', '')
+                              setShowStakeholderDropdown(false)
+                              setStakeholderSearchTerm('')
+                            }}
+                          >
+                            <XCircle size={16} />
+                            <span className="font-medium">No Stakeholder</span>
+                            {!formData.selectedStakeholder && (
+                              <CheckCircle size={16} className="ml-auto text-blue-600" />
+                            )}
+                          </div>
+
+                          {filteredStakeholdersForDropdown.length > 0 ? (
+                            filteredStakeholdersForDropdown.map(stakeholder => {
+                              return (
+                                <div
+                                  key={stakeholder.id}
+                                  className={`px-3 py-2 cursor-pointer hover:bg-gray-50 flex items-center gap-2 ${
+                                    formData.selectedStakeholder === stakeholder.id ? 'bg-blue-50 text-blue-600' : 'text-gray-700'
+                                  }`}
+                                  onClick={() => {
+                                    handleInputChange('selectedStakeholder', stakeholder.id)
+                                    setShowStakeholderDropdown(false)
+                                    setStakeholderSearchTerm('')
+                                  }}
+                                >
+                                  <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-medium truncate">{stakeholder.name}</div>
+                                    <div className="text-xs text-gray-500">
+                                      {getCategoryDisplayName(stakeholder.category)}
+                                    </div>
+                                  </div>
+                                  {formData.selectedStakeholder === stakeholder.id && (
+                                    <CheckCircle size={16} className="text-blue-600" />
+                                  )}
+                                </div>
+                              )
+                            })
+                          ) : (
+                            <div className="px-3 py-4 text-center text-gray-500 text-sm">
+                              No stakeholders found
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div>
@@ -1416,6 +1696,7 @@ Example notes you might paste:
               </div>
             )}
 
+
             {/* Claude AI Analysis Results Display */}
             {aiResult && (
               <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200 p-6 mt-6">
@@ -1613,6 +1894,20 @@ Example notes you might paste:
         </ResponsiveGrid>
       </main>
       </div>
+
+      {/* Save Confirmation Toast */}
+      {showSaveConfirmation && (
+        <div className="fixed top-4 right-4 z-50 animate-fade-in">
+          <div className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3">
+            <CheckCircle size={20} />
+            <div>
+              <p className="font-semibold">Meeting Saved!</p>
+              <p className="text-sm opacity-90">Your meeting has been successfully saved.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
     </PullToRefresh>
   )
 }

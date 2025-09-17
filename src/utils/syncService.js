@@ -957,7 +957,33 @@ class SyncService {
       const { GoogleDriveAuth } = await import('./googleDriveAuth')
       const googleAuth = new GoogleDriveAuth()
 
-      // Try silent re-authentication first
+      // First, try to get a valid token from GoogleDriveAuth (which has auto-refresh)
+      try {
+        console.log('🔄 Checking GoogleDriveAuth for valid token...')
+        const validToken = await googleAuth.getValidToken()
+
+        if (validToken) {
+          // Get the token info from GoogleDriveAuth storage
+          const tokenData = localStorage.getItem('google_drive_token')
+          if (tokenData) {
+            const parsed = JSON.parse(tokenData)
+
+            // Sync tokens between GoogleDriveAuth and SyncService
+            config.accessToken = validToken
+            config.expiresAt = parsed.expiresAt
+
+            // Save updated config
+            await localforage.setItem('sync_config', this.syncConfig)
+
+            console.log('✅ Google Drive token synced from GoogleDriveAuth')
+            return true
+          }
+        }
+      } catch (tokenError) {
+        console.log('⚠️ Failed to get token from GoogleDriveAuth, trying silent re-auth...')
+      }
+
+      // If no valid token available, try silent re-authentication
       try {
         console.log('🔄 Attempting silent re-authentication...')
         const tokens = await googleAuth.silentReauthenticate()
@@ -972,21 +998,25 @@ class SyncService {
         console.log('✅ Google Drive token refreshed silently')
         return true
       } catch (silentError) {
-        console.log('⚠️ Silent re-authentication failed, trying automatic flow...')
+        console.log('⚠️ Silent re-authentication failed:', silentError.message)
 
-        // If silent fails, try automatic re-authentication using stored credentials
-        const validToken = await googleAuth.getValidToken()
+        // Try to trigger automatic re-authentication using stored credentials
+        try {
+          const tokens = await googleAuth.authenticate()
 
-        if (validToken) {
-          // Update config with the valid token
-          config.accessToken = validToken
-          config.expiresAt = Date.now() + (3600 * 1000) // Default 1 hour expiry
+          if (tokens && tokens.accessToken) {
+            // Update config with new tokens
+            config.accessToken = tokens.accessToken
+            config.expiresAt = tokens.expiresAt
 
-          // Save updated config
-          await localforage.setItem('sync_config', this.syncConfig)
+            // Save updated config
+            await localforage.setItem('sync_config', this.syncConfig)
 
-          console.log('✅ Google Drive token obtained successfully')
-          return true
+            console.log('✅ Google Drive token obtained successfully')
+            return true
+          }
+        } catch (interactiveError) {
+          console.log('⚠️ Interactive re-authentication failed:', interactiveError.message)
         }
       }
     } catch (error) {

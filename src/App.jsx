@@ -14,6 +14,18 @@ import accessibility, { a11y } from './utils/accessibility'
 import storage from './utils/storage'
 import './index.css'
 
+// Import token testing utilities for debugging
+if (import.meta.env.DEV) {
+  import('./utils/tokenTestUtils.js').then(() => {
+    console.log('🧪 Token testing utilities loaded!')
+    console.log('Available commands:')
+    console.log('  - testTokens(): Run all token tests')
+    console.log('  - checkTokenStatus(): Check current token status')
+    console.log('  - testSilentAuth(): Test silent authentication')
+    console.log('  - simulateExpiration(): Simulate token expiration')
+  })
+}
+
 // Page transition component
 function PageTransition({ children }) {
   const location = useLocation()

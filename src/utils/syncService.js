@@ -35,9 +35,12 @@ class SyncService {
     this.autoSyncInterval = null
     this.syncListeners = []
 
-    // Initialize device tracking and load existing config
-    this.initializeDevice()
-    this.loadSyncConfig()
+    // Initialization promise for singleton pattern
+    this.initializationPromise = null
+    this.isInitialized = false
+
+    // Start initialization
+    this.initializationPromise = this.initialize()
 
     // Setup online/offline detection
     window.addEventListener('online', () => {
@@ -47,6 +50,36 @@ class SyncService {
     window.addEventListener('offline', () => {
       this.isOnline = false
     })
+  }
+
+  /**
+   * Main initialization method that ensures proper async initialization
+   */
+  async initialize() {
+    if (this.isInitialized) {
+      return
+    }
+
+    try {
+      // Initialize device tracking and load existing config in proper order
+      await this.initializeDevice()
+      await this.loadSyncConfig()
+
+      this.isInitialized = true
+      console.log('🚀 SyncService fully initialized')
+    } catch (error) {
+      console.error('❌ Failed to initialize SyncService:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Ensure the service is initialized before any operations
+   */
+  async ensureInitialized() {
+    if (!this.isInitialized && this.initializationPromise) {
+      await this.initializationPromise
+    }
   }
 
   /**
@@ -114,6 +147,13 @@ class SyncService {
    * Configure sync provider and settings
    */
   async configureSyncProvider(provider, config) {
+    // Ensure initialization is complete before configuring
+    await this.ensureInitialized()
+
+    if (!Object.values(SYNC_PROVIDERS).includes(provider)) {
+      throw new Error(`Invalid sync provider: ${provider}`)
+    }
+
     try {
       const syncConfig = {
         provider,
@@ -155,8 +195,11 @@ class SyncService {
    * Test connection to sync provider
    */
   async testConnection() {
+    // Ensure the service is fully initialized before testing
+    await this.ensureInitialized()
+
     if (!this.syncConfig) {
-      console.error('❌ No sync config found:', this.syncConfig)
+      console.error('❌ No sync config found after initialization:', this.syncConfig)
       throw new Error('Sync provider not configured')
     }
 
@@ -965,6 +1008,9 @@ class SyncService {
    * Get current sync status
    */
   async getSyncStatus() {
+    // Ensure initialization is complete before getting status
+    await this.ensureInitialized()
+
     const config = await localforage.getItem('sync_config')
     const lastSync = await localforage.getItem('last_sync_time')
 

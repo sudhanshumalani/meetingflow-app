@@ -339,26 +339,35 @@ class SyncService {
           return { success: false, conflict: true, conflictData: { local: localData, cloud: cloudData } }
         }
 
+        // Merge local and cloud data to prevent data loss
+        const mergedData = this.mergeData(localData.data, cloudData.data)
+
+        // Save merged data to localStorage
+        await localforage.setItem('meetingflow_meetings', mergedData.meetings)
+        await localforage.setItem('meetingflow_stakeholders', mergedData.stakeholders)
+        await localforage.setItem('meetingflow_stakeholder_categories', mergedData.stakeholderCategories)
+
         // Update last sync time
         this.lastSyncTime = new Date().toISOString()
         await localforage.setItem('last_sync_time', this.lastSyncTime)
 
         console.log('✅ Data synced successfully from cloud', {
-          meetings: cloudData.data.meetings?.length || 0,
-          stakeholders: cloudData.data.stakeholders?.length || 0,
+          meetings: mergedData.meetings?.length || 0,
+          stakeholders: mergedData.stakeholders?.length || 0,
+          stakeholderCategories: mergedData.stakeholderCategories?.length || 0,
           lastModified: cloudData.metadata?.timestamp
         })
 
         this.notifyListeners('sync_success', {
           timestamp: this.lastSyncTime,
-          data: cloudData.data,
+          data: mergedData,
           source: 'cloud'
         })
         this.notifyListeners('status_change', SYNC_STATUS.SUCCESS)
 
         return {
           success: true,
-          data: cloudData.data,
+          data: mergedData,
           timestamp: this.lastSyncTime,
           metadata: cloudData.metadata
         }

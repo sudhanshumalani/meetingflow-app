@@ -112,6 +112,9 @@ class SyncService {
       console.log('🔧 Sync provider configured:', provider)
       this.notifyListeners('config_updated', syncConfig)
 
+      // Small delay to ensure config is properly set
+      await new Promise(resolve => setTimeout(resolve, 100))
+
       // Test the connection
       await this.testConnection()
 
@@ -132,10 +135,16 @@ class SyncService {
    */
   async testConnection() {
     if (!this.syncConfig) {
+      console.error('❌ No sync config found:', this.syncConfig)
       throw new Error('Sync provider not configured')
     }
 
-    console.log('🔍 Testing sync connection...')
+    if (!this.syncConfig.config) {
+      console.error('❌ No sync config data found:', this.syncConfig)
+      throw new Error('Sync provider configuration missing')
+    }
+
+    console.log('🔍 Testing sync connection for provider:', this.syncConfig.provider)
 
     try {
       const testData = {
@@ -846,12 +855,13 @@ class SyncService {
     const config = this.syncConfig.config
 
     if (!config.accessToken) {
-      throw new Error('No Google Drive access token available')
+      throw new Error('No Google Drive access token available - please re-authenticate')
     }
 
-    // Check if token is expired (if we have expiry info)
-    if (config.expiresAt && Date.now() >= config.expiresAt) {
-      await this.refreshGoogleToken()
+    // Check if token is expired (with 1 minute buffer)
+    if (config.expiresAt && Date.now() >= (config.expiresAt - 60000)) {
+      console.log('⏰ Google Drive token expired, requires re-authentication')
+      throw new Error('Google Drive token expired - please re-authenticate through Settings')
     }
   }
 

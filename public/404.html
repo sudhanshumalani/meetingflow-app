@@ -4,21 +4,63 @@
     <meta charset="utf-8" />
     <title>MeetingFlow</title>
     <script type="text/javascript">
-      // Single Page Apps for GitHub Pages
-      // https://github.com/rafrex/spa-github-pages
-      // Copyright (c) 2016 Rafael Pedicini, licensed under the MIT License
+      // Enhanced Single Page Apps for GitHub Pages with iOS PWA support
+      // Handles both regular browser routing and iOS standalone app routing
       var pathSegmentsToKeep = 1;
-
       var l = window.location;
-      l.replace(
-        l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
-        l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') + '/?/' +
-        l.pathname.slice(1).split('/').slice(pathSegmentsToKeep).join('/').replace(/&/g, '~and~') +
-        (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
-        l.hash
-      );
+
+      // Check if this is an iOS standalone app
+      var isStandalone = window.navigator.standalone ||
+                        window.matchMedia('(display-mode: standalone)').matches;
+
+      console.log('404 redirect handler:', {
+        pathname: l.pathname,
+        search: l.search,
+        hash: l.hash,
+        isStandalone: isStandalone,
+        userAgent: navigator.userAgent
+      });
+
+      // For iOS standalone apps, redirect directly to the app root
+      if (isStandalone && l.pathname.startsWith('/meetingflow-app/')) {
+        // Extract the route after /meetingflow-app/
+        var appRoute = l.pathname.slice('/meetingflow-app'.length);
+        if (appRoute === '' || appRoute === '/') {
+          appRoute = '/';
+        }
+
+        var redirectUrl = l.protocol + '//' + l.hostname +
+          (l.port ? ':' + l.port : '') + '/meetingflow-app/' +
+          '?/' + appRoute.slice(1) +
+          (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+          l.hash;
+
+        console.log('iOS standalone redirect to:', redirectUrl);
+        l.replace(redirectUrl);
+      } else {
+        // Standard GitHub Pages SPA redirect
+        l.replace(
+          l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+          l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') + '/?/' +
+          l.pathname.slice(1).split('/').slice(pathSegmentsToKeep).join('/').replace(/&/g, '~and~') +
+          (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+          l.hash
+        );
+      }
     </script>
   </head>
   <body>
+    <div id="loading" style="
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: system-ui, -apple-system, sans-serif;
+      color: #666;
+      text-align: center;
+    ">
+      <div style="font-size: 2rem; margin-bottom: 1rem;">📅</div>
+      <div>Loading MeetingFlow...</div>
+    </div>
   </body>
 </html>

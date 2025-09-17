@@ -174,6 +174,8 @@ function AppContent() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/test-notes" element={<SimpleMeetingNotes />} />
             <Route path="/auth/google/callback" element={<GoogleAuthCallback />} />
+            {/* Catch-all route for any unmatched paths - redirect to home */}
+            <Route path="*" element={<Home />} />
           </Routes>
         </PageTransition>
       </main>
@@ -251,8 +253,41 @@ function AppContent() {
 }
 
 function App() {
-  // Simplified base path - always use /meetingflow-app for production
+  // Detect if we're running as iOS standalone app
+  const isStandalone = window.navigator.standalone ||
+                      window.matchMedia('(display-mode: standalone)').matches ||
+                      new URLSearchParams(window.location.search).has('standalone')
+
+  // For GitHub Pages, we need to handle routing differently for standalone vs browser
+  // In standalone mode, GitHub Pages serves from the start_url which includes the repo path
+  // but the router expects the basename to be correct
   const basename = import.meta.env.PROD ? '/meetingflow-app' : ''
+
+  // Log for debugging (dev only)
+  if (import.meta.env.DEV) {
+    console.log('App routing info:', {
+      isStandalone,
+      isProd: import.meta.env.PROD,
+      basename,
+      userAgent: navigator.userAgent,
+      displayMode: window.matchMedia('(display-mode: standalone)').matches,
+      hasStandaloneParam: new URLSearchParams(window.location.search).has('standalone'),
+      currentURL: window.location.href,
+      pathname: window.location.pathname
+    })
+  }
+
+  // Handle initial redirect for iOS standalone if needed
+  React.useEffect(() => {
+    if (isStandalone && import.meta.env.PROD) {
+      // Clean up the URL by removing the standalone parameter
+      const url = new URL(window.location.href)
+      if (url.searchParams.has('standalone')) {
+        url.searchParams.delete('standalone')
+        window.history.replaceState({}, document.title, url.pathname + url.hash)
+      }
+    }
+  }, [isStandalone])
 
   return (
     <ErrorBoundary>

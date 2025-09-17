@@ -340,12 +340,24 @@ class SyncService {
         }
 
         // Merge local and cloud data to prevent data loss
-        const mergedData = this.mergeData(localData.data, cloudData.data)
+        const mergedData = await this.mergeData(localData.data, cloudData.data)
+
+        console.log('🔍 DEBUG: mergedData immediately after merge:', {
+          meetings: mergedData.meetings?.length || 0,
+          stakeholders: mergedData.stakeholders?.length || 0,
+          stakeholderCategories: mergedData.stakeholderCategories?.length || 0,
+        })
 
         // Save merged data to localStorage
         await localforage.setItem('meetingflow_meetings', mergedData.meetings)
         await localforage.setItem('meetingflow_stakeholders', mergedData.stakeholders)
         await localforage.setItem('meetingflow_stakeholder_categories', mergedData.stakeholderCategories)
+
+        console.log('🔍 DEBUG: mergedData after localStorage save:', {
+          meetings: mergedData.meetings?.length || 0,
+          stakeholders: mergedData.stakeholders?.length || 0,
+          stakeholderCategories: mergedData.stakeholderCategories?.length || 0,
+        })
 
         // Update last sync time
         this.lastSyncTime = new Date().toISOString()

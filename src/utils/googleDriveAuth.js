@@ -22,19 +22,63 @@ if (import.meta.env.DEV) {
 // Token storage manager for automatic re-authentication
 class TokenManager {
   constructor() {
-    this.token = null
-    this.expiresAt = null
+    // Load persisted token from localStorage
+    this.loadPersistedToken()
     this.refreshCallback = null
+    this.refreshTimer = null
+  }
+
+  loadPersistedToken() {
+    try {
+      const stored = localStorage.getItem('google_drive_token')
+      if (stored) {
+        const { token, expiresAt } = JSON.parse(stored)
+        // Only load if not expired
+        if (expiresAt && Date.now() < expiresAt) {
+          this.token = token
+          this.expiresAt = expiresAt
+          console.log('Loaded persisted token, valid until:', new Date(expiresAt).toISOString())
+
+          // Set up refresh timer for loaded token
+          this.scheduleRefresh()
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load persisted token:', error)
+    }
   }
 
   setToken(accessToken, expiresIn) {
     this.token = accessToken
     this.expiresAt = Date.now() + (expiresIn * 1000)
 
+    // Persist token to localStorage
+    try {
+      localStorage.setItem('google_drive_token', JSON.stringify({
+        token: this.token,
+        expiresAt: this.expiresAt
+      }))
+      console.log('Token persisted, expires at:', new Date(this.expiresAt).toISOString())
+    } catch (error) {
+      console.error('Failed to persist token:', error)
+    }
+
+    // Schedule automatic refresh
+    this.scheduleRefresh()
+  }
+
+  scheduleRefresh() {
+    // Clear existing timer
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer)
+    }
+
     // Set up automatic refresh 5 minutes before expiry
-    const refreshIn = (expiresIn - 300) * 1000 // 5 minutes before expiry
+    const timeUntilExpiry = this.expiresAt - Date.now()
+    const refreshIn = Math.max(0, timeUntilExpiry - (5 * 60 * 1000)) // 5 minutes before expiry
+
     if (refreshIn > 0 && this.refreshCallback) {
-      setTimeout(() => {
+      this.refreshTimer = setTimeout(() => {
         console.log('Token expiring soon, triggering re-authentication...')
         this.refreshCallback()
       }, refreshIn)
@@ -56,10 +100,27 @@ class TokenManager {
   clear() {
     this.token = null
     this.expiresAt = null
+
+    // Clear from localStorage
+    try {
+      localStorage.removeItem('google_drive_token')
+    } catch (error) {
+      console.error('Failed to clear persisted token:', error)
+    }
+
+    // Clear refresh timer
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer)
+      this.refreshTimer = null
+    }
   }
 
   setRefreshCallback(callback) {
     this.refreshCallback = callback
+    // If token exists, schedule refresh
+    if (this.token && this.expiresAt) {
+      this.scheduleRefresh()
+    }
   }
 }
 

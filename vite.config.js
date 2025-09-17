@@ -22,17 +22,17 @@ export default defineConfig({
         theme_color: '#2563eb',
         background_color: '#f9fafb',
         display: 'standalone',
-        id: '/meetingflow-app/',
-        scope: '/meetingflow-app/',
-        start_url: '/meetingflow-app/?standalone=true',
+        id: './',
+        scope: './',
+        start_url: './',
         icons: [
           {
-            src: '/meetingflow-app/pwa-icon.svg',
+            src: './pwa-icon.svg',
             sizes: '192x192',
             type: 'image/svg+xml'
           },
           {
-            src: '/meetingflow-app/pwa-icon.svg',
+            src: './pwa-icon.svg',
             sizes: '512x512',
             type: 'image/svg+xml'
           }

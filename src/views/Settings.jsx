@@ -116,7 +116,7 @@ export default function Settings() {
             {/* Back/Home button for mobile */}
             <button
               onClick={() => navigate('/')}
-              className="md:hidden flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              className="lg:hidden flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
               aria-label="Back to Home"
             >
               <svg

@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom'
+import { handleGoogleAuthCallback } from './utils/googleDriveAuth'
 import { AppProvider } from './contexts/AppContext'
+import SyncProvider from './contexts/SyncProvider'
 import Home from './views/Home'
 import Meeting from './views/Meeting'
 import Settings from './views/Settings'
 import SimpleMeetingNotes from './components/SimpleMeetingNotes'
+import GoogleAuthCallback from './components/GoogleAuthCallback'
 import ErrorBoundary, { ErrorToast } from './components/ErrorBoundary'
 import LoadingSpinner from './components/LoadingSpinner'
 import accessibility, { a11y } from './utils/accessibility'
@@ -170,6 +173,7 @@ function AppContent() {
             <Route path="/meeting/:id" element={<Meeting />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/test-notes" element={<SimpleMeetingNotes />} />
+            <Route path="/auth/google/callback" element={<GoogleAuthCallback />} />
           </Routes>
         </PageTransition>
       </main>
@@ -253,11 +257,13 @@ function App() {
   return (
     <ErrorBoundary>
       <AppProvider>
-        <Router basename={basename}>
-          <div className="App">
-            <AppContent />
-          </div>
-        </Router>
+        <SyncProvider>
+          <Router basename={basename}>
+            <div className="App">
+              <AppContent />
+            </div>
+          </Router>
+        </SyncProvider>
       </AppProvider>
     </ErrorBoundary>
   )

@@ -8,15 +8,27 @@ import {
   Sparkles,
   Cloud,
   Check,
-  Workflow
+  Workflow,
+  RefreshCw
 } from 'lucide-react'
 import { setOCRApiKey, getOCRCapabilities } from '../utils/ocrService'
 import { setClaudeApiKey as updateClaudeApiKey, getCapabilities } from '../utils/ocrServiceNew'
 import N8nSettings from '../components/N8nSettings'
+import { useSyncContext } from '../contexts/SyncProvider'
+import SyncSetup from '../components/sync/SyncSetup'
+import SyncStatusIndicator from '../components/sync/SyncStatusIndicator'
+import SyncConflictResolver from '../components/sync/SyncConflictResolver'
 
 export default function Settings() {
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState('n8n')
+
+  // Check URL params for tab
+  const urlParams = new URLSearchParams(window.location.search)
+  const tabFromUrl = urlParams.get('tab')
+  const [activeTab, setActiveTab] = useState(tabFromUrl || 'n8n')
+
+  // Sync context
+  const sync = useSyncContext()
 
   // OCR configuration state
   const [ocrApiKey, setOcrApiKey] = useState(localStorage.getItem('ocrApiKey') || '')
@@ -142,6 +154,29 @@ export default function Settings() {
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4" />
                 Claude AI
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('sync')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'sync'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Cloud className="w-4 h-4" />
+                Cross-Device Sync
+                {sync.isConfigured && (
+                  <SyncStatusIndicator
+                    syncStatus={sync.syncStatus}
+                    isOnline={sync.isOnline}
+                    hasError={sync.hasError}
+                    hasConflict={sync.hasConflict}
+                    showText={false}
+                    size={12}
+                  />
+                )}
               </div>
             </button>
           </nav>
@@ -495,6 +530,171 @@ export default function Settings() {
                 Test New Meeting Notes
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Cross-Device Sync Tab */}
+        {activeTab === 'sync' && (
+          <div className="space-y-6">
+            {/* Sync Conflict Resolution (if there's a conflict) */}
+            {sync.hasConflict && sync.conflictData && (
+              <SyncConflictResolver
+                conflictData={sync.conflictData}
+                onResolve={sync.resolveConflict}
+                isResolving={sync.isResolvingConflict}
+              />
+            )}
+
+            {/* Sync Setup (if not configured) */}
+            {!sync.isConfigured && (
+              <SyncSetup
+                onSetupComplete={sync.configureSyncProvider}
+                isConfiguring={sync.isConfiguring}
+                syncError={sync.syncError}
+              />
+            )}
+
+            {/* Sync Management (if configured) */}
+            {sync.isConfigured && !sync.hasConflict && (
+              <div className="space-y-6">
+                {/* Sync Status Overview */}
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">Cross-Device Sync</h3>
+                      <p className="text-sm text-gray-600">Keep your meetings synchronized across all devices</p>
+                    </div>
+                    <SyncStatusIndicator
+                      syncStatus={sync.syncStatus}
+                      isOnline={sync.isOnline}
+                      lastSyncTime={sync.lastSyncTime}
+                      hasError={sync.hasError}
+                      hasConflict={sync.hasConflict}
+                      queuedOperations={sync.queuedOperations}
+                    />
+                  </div>
+
+                  {/* Sync Stats */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    {(() => {
+                      const stats = sync.getSyncStats()
+                      return (
+                        <>
+                          <div className="p-4 bg-blue-50 rounded-lg">
+                            <div className="text-2xl font-bold text-blue-600">{stats.meetings}</div>
+                            <div className="text-sm text-gray-600">Meetings</div>
+                          </div>
+                          <div className="p-4 bg-green-50 rounded-lg">
+                            <div className="text-2xl font-bold text-green-600">{stats.stakeholders}</div>
+                            <div className="text-sm text-gray-600">Stakeholders</div>
+                          </div>
+                          <div className="p-4 bg-purple-50 rounded-lg">
+                            <div className="text-2xl font-bold text-purple-600">
+                              {(stats.dataSize / 1024).toFixed(1)}KB
+                            </div>
+                            <div className="text-sm text-gray-600">Data Size</div>
+                          </div>
+                          <div className="p-4 bg-gray-50 rounded-lg">
+                            <div className="text-2xl font-bold text-gray-600">
+                              {stats.deviceInfo?.name?.split(' ')[0] || 'Device'}
+                            </div>
+                            <div className="text-sm text-gray-600">This Device</div>
+                          </div>
+                        </>
+                      )
+                    })()}
+                  </div>
+
+                  {/* Sync Actions */}
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={sync.forceSyncToCloud}
+                      disabled={sync.isSyncingToCloud || !sync.canSync}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {sync.isSyncingToCloud ? (
+                        <>
+                          <RefreshCw size={16} className="animate-spin" />
+                          Syncing...
+                        </>
+                      ) : (
+                        <>
+                          <Cloud size={16} />
+                          Sync to Cloud
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={sync.syncFromCloud}
+                      disabled={sync.isSyncingFromCloud || !sync.canSync}
+                      className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {sync.isSyncingFromCloud ? (
+                        <>
+                          <RefreshCw size={16} className="animate-spin" />
+                          Syncing...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw size={16} />
+                          Sync from Cloud
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={sync.testConnection}
+                      className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      <Check size={16} />
+                      Test Connection
+                    </button>
+                  </div>
+
+                  {/* Last Sync Info */}
+                  {sync.lastSyncTime && (
+                    <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+                      <div className="text-sm text-gray-600">
+                        Last synced: {new Date(sync.lastSyncTime).toLocaleString()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Sync Provider Info */}
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h4 className="font-semibold text-gray-900 mb-4">Sync Provider</h4>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium text-gray-900">
+                        {sync.syncConfig?.provider === 'github_gist' ? 'GitHub Gist' : sync.syncConfig?.provider}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        Device: {sync.deviceInfo?.name} ({sync.deviceInfo?.id?.substring(0, 8)}...)
+                      </div>
+                    </div>
+                    <button
+                      onClick={sync.clearSyncData}
+                      className="px-3 py-1 text-sm text-red-600 hover:text-red-800 transition-colors"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sync Help */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h4 className="font-medium text-blue-900 mb-2">How Sync Works</h4>
+                  <ul className="text-sm text-blue-800 space-y-1">
+                    <li>• Data is automatically synced when you make changes</li>
+                    <li>• Conflicts are detected and can be resolved manually</li>
+                    <li>• Data is encrypted and stored securely in your chosen provider</li>
+                    <li>• You can disable sync at any time without losing local data</li>
+                  </ul>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
+import { useSyncContext } from '../contexts/SyncProvider'
 import { 
   Search, 
   Plus,
@@ -48,6 +49,7 @@ import {
   STAKEHOLDER_CATEGORIES
 } from '../utils/mockData'
 import GlobalSearch from '../components/GlobalSearch'
+import SyncStatusIndicator from '../components/sync/SyncStatusIndicator'
 import NotificationCenter from '../components/NotificationCenter'
 // Stakeholder management simplified - complex relationships removed
 import { SentimentAnalyzer } from '../utils/sentimentAnalysis'
@@ -66,6 +68,7 @@ import { BatchExportButton, ExportOptionsButton } from '../components/ExportOpti
 export default function Home() {
   const navigate = useNavigate()
   const { meetings, stakeholders, stakeholderCategories, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder, addStakeholderCategory, updateStakeholderCategory, deleteStakeholderCategory } = useApp()
+  const sync = useSyncContext()
   const [searchTerm, setSearchTerm] = useState('')
   const [notifications, setNotifications] = useState([])
   const [activeTab, setActiveTab] = useState('all')
@@ -760,6 +763,19 @@ export default function Home() {
 
             {/* Right Section */}
             <div className="flex items-center gap-3">
+              {/* Sync Status Indicator */}
+              {sync.isConfigured && (
+                <SyncStatusIndicator
+                  syncStatus={sync.syncStatus}
+                  isOnline={sync.isOnline}
+                  lastSyncTime={sync.lastSyncTime}
+                  hasError={sync.hasError}
+                  hasConflict={sync.hasConflict}
+                  queuedOperations={sync.queuedOperations}
+                  onClick={() => navigate('/settings?tab=sync')}
+                />
+              )}
+
               {/* New Meeting CTA */}
               <button
                 onClick={() => navigate('/meeting/new')}

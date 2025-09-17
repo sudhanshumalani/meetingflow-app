@@ -168,14 +168,14 @@ export function SyncSetup({
       // Create MeetingFlow folder
       const folderId = await googleAuth.createMeetingFlowFolder(tokens.accessToken)
 
-      // Configure the sync provider
+      // Configure the sync provider (implicit flow doesn't provide refresh token)
       const config = {
         accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
         expiresAt: tokens.expiresAt,
         userEmail: userInfo.email,
         userName: userInfo.name,
-        folderId: folderId
+        folderId: folderId,
+        tokenType: tokens.tokenType || 'Bearer'
       }
 
       const result = await onSetupComplete(SYNC_PROVIDERS.GOOGLE_DRIVE, config)

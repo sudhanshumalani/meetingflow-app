@@ -9,7 +9,8 @@ const GOOGLE_CONFIG = {
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
   redirectUri: window.location.origin + '/meetingflow-app/auth/google/callback',
   scope: 'https://www.googleapis.com/auth/drive.file',
-  responseType: 'code'
+  responseType: 'token', // Changed from 'code' to 'token' for implicit flow
+  prompt: 'consent'
 }
 
 // Log for debugging (remove in production)
@@ -91,12 +92,13 @@ export class GoogleDriveAuth {
           this.authWindow.close()
           this.authPromise = null
 
-          try {
-            const tokens = await this.exchangeCodeForTokens(event.data.code)
-            resolve(tokens)
-          } catch (error) {
-            reject(error)
-          }
+          // With implicit flow, we get the token directly
+          resolve({
+            accessToken: event.data.accessToken,
+            expiresAt: Date.now() + (event.data.expiresIn * 1000),
+            scope: event.data.scope,
+            tokenType: event.data.tokenType
+          })
         } else if (event.data.type === 'google-auth-error') {
           clearInterval(checkClosed)
           window.removeEventListener('message', messageHandler)
@@ -121,8 +123,7 @@ export class GoogleDriveAuth {
       redirect_uri: GOOGLE_CONFIG.redirectUri,
       scope: GOOGLE_CONFIG.scope,
       response_type: GOOGLE_CONFIG.responseType,
-      access_type: 'offline',
-      prompt: 'consent'
+      prompt: GOOGLE_CONFIG.prompt
     })
 
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
@@ -255,9 +256,13 @@ export class GoogleDriveAuth {
 
 // Auth callback handler - this should be included in your routing
 export function handleGoogleAuthCallback() {
-  const urlParams = new URLSearchParams(window.location.search)
-  const code = urlParams.get('code')
-  const error = urlParams.get('error')
+  // For implicit flow, tokens come in the URL hash fragment
+  const hashParams = new URLSearchParams(window.location.hash.substring(1))
+  const accessToken = hashParams.get('access_token')
+  const error = hashParams.get('error')
+  const expiresIn = hashParams.get('expires_in')
+  const scope = hashParams.get('scope')
+  const tokenType = hashParams.get('token_type')
 
   if (error) {
     // Send error to parent window
@@ -267,12 +272,15 @@ export function handleGoogleAuthCallback() {
         error: error
       }, window.location.origin)
     }
-  } else if (code) {
-    // Send success to parent window
+  } else if (accessToken) {
+    // Send success to parent window with token info
     if (window.opener) {
       window.opener.postMessage({
         type: 'google-auth-success',
-        code: code
+        accessToken: accessToken,
+        expiresIn: parseInt(expiresIn) || 3600,
+        scope: scope,
+        tokenType: tokenType || 'Bearer'
       }, window.location.origin)
     }
   }

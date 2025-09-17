@@ -6,10 +6,16 @@
 // Google OAuth2 configuration
 const GOOGLE_CONFIG = {
   // For development/demo: Use environment variables or replace with actual credentials
-  clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com',
+  clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
   redirectUri: window.location.origin + '/meetingflow-app/auth/google/callback',
   scope: 'https://www.googleapis.com/auth/drive.file',
   responseType: 'code'
+}
+
+// Log for debugging (remove in production)
+if (import.meta.env.DEV) {
+  console.log('Google Client ID configured:', !!import.meta.env.VITE_GOOGLE_CLIENT_ID)
+  console.log('Client ID length:', GOOGLE_CONFIG.clientId?.length)
 }
 
 export class GoogleDriveAuth {
@@ -22,9 +28,17 @@ export class GoogleDriveAuth {
    * Check if Google OAuth configuration is valid
    */
   isValidConfig() {
+    // Check if we have a valid client ID (not empty and looks like a real Google client ID)
     return GOOGLE_CONFIG.clientId &&
-           !GOOGLE_CONFIG.clientId.includes('1234567890') &&
+           GOOGLE_CONFIG.clientId.length > 20 &&
            GOOGLE_CONFIG.clientId.includes('.apps.googleusercontent.com')
+  }
+
+  /**
+   * Get the current client ID (for debugging)
+   */
+  getClientId() {
+    return GOOGLE_CONFIG.clientId
   }
 
   /**

@@ -308,8 +308,22 @@ export function SyncSetup({
     // Check if Google OAuth is properly configured
     const isConfigured = googleAuth?.isValidConfig()
 
+    // Show client ID status (helpful for debugging)
+    const clientIdStatus = {
+      hasClientId: !!import.meta.env.VITE_GOOGLE_CLIENT_ID,
+      clientIdLength: import.meta.env.VITE_GOOGLE_CLIENT_ID?.length || 0,
+      isConfigured: isConfigured
+    }
+
     return (
       <div className="space-y-4">
+        {/* Show client ID status for debugging */}
+        {clientIdStatus.hasClientId && (
+          <div className="p-2 bg-gray-100 rounded text-xs text-gray-600">
+            Client ID detected (length: {clientIdStatus.clientIdLength} chars)
+            {clientIdStatus.isConfigured ? ' ✅ Valid' : ' ⚠️ Invalid format'}
+          </div>
+        )}
         {!isConfigured ? (
           <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
             <h4 className="font-medium text-amber-900 mb-2 flex items-center gap-2">

@@ -103,20 +103,43 @@ export default function Settings() {
       <div className="max-w-7xl mx-auto px-4 py-8">
         {/* Header */}
         <div className="mb-8">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <SettingsIcon className="w-6 h-6 text-blue-600" />
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <SettingsIcon className="w-6 h-6 text-blue-600" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
+                <p className="text-gray-600 hidden sm:block">Manage your application preferences and integrations</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-              <p className="text-gray-600">Manage your application preferences and integrations</p>
-            </div>
+            {/* Back/Home button for mobile */}
+            <button
+              onClick={() => navigate('/')}
+              className="md:hidden flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              aria-label="Back to Home"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                />
+              </svg>
+              <span>Home</span>
+            </button>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="border-b border-gray-200 mb-8">
-          <nav className="flex space-x-8">
+        <div className="border-b border-gray-200 mb-8 -mx-4 px-4 overflow-x-auto">
+          <nav className="flex space-x-4 sm:space-x-8 min-w-max">
             <button
               onClick={() => setActiveTab('n8n')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${

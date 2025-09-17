@@ -1387,30 +1387,30 @@ export default function Home() {
                               </div>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 ml-4">
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 ml-4 sm:ml-4 mt-2 sm:mt-0">
                             <button
                               onClick={() => handleStartMeeting(meeting)}
-                              className="flex items-center gap-1 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              className="flex items-center gap-1 px-2 sm:px-3 py-1 sm:py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors text-sm"
                               title="Open Meeting"
                             >
-                              <Eye size={16} />
-                              <span className="hidden sm:inline">Open</span>
+                              <Eye size={14} />
+                              <span className="sm:hidden md:inline">Open</span>
                             </button>
                             <button
                               onClick={() => handleEditMeeting(meeting)}
-                              className="flex items-center gap-1 px-3 py-2 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+                              className="flex items-center gap-1 px-2 sm:px-3 py-1 sm:py-2 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors text-sm"
                               title="Edit Meeting"
                             >
-                              <Edit2 size={16} />
-                              <span className="hidden sm:inline">Edit</span>
+                              <Edit2 size={14} />
+                              <span className="sm:hidden md:inline">Edit</span>
                             </button>
                             <button
                               onClick={() => handleDeleteMeeting(meeting.id)}
-                              className="flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              className="flex items-center gap-1 px-2 sm:px-3 py-1 sm:py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors text-sm"
                               title="Delete Meeting"
                             >
-                              <Trash2 size={16} />
-                              <span className="hidden sm:inline">Delete</span>
+                              <Trash2 size={14} />
+                              <span className="sm:hidden md:inline">Delete</span>
                             </button>
                           </div>
                         </div>

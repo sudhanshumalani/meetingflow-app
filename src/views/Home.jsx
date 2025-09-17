@@ -723,14 +723,6 @@ export default function Home() {
         />
       </div>
       
-      {/* Mobile Tabs */}
-      <div className="bg-white border-b sticky top-16 z-20 md:hidden">
-        <MobileTabs
-          tabs={mobileTabs}
-          activeTab={activeView}
-          onTabChange={setActiveView}
-        />
-      </div>
 
       {/* Modern Desktop Header */}
       <header className="bg-white shadow-sm border-b hidden md:block">

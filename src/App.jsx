@@ -14,16 +14,28 @@ import accessibility, { a11y } from './utils/accessibility'
 import storage from './utils/storage'
 import './index.css'
 
-// Import token testing utilities for debugging
+// Import debugging utilities for development
 if (import.meta.env.DEV) {
   import('./utils/tokenTestUtils.js').then(() => {
     console.log('🧪 Token testing utilities loaded!')
-    console.log('Available commands:')
-    console.log('  - testTokens(): Run all token tests')
-    console.log('  - checkTokenStatus(): Check current token status')
-    console.log('  - testSilentAuth(): Test silent authentication')
-    console.log('  - simulateExpiration(): Simulate token expiration')
   })
+  import('./utils/syncDebugUtils.js').then(() => {
+    console.log('🔧 Sync debugging utilities loaded!')
+  })
+
+  console.log('🛠️ Debug Commands Available:')
+  console.log('📊 Token Testing:')
+  console.log('  - testTokens(): Run all token tests')
+  console.log('  - checkTokenStatus(): Check current token status')
+  console.log('  - testSilentAuth(): Test silent authentication')
+  console.log('  - simulateExpiration(): Simulate token expiration')
+  console.log('🔄 Sync Testing:')
+  console.log('  - debugSync(): Run comprehensive sync tests')
+  console.log('  - testLocalStorage(): Check local data storage')
+  console.log('  - testGoogleDrive(): Test Google Drive access')
+  console.log('  - testUpload(): Test upload to cloud')
+  console.log('  - testDownload(): Test download from cloud')
+  console.log('  - testFullSync(): Test complete round-trip sync')
 }
 
 // Page transition component

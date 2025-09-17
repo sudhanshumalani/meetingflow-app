@@ -35,8 +35,9 @@ class SyncService {
     this.autoSyncInterval = null
     this.syncListeners = []
 
-    // Initialize device tracking
+    // Initialize device tracking and load existing config
     this.initializeDevice()
+    this.loadSyncConfig()
 
     // Setup online/offline detection
     window.addEventListener('online', () => {
@@ -73,6 +74,26 @@ class SyncService {
       console.log('📱 Device initialized for sync:', deviceInfo.name, deviceInfo.id)
     } catch (error) {
       console.error('❌ Failed to initialize device ID:', error)
+    }
+  }
+
+  /**
+   * Load sync configuration from storage
+   */
+  async loadSyncConfig() {
+    try {
+      const savedConfig = await localforage.getItem('sync_config')
+      if (savedConfig) {
+        this.syncConfig = savedConfig
+        console.log('🔧 Loaded sync config:', savedConfig.provider)
+
+        // Start auto-sync if enabled
+        if (savedConfig.autoSync) {
+          this.startAutoSync()
+        }
+      }
+    } catch (error) {
+      console.error('❌ Failed to load sync config:', error)
     }
   }
 

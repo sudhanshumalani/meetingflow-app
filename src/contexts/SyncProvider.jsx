@@ -98,9 +98,9 @@ export function SyncProvider({ children }) {
         }
 
         // Update stakeholder categories
-        if (result.data.stakeholderCategories?.length > 0) {
-          // This would need a proper update mechanism in AppContext
-          console.log('📂 Stakeholder categories synced:', result.data.stakeholderCategories.length)
+        if (result.data.stakeholderCategories?.length >= 0) {
+          console.log('📂 Updating stakeholder categories:', result.data.stakeholderCategories.length)
+          app.setStakeholderCategories(result.data.stakeholderCategories)
         }
 
         return result

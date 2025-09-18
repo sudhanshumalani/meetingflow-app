@@ -160,6 +160,13 @@ function appReducer(state, action) {
         stakeholders: updatedStakeholders
       }
 
+    case 'SET_STAKEHOLDER_CATEGORIES':
+      console.log('🔄 Setting stakeholder categories from sync:', action.payload?.length || 0)
+      return {
+        ...state,
+        stakeholderCategories: action.payload || []
+      }
+
     case 'ADD_NOTE_TO_MEETING':
       const { meetingId, note } = action.payload
       const noteWithId = {
@@ -594,6 +601,7 @@ export function AppProvider({ children }) {
     addStakeholderCategory: (category) => dispatch({ type: 'ADD_STAKEHOLDER_CATEGORY', payload: category }),
     updateStakeholderCategory: (category) => dispatch({ type: 'UPDATE_STAKEHOLDER_CATEGORY', payload: category }),
     deleteStakeholderCategory: (categoryKey) => dispatch({ type: 'DELETE_STAKEHOLDER_CATEGORY', payload: categoryKey }),
+    setStakeholderCategories: (categories) => dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: categories }),
 
     addNoteToMeeting: (meetingId, note) => dispatch({ type: 'ADD_NOTE_TO_MEETING', payload: { meetingId, note } }),
     updateNoteInMeeting: (meetingId, noteId, updatedNote) => 

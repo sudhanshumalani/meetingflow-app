@@ -586,6 +586,13 @@ class SyncService {
       const stakeholders = await localforage.getItem('meetingflow_stakeholders') || []
       const stakeholderCategories = await localforage.getItem('meetingflow_stakeholder_categories') || []
 
+      console.log('🔍 DEBUG getLocalData:', {
+        meetingsCount: meetings.length,
+        stakeholdersCount: stakeholders.length,
+        categoriesCount: stakeholderCategories.length,
+        stakeholdersSample: stakeholders.slice(0, 2)
+      })
+
       const metadata = {
         deviceId: this.deviceId,
         deviceName: this.getDeviceName(),

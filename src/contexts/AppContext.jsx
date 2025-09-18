@@ -403,6 +403,11 @@ export function AppProvider({ children }) {
       localStorage.setItem('meetingflow_stakeholders', JSON.stringify(state.stakeholders))
       localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(state.stakeholderCategories))
 
+      // Also save to localforage to maintain sync consistency
+      localforage.setItem('meetingflow_meetings', state.meetings)
+      localforage.setItem('meetingflow_stakeholders', state.stakeholders)
+      localforage.setItem('meetingflow_stakeholder_categories', state.stakeholderCategories)
+
       const saved = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
       console.log('✅ AppContext: VERIFIED save - meetings in storage:', saved.length)
       console.log('✅ AppContext: VERIFIED IDs:', saved.map(m => m.id))
@@ -449,13 +454,35 @@ export function AppProvider({ children }) {
       let meetings, localStakeholders, localCategories
 
       try {
-        meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-        localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-        localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+        // First try to load from localforage (where sync data is stored)
+        const localforageMeetings = await localforage.getItem('meetingflow_meetings')
+        const localforageStakeholders = await localforage.getItem('meetingflow_stakeholders')
+        const localforageCategories = await localforage.getItem('meetingflow_stakeholder_categories')
 
-        // Use defaults if empty
+        console.log('🔍 DEBUG: Loading data from storage...', {
+          localforageMeetings: localforageMeetings?.length || 0,
+          localforageStakeholders: localforageStakeholders?.length || 0,
+          localforageCategories: localforageCategories?.length || 0
+        })
+
+        // Use localforage data if available (from sync), otherwise fall back to localStorage
+        meetings = localforageMeetings || JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        localStakeholders = localforageStakeholders || JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+        localCategories = localforageCategories || JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+
+        console.log('🔍 DEBUG: Final loaded data:', {
+          meetings: meetings.length,
+          stakeholders: localStakeholders.length,
+          categories: localCategories.length,
+          categoryNames: localCategories.map(c => c.name)
+        })
+
+        // Only use defaults if no categories found in either storage (first-time setup)
         if (!localCategories.length) {
+          console.log('🔍 DEBUG: No categories found in storage, loading defaults')
           localCategories = Object.values(DEFAULT_CATEGORIES)
+        } else {
+          console.log('🔍 DEBUG: Categories loaded from storage, skipping defaults')
         }
 
         console.log('📂 LOAD: Loaded from localStorage - meetings:', meetings.length)

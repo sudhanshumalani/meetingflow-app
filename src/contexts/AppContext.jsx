@@ -485,50 +485,9 @@ export function AppProvider({ children }) {
           categoryNames: localCategories.map(c => c.name)
         })
 
-        // After initial load, check localforage asynchronously to sync up with latest data
-        // This prevents infinite loops while ensuring data consistency
-        setTimeout(async () => {
-          try {
-            const localforageMeetings = await localforage.getItem('meetingflow_meetings')
-            const localforageStakeholders = await localforage.getItem('meetingflow_stakeholders')
-            const localforageCategories = await localforage.getItem('meetingflow_stakeholder_categories')
-
-            console.log('🔍 DEBUG: Checking localforage for updates...', {
-              localforageMeetings: localforageMeetings?.length || 0,
-              localforageStakeholders: localforageStakeholders?.length || 0,
-              localforageCategories: localforageCategories?.length || 0
-            })
-
-            // Update state if localforage has different data (from sync)
-            let needsUpdate = false
-
-            if (localforageMeetings && localforageMeetings.length !== meetings.length) {
-              console.log('🔍 DEBUG: Meetings differ, updating from localforage')
-              dispatch({ type: 'SET_MEETINGS', payload: localforageMeetings })
-              needsUpdate = true
-            }
-
-            if (localforageStakeholders && localforageStakeholders.length !== localStakeholders.length) {
-              console.log('🔍 DEBUG: Stakeholders differ, updating from localforage')
-              dispatch({ type: 'SET_STAKEHOLDERS', payload: localforageStakeholders })
-              needsUpdate = true
-            }
-
-            if (localforageCategories && localforageCategories.length !== localCategories.length) {
-              console.log('🔍 DEBUG: Categories differ, updating from localforage')
-              dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: localforageCategories })
-              needsUpdate = true
-            }
-
-            if (needsUpdate) {
-              console.log('🔍 DEBUG: Updated state from localforage data')
-            } else {
-              console.log('🔍 DEBUG: localStorage and localforage are in sync')
-            }
-          } catch (error) {
-            console.log('🔍 DEBUG: Error checking localforage:', error)
-          }
-        }, 100) // Small delay to ensure initial render completes
+        // Note: We removed the automatic background storage sync that was overriding
+        // active sync operations. Storage consistency is now maintained by the save function
+        // that writes to both localStorage and localforage simultaneously.
 
         console.log('📂 LOAD: Loaded from localStorage - meetings:', meetings.length)
         console.log('📂 LOAD: Meeting IDs loaded:', meetings.map(m => m.id))

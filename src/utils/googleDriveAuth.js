@@ -413,6 +413,8 @@ export class GoogleDriveAuth {
    */
   async findOrCreateMeetingFlowFolder(accessToken) {
     try {
+      console.log('🔍 Searching for existing MeetingFlow folders...')
+
       // First, search for existing MeetingFlow folders
       const searchResponse = await fetch(
         `https://www.googleapis.com/drive/v3/files?q=name='MeetingFlow Data' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
@@ -423,15 +425,21 @@ export class GoogleDriveAuth {
         }
       )
 
+      console.log('🔍 Search response status:', searchResponse.status)
+
       if (!searchResponse.ok) {
         throw new Error(`Failed to search folders: ${searchResponse.statusText}`)
       }
 
       const searchResult = await searchResponse.json()
+      console.log('🔍 Search result:', searchResult)
 
       // If folders exist, return the first one (or let user choose in future)
       if (searchResult.files && searchResult.files.length > 0) {
-        console.log(`📂 Found ${searchResult.files.length} existing MeetingFlow folder(s)`)
+        console.log(`📂 Found ${searchResult.files.length} existing MeetingFlow folder(s):`)
+        searchResult.files.forEach((folder, index) => {
+          console.log(`  ${index + 1}. ${folder.name} (${folder.id})`)
+        })
 
         // For now, return the first folder found
         // TODO: In future, show a dialog to let user choose

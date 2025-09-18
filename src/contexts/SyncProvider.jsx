@@ -65,13 +65,31 @@ export function SyncProvider({ children }) {
    */
   const syncFromCloudWithUpdate = useCallback(async () => {
     try {
+      console.log('🔍 DEBUG: syncFromCloudWithUpdate starting...')
+      console.log('🔍 DEBUG: Current app categories before sync:', {
+        count: app.stakeholderCategories?.length || 0,
+        categories: app.stakeholderCategories?.map(c => c.name) || []
+      })
+
       const result = await sync.syncFromCloud()
 
+      console.log('🔍 DEBUG: syncFromCloud result:', {
+        success: result.success,
+        hasData: !!result.data,
+        dataKeys: result.data ? Object.keys(result.data) : 'no data'
+      })
+
       if (result.success && result.data) {
+        console.log('🔍 DEBUG: Categories in result.data:', {
+          count: result.data.stakeholderCategories?.length || 0,
+          categories: result.data.stakeholderCategories?.map(c => c.name) || []
+        })
+
         // Update app context with synced data
         console.log('🔄 Updating app with synced data from cloud...', {
           meetings: result.data.meetings?.length || 0,
-          stakeholders: result.data.stakeholders?.length || 0
+          stakeholders: result.data.stakeholders?.length || 0,
+          categories: result.data.stakeholderCategories?.length || 0
         })
 
         // Clear current data and load synced data
@@ -98,9 +116,29 @@ export function SyncProvider({ children }) {
         }
 
         // Update stakeholder categories
-        if (result.data.stakeholderCategories?.length >= 0) {
+        console.log('🔍 DEBUG: About to update categories with:', {
+          categoriesArray: result.data.stakeholderCategories,
+          arrayLength: result.data.stakeholderCategories?.length,
+          arrayType: typeof result.data.stakeholderCategories,
+          isArray: Array.isArray(result.data.stakeholderCategories)
+        })
+
+        if (result.data.stakeholderCategories !== undefined) {
           console.log('📂 Updating stakeholder categories:', result.data.stakeholderCategories.length)
+          console.log('📂 Category names being set:', result.data.stakeholderCategories.map(c => c.name))
+
+          // Call the AppContext method
           app.setStakeholderCategories(result.data.stakeholderCategories)
+
+          // Verify the update happened
+          setTimeout(() => {
+            console.log('🔍 DEBUG: Categories after setStakeholderCategories call:', {
+              count: app.stakeholderCategories?.length || 0,
+              categories: app.stakeholderCategories?.map(c => c.name) || []
+            })
+          }, 100)
+        } else {
+          console.log('⚠️ DEBUG: No stakeholderCategories in result.data')
         }
 
         return result

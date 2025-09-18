@@ -161,11 +161,28 @@ function appReducer(state, action) {
       }
 
     case 'SET_STAKEHOLDER_CATEGORIES':
-      console.log('🔄 Setting stakeholder categories from sync:', action.payload?.length || 0)
-      return {
+      console.log('🔍 DEBUG: SET_STAKEHOLDER_CATEGORIES reducer called')
+      console.log('🔍 DEBUG: Current categories in state:', {
+        count: state.stakeholderCategories?.length || 0,
+        categories: state.stakeholderCategories?.map(c => c.name) || []
+      })
+      console.log('🔍 DEBUG: New categories payload:', {
+        count: action.payload?.length || 0,
+        categories: action.payload?.map(c => c.name) || [],
+        payload: action.payload
+      })
+
+      const updatedState = {
         ...state,
         stakeholderCategories: action.payload || []
       }
+
+      console.log('🔍 DEBUG: New state after SET_STAKEHOLDER_CATEGORIES:', {
+        count: updatedState.stakeholderCategories?.length || 0,
+        categories: updatedState.stakeholderCategories?.map(c => c.name) || []
+      })
+
+      return updatedState
 
     case 'ADD_NOTE_TO_MEETING':
       const { meetingId, note } = action.payload

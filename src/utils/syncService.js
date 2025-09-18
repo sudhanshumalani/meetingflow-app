@@ -402,6 +402,9 @@ class SyncService {
   async detectConflicts(localData, cloudData) {
     if (!localData || !cloudData) return null
 
+    // Check if localData has valid data property
+    if (!localData.data || !cloudData.data) return null
+
     const localTimestamp = new Date(localData.metadata?.timestamp || 0)
     const cloudTimestamp = new Date(cloudData.metadata?.timestamp || 0)
     const timeDiff = Math.abs(cloudTimestamp - localTimestamp)
@@ -626,6 +629,8 @@ class SyncService {
    * Calculate checksum for data integrity
    */
   calculateChecksum(data) {
+    if (!data) return 'empty'
+
     const str = JSON.stringify(data)
     let hash = 0
     for (let i = 0; i < str.length; i++) {

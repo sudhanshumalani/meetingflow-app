@@ -479,15 +479,25 @@ class SyncService {
    */
   async mergeData(localData, cloudData) {
     console.log('🔀 Merging local and cloud data...')
+    console.log('🔍 DEBUG mergeData inputs:', {
+      localData: localData ? Object.keys(localData) : 'null',
+      cloudData: cloudData ? Object.keys(cloudData) : 'null',
+      localDataType: typeof localData,
+      cloudDataType: typeof cloudData
+    })
+
+    // Handle null/undefined data
+    const safeLocalData = localData || {}
+    const safeCloudData = cloudData || {}
 
     const merged = {
       meetings: [],
       stakeholders: [],
-      stakeholderCategories: localData.stakeholderCategories || []
+      stakeholderCategories: safeLocalData.stakeholderCategories || []
     }
 
     // Merge meetings by ID, keeping the most recent
-    const allMeetings = [...(localData.meetings || []), ...(cloudData.meetings || [])]
+    const allMeetings = [...(safeLocalData.meetings || []), ...(safeCloudData.meetings || [])]
     const meetingMap = new Map()
 
     allMeetings.forEach(meeting => {
@@ -500,7 +510,7 @@ class SyncService {
     merged.meetings = Array.from(meetingMap.values())
 
     // Merge stakeholders by ID, keeping the most recent
-    const allStakeholders = [...(localData.stakeholders || []), ...(cloudData.stakeholders || [])]
+    const allStakeholders = [...(safeLocalData.stakeholders || []), ...(safeCloudData.stakeholders || [])]
     const stakeholderMap = new Map()
 
     allStakeholders.forEach(stakeholder => {
@@ -515,8 +525,10 @@ class SyncService {
     console.log('✅ Data merge complete:', {
       meetings: merged.meetings.length,
       stakeholders: merged.stakeholders.length,
-      localMeetings: localData.meetings?.length || 0,
-      cloudMeetings: cloudData.meetings?.length || 0
+      localMeetings: safeLocalData.meetings?.length || 0,
+      cloudMeetings: safeCloudData.meetings?.length || 0,
+      localStakeholders: safeLocalData.stakeholders?.length || 0,
+      cloudStakeholders: safeCloudData.stakeholders?.length || 0
     })
 
     return merged
@@ -947,6 +959,14 @@ class SyncService {
       }
 
       const content = await response.text()
+
+      console.log('🔍 DEBUG Raw downloaded content:', {
+        fileId,
+        contentLength: content.length,
+        contentPreview: content.substring(0, 200) + (content.length > 200 ? '...' : ''),
+        fullContent: content.length < 500 ? content : 'too long to show'
+      })
+
       const data = JSON.parse(content)
 
       console.log('🔍 DEBUG Downloaded data from Google Drive:', {

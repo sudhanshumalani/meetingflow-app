@@ -895,6 +895,12 @@ class SyncService {
       const fileName = `meetingflow_${key}.json`
       let fileId = config.fileId
 
+      console.log('🔍 DEBUG downloadFromGoogleDrive:', {
+        fileName,
+        searchingInFolder: config.folderId || 'root',
+        hasStoredFileId: !!fileId
+      })
+
       if (!fileId) {
         // Search for the file
         const searchResponse = await fetch(
@@ -911,9 +917,14 @@ class SyncService {
         }
 
         const searchResult = await searchResponse.json()
+        console.log('🔍 DEBUG Google Drive search result:', {
+          filesFound: searchResult.files?.length || 0,
+          files: searchResult.files?.map(f => ({ id: f.id, name: f.name }))
+        })
         fileId = searchResult.files?.[0]?.id
 
         if (!fileId) {
+          console.log('⚠️ No file found in Google Drive')
           return { success: true, data: null } // File not found
         }
       }
@@ -937,6 +948,18 @@ class SyncService {
 
       const content = await response.text()
       const data = JSON.parse(content)
+
+      console.log('🔍 DEBUG Downloaded data from Google Drive:', {
+        fileId,
+        contentLength: content.length,
+        hasData: !!data,
+        dataStructure: data ? {
+          hasMetadata: !!data.metadata,
+          hasDataProperty: !!data.data,
+          stakeholders: data.data?.stakeholders?.length || 0,
+          meetings: data.data?.meetings?.length || 0
+        } : 'no data'
+      })
 
       return { success: true, data }
     } catch (error) {

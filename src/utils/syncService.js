@@ -581,11 +581,29 @@ class SyncService {
     const allCategories = [...(safeLocalData.stakeholderCategories || []), ...(safeCloudData.stakeholderCategories || [])]
     const categoryMap = new Map()
 
-    allCategories.forEach(category => {
+    console.log('🔍 Default categories filter:', Array.from(defaultCategories))
+    console.log('🔍 All categories to process:', allCategories.map(c => ({ name: c?.name, label: c?.label })))
+
+    allCategories.forEach((category, index) => {
+      console.log('🔍 Processing category', index, ':', {
+        name: category?.name,
+        hasName: !!category?.name,
+        notInMap: !categoryMap.has(category.name),
+        notDefault: !defaultCategories.has(category.name),
+        category: category
+      })
+
       if (category?.name &&
           !categoryMap.has(category.name) &&
           !defaultCategories.has(category.name)) {
+        console.log('✅ Adding category to merge:', category.name)
         categoryMap.set(category.name, category)
+      } else {
+        console.log('❌ Skipping category:', category.name, {
+          reason: !category?.name ? 'no name' :
+                  categoryMap.has(category.name) ? 'already in map' :
+                  defaultCategories.has(category.name) ? 'is default' : 'unknown'
+        })
       }
     })
 

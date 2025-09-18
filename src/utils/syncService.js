@@ -251,6 +251,47 @@ class SyncService {
     this.notifyListeners('status_change', SYNC_STATUS.SYNCING)
 
     try {
+      // Check if we're about to upload empty data
+      const localDataSize = JSON.stringify(data).length
+      const localStakeholders = data.stakeholders?.length || 0
+      const localMeetings = data.meetings?.length || 0
+
+      console.log('🔍 Pre-upload validation:', {
+        localDataSize,
+        localStakeholders,
+        localMeetings,
+        hasSignificantData: localDataSize > 1000 || localStakeholders > 0 || localMeetings > 0
+      })
+
+      // Check if cloud has more data than what we're about to upload
+      if (localStakeholders === 0 && localMeetings === 0) {
+        console.log('⚠️ Attempting to upload empty data - checking cloud first...')
+
+        try {
+          const cloudResult = await this.downloadData('app_data')
+          if (cloudResult.success && cloudResult.data?.data) {
+            const cloudStakeholders = cloudResult.data.data.stakeholders?.length || 0
+            const cloudMeetings = cloudResult.data.data.meetings?.length || 0
+
+            console.log('🔍 Cloud data check:', {
+              cloudStakeholders,
+              cloudMeetings,
+              cloudDataSize: JSON.stringify(cloudResult.data).length
+            })
+
+            if (cloudStakeholders > 0 || cloudMeetings > 0) {
+              console.log('🛑 Preventing upload of empty data - cloud has more data')
+              console.log('📥 Syncing from cloud instead...')
+
+              // Instead of uploading empty data, sync from cloud
+              return await this.syncFromCloud()
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to check cloud data before upload:', error)
+        }
+      }
+
       // Prepare sync payload with metadata
       const syncPayload = {
         data,
@@ -265,9 +306,9 @@ class SyncService {
 
       console.log('☁️ Syncing data to cloud...', {
         provider: this.syncConfig.provider,
-        dataSize: JSON.stringify(data).length,
-        meetings: data.meetings?.length || 0,
-        stakeholders: data.stakeholders?.length || 0
+        dataSize: localDataSize,
+        meetings: localMeetings,
+        stakeholders: localStakeholders
       })
 
       const result = await this.uploadData('app_data', syncPayload)

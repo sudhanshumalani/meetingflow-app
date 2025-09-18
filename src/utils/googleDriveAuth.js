@@ -434,17 +434,24 @@ export class GoogleDriveAuth {
       const searchResult = await searchResponse.json()
       console.log('🔍 Search result:', searchResult)
 
-      // If folders exist, return the first one (or let user choose in future)
+      // If folders exist, find the one with the most data
       if (searchResult.files && searchResult.files.length > 0) {
         console.log(`📂 Found ${searchResult.files.length} existing MeetingFlow folder(s):`)
         searchResult.files.forEach((folder, index) => {
           console.log(`  ${index + 1}. ${folder.name} (${folder.id})`)
         })
 
-        // For now, return the first folder found
-        // TODO: In future, show a dialog to let user choose
+        // Check each folder for data files and choose the one with the most data
+        const folderWithMostData = await this.findFolderWithMostData(accessToken, searchResult.files)
+
+        if (folderWithMostData) {
+          console.log(`📂 Using folder with most data: ${folderWithMostData.name} (${folderWithMostData.id}) - ${folderWithMostData.dataSize} bytes`)
+          return folderWithMostData.id
+        }
+
+        // Fallback to first folder if data detection fails
         const folder = searchResult.files[0]
-        console.log(`📂 Using existing folder: ${folder.name} (${folder.id})`)
+        console.log(`📂 Using first folder as fallback: ${folder.name} (${folder.id})`)
         return folder.id
       }
 
@@ -475,6 +482,67 @@ export class GoogleDriveAuth {
     } catch (error) {
       console.error('Create folder error:', error)
       throw error
+    }
+  }
+
+  /**
+   * Find the folder with the most data by checking file sizes in each folder
+   */
+  async findFolderWithMostData(accessToken, folders) {
+    try {
+      console.log('🔍 Checking folders for data files...')
+
+      let bestFolder = null
+      let maxDataSize = 0
+
+      for (const folder of folders) {
+        try {
+          // Search for app_data file in this folder
+          const fileSearchResponse = await fetch(
+            `https://www.googleapis.com/drive/v3/files?q=name='meetingflow_app_data.json' and parents in '${folder.id}'&fields=files(id,name,size)`,
+            {
+              headers: {
+                'Authorization': `Bearer ${accessToken}`
+              }
+            }
+          )
+
+          if (fileSearchResponse.ok) {
+            const fileResult = await fileSearchResponse.json()
+
+            if (fileResult.files && fileResult.files.length > 0) {
+              const file = fileResult.files[0]
+              const fileSize = parseInt(file.size) || 0
+
+              console.log(`📁 Folder ${folder.id}: Found file ${file.name} (${fileSize} bytes)`)
+
+              if (fileSize > maxDataSize) {
+                maxDataSize = fileSize
+                bestFolder = {
+                  ...folder,
+                  dataSize: fileSize,
+                  fileId: file.id
+                }
+              }
+            } else {
+              console.log(`📁 Folder ${folder.id}: No data file found`)
+            }
+          }
+        } catch (error) {
+          console.error(`Error checking folder ${folder.id}:`, error)
+        }
+      }
+
+      if (bestFolder) {
+        console.log(`✅ Best folder found: ${bestFolder.id} with ${bestFolder.dataSize} bytes of data`)
+      } else {
+        console.log('⚠️ No folders with data files found')
+      }
+
+      return bestFolder
+    } catch (error) {
+      console.error('Error finding folder with most data:', error)
+      return null
     }
   }
 }

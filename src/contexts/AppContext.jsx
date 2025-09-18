@@ -184,6 +184,20 @@ function appReducer(state, action) {
 
       return updatedState
 
+    case 'SET_MEETINGS':
+      console.log('🔍 DEBUG: SET_MEETINGS reducer called with', action.payload?.length || 0, 'meetings')
+      return {
+        ...state,
+        meetings: action.payload || []
+      }
+
+    case 'SET_STAKEHOLDERS':
+      console.log('🔍 DEBUG: SET_STAKEHOLDERS reducer called with', action.payload?.length || 0, 'stakeholders')
+      return {
+        ...state,
+        stakeholders: action.payload || []
+      }
+
     case 'ADD_NOTE_TO_MEETING':
       const { meetingId, note } = action.payload
       const noteWithId = {
@@ -446,7 +460,7 @@ export function AppProvider({ children }) {
     }
   }, [])
 
-  const loadData = async () => {
+  const loadData = () => {
     try {
       dispatch({ type: 'SET_LOADING', payload: true })
       
@@ -454,36 +468,67 @@ export function AppProvider({ children }) {
       let meetings, localStakeholders, localCategories
 
       try {
-        // First try to load from localforage (where sync data is stored)
-        const localforageMeetings = await localforage.getItem('meetingflow_meetings')
-        const localforageStakeholders = await localforage.getItem('meetingflow_stakeholders')
-        const localforageCategories = await localforage.getItem('meetingflow_stakeholder_categories')
+        // Load from localStorage first (synchronous and immediate)
+        meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+        localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
 
-        console.log('🔍 DEBUG: Loading data from storage...', {
-          localforageMeetings: localforageMeetings?.length || 0,
-          localforageStakeholders: localforageStakeholders?.length || 0,
-          localforageCategories: localforageCategories?.length || 0
-        })
+        // Use defaults if empty (first-time setup only)
+        if (!localCategories.length) {
+          localCategories = Object.values(DEFAULT_CATEGORIES)
+        }
 
-        // Use localforage data if available (from sync), otherwise fall back to localStorage
-        meetings = localforageMeetings || JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-        localStakeholders = localforageStakeholders || JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-        localCategories = localforageCategories || JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
-
-        console.log('🔍 DEBUG: Final loaded data:', {
+        console.log('🔍 DEBUG: Initial load from localStorage:', {
           meetings: meetings.length,
           stakeholders: localStakeholders.length,
           categories: localCategories.length,
           categoryNames: localCategories.map(c => c.name)
         })
 
-        // Only use defaults if no categories found in either storage (first-time setup)
-        if (!localCategories.length) {
-          console.log('🔍 DEBUG: No categories found in storage, loading defaults')
-          localCategories = Object.values(DEFAULT_CATEGORIES)
-        } else {
-          console.log('🔍 DEBUG: Categories loaded from storage, skipping defaults')
-        }
+        // After initial load, check localforage asynchronously to sync up with latest data
+        // This prevents infinite loops while ensuring data consistency
+        setTimeout(async () => {
+          try {
+            const localforageMeetings = await localforage.getItem('meetingflow_meetings')
+            const localforageStakeholders = await localforage.getItem('meetingflow_stakeholders')
+            const localforageCategories = await localforage.getItem('meetingflow_stakeholder_categories')
+
+            console.log('🔍 DEBUG: Checking localforage for updates...', {
+              localforageMeetings: localforageMeetings?.length || 0,
+              localforageStakeholders: localforageStakeholders?.length || 0,
+              localforageCategories: localforageCategories?.length || 0
+            })
+
+            // Update state if localforage has different data (from sync)
+            let needsUpdate = false
+
+            if (localforageMeetings && localforageMeetings.length !== meetings.length) {
+              console.log('🔍 DEBUG: Meetings differ, updating from localforage')
+              dispatch({ type: 'SET_MEETINGS', payload: localforageMeetings })
+              needsUpdate = true
+            }
+
+            if (localforageStakeholders && localforageStakeholders.length !== localStakeholders.length) {
+              console.log('🔍 DEBUG: Stakeholders differ, updating from localforage')
+              dispatch({ type: 'SET_STAKEHOLDERS', payload: localforageStakeholders })
+              needsUpdate = true
+            }
+
+            if (localforageCategories && localforageCategories.length !== localCategories.length) {
+              console.log('🔍 DEBUG: Categories differ, updating from localforage')
+              dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: localforageCategories })
+              needsUpdate = true
+            }
+
+            if (needsUpdate) {
+              console.log('🔍 DEBUG: Updated state from localforage data')
+            } else {
+              console.log('🔍 DEBUG: localStorage and localforage are in sync')
+            }
+          } catch (error) {
+            console.log('🔍 DEBUG: Error checking localforage:', error)
+          }
+        }, 100) // Small delay to ensure initial render completes
 
         console.log('📂 LOAD: Loaded from localStorage - meetings:', meetings.length)
         console.log('📂 LOAD: Meeting IDs loaded:', meetings.map(m => m.id))

@@ -329,14 +329,14 @@ class SyncService {
         const conflict = await this.detectConflicts(localData, cloudData)
 
         if (conflict) {
-          console.log('⚠️ Sync conflict detected')
-          this.notifyListeners('status_change', SYNC_STATUS.CONFLICT)
-          this.notifyListeners('sync_conflict', {
-            local: localData,
-            cloud: cloudData,
-            conflict
-          })
-          return { success: false, conflict: true, conflictData: { local: localData, cloud: cloudData } }
+          console.log('⚠️ Sync conflict detected - attempting automatic resolution...')
+          console.log('🔧 Conflict details:', conflict)
+
+          // Automatically resolve by merging both datasets
+          console.log('🔄 Auto-resolving conflict by merging local and cloud data...')
+          this.notifyListeners('status_change', SYNC_STATUS.SYNCING)
+
+          // Continue with merge process instead of failing
         }
 
         // Merge local and cloud data to prevent data loss
@@ -914,9 +914,33 @@ class SyncService {
       })
 
       if (!fileId) {
-        // Search for the file
+        // First, let's see ALL files in this folder to understand what's there
+        const folderContentsResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=parents in '${config.folderId || 'root'}'&fields=files(id,name,size,modifiedTime)`,
+          {
+            headers: {
+              'Authorization': `Bearer ${config.accessToken}`,
+            }
+          }
+        )
+
+        if (folderContentsResponse.ok) {
+          const folderContents = await folderContentsResponse.json()
+          console.log('📁 DEBUG: All files in folder:', {
+            folderId: config.folderId,
+            totalFiles: folderContents.files?.length || 0,
+            files: folderContents.files?.map(f => ({
+              id: f.id,
+              name: f.name,
+              size: f.size + ' bytes',
+              modified: f.modifiedTime
+            }))
+          })
+        }
+
+        // Search for the specific file
         const searchResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and parents in '${config.folderId || 'root'}'`,
+          `https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and parents in '${config.folderId || 'root'}'&fields=files(id,name,size,modifiedTime)`,
           {
             headers: {
               'Authorization': `Bearer ${config.accessToken}`,
@@ -931,7 +955,12 @@ class SyncService {
         const searchResult = await searchResponse.json()
         console.log('🔍 DEBUG Google Drive search result:', {
           filesFound: searchResult.files?.length || 0,
-          files: searchResult.files?.map(f => ({ id: f.id, name: f.name }))
+          files: searchResult.files?.map(f => ({
+            id: f.id,
+            name: f.name,
+            size: f.size + ' bytes',
+            modified: f.modifiedTime
+          }))
         })
         fileId = searchResult.files?.[0]?.id
 

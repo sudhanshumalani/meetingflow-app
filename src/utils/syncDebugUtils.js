@@ -443,12 +443,12 @@ export class SyncDebugger {
 
 // Global debugging functions
 window.syncDebugger = new SyncDebugger()
-window.debugSync = () => window.syncDebugger.runAllTests()
-window.testLocalStorage = () => window.syncDebugger.testLocalStorage()
-window.testSyncService = () => window.syncDebugger.testSyncService()
-window.testGoogleDrive = () => window.syncDebugger.testGoogleDriveAccess()
-window.testUpload = () => window.syncDebugger.testUploadToCloud()
-window.testDownload = () => window.syncDebugger.testDownloadFromCloud()
-window.testFullSync = () => window.syncDebugger.testFullSync()
+window.debugSync = async () => await window.syncDebugger.runAllTests()
+window.testLocalStorage = async () => await window.syncDebugger.testLocalStorage()
+window.testSyncService = async () => await window.syncDebugger.testSyncService()
+window.testGoogleDrive = async () => await window.syncDebugger.testGoogleDriveAccess()
+window.testUpload = async () => await window.syncDebugger.testUploadToCloud()
+window.testDownload = async () => await window.syncDebugger.testDownloadFromCloud()
+window.testFullSync = async () => await window.syncDebugger.testFullSync()
 
 export default SyncDebugger

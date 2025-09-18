@@ -409,10 +409,40 @@ export class GoogleDriveAuth {
   }
 
   /**
-   * Create a dedicated folder for MeetingFlow data
+   * Find or create a dedicated folder for MeetingFlow data
    */
-  async createMeetingFlowFolder(accessToken) {
+  async findOrCreateMeetingFlowFolder(accessToken) {
     try {
+      // First, search for existing MeetingFlow folders
+      const searchResponse = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=name='MeetingFlow Data' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
+        }
+      )
+
+      if (!searchResponse.ok) {
+        throw new Error(`Failed to search folders: ${searchResponse.statusText}`)
+      }
+
+      const searchResult = await searchResponse.json()
+
+      // If folders exist, return the first one (or let user choose in future)
+      if (searchResult.files && searchResult.files.length > 0) {
+        console.log(`📂 Found ${searchResult.files.length} existing MeetingFlow folder(s)`)
+
+        // For now, return the first folder found
+        // TODO: In future, show a dialog to let user choose
+        const folder = searchResult.files[0]
+        console.log(`📂 Using existing folder: ${folder.name} (${folder.id})`)
+        return folder.id
+      }
+
+      // No existing folder found, create a new one
+      console.log('📂 No existing MeetingFlow folder found, creating new one...')
+
       const folderMetadata = {
         name: 'MeetingFlow Data',
         mimeType: 'application/vnd.google-apps.folder',

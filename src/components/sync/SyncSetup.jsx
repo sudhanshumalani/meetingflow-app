@@ -165,8 +165,8 @@ export function SyncSetup({
         throw new Error(driveTest.error || 'Failed to access Google Drive')
       }
 
-      // Create MeetingFlow folder
-      const folderId = await googleAuth.createMeetingFlowFolder(tokens.accessToken)
+      // Find or create MeetingFlow folder
+      const folderId = await googleAuth.findOrCreateMeetingFlowFolder(tokens.accessToken)
 
       // Configure the sync provider (implicit flow doesn't provide refresh token)
       const config = {

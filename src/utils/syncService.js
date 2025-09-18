@@ -534,7 +534,7 @@ class SyncService {
     const merged = {
       meetings: [],
       stakeholders: [],
-      stakeholderCategories: safeLocalData.stakeholderCategories || []
+      stakeholderCategories: []
     }
 
     // Merge meetings by ID, keeping the most recent
@@ -563,13 +563,51 @@ class SyncService {
 
     merged.stakeholders = Array.from(stakeholderMap.values())
 
+    // Merge stakeholder categories by name, combining from both sources
+    // Filter out default/predefined categories that come with new app installations
+    const defaultCategories = new Set([
+      'Leadership',
+      'Engineering',
+      'Product',
+      'Marketing',
+      'Sales',
+      'Finance',
+      'Operations',
+      'HR',
+      'Legal',
+      'General'
+    ])
+
+    const allCategories = [...(safeLocalData.stakeholderCategories || []), ...(safeCloudData.stakeholderCategories || [])]
+    const categoryMap = new Map()
+
+    allCategories.forEach(category => {
+      if (category?.name &&
+          !categoryMap.has(category.name) &&
+          !defaultCategories.has(category.name)) {
+        categoryMap.set(category.name, category)
+      }
+    })
+
+    merged.stakeholderCategories = Array.from(categoryMap.values())
+
+    console.log('🔍 Category merge details:', {
+      totalInputCategories: allCategories.length,
+      filteredOutDefaults: allCategories.filter(c => defaultCategories.has(c?.name)).length,
+      finalMergedCategories: merged.stakeholderCategories.length,
+      categoryNames: merged.stakeholderCategories.map(c => c.name)
+    })
+
     console.log('✅ Data merge complete:', {
       meetings: merged.meetings.length,
       stakeholders: merged.stakeholders.length,
+      stakeholderCategories: merged.stakeholderCategories.length,
       localMeetings: safeLocalData.meetings?.length || 0,
       cloudMeetings: safeCloudData.meetings?.length || 0,
       localStakeholders: safeLocalData.stakeholders?.length || 0,
-      cloudStakeholders: safeCloudData.stakeholders?.length || 0
+      cloudStakeholders: safeCloudData.stakeholders?.length || 0,
+      localCategories: safeLocalData.stakeholderCategories?.length || 0,
+      cloudCategories: safeCloudData.stakeholderCategories?.length || 0
     })
 
     return merged

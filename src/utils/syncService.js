@@ -1117,7 +1117,10 @@ class SyncService {
           hasMetadata: !!data.metadata,
           hasDataProperty: !!data.data,
           stakeholders: data.data?.stakeholders?.length || 0,
-          meetings: data.data?.meetings?.length || 0
+          meetings: data.data?.meetings?.length || 0,
+          stakeholderCategories: data.data?.stakeholderCategories?.length || 0,
+          dataKeys: data.data ? Object.keys(data.data) : [],
+          fullDataStructure: data.data
         } : 'no data'
       })
 

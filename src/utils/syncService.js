@@ -585,24 +585,33 @@ class SyncService {
     console.log('🔍 All categories to process:', allCategories.map(c => ({ name: c?.name, label: c?.label })))
 
     allCategories.forEach((category, index) => {
+      const hasName = !!category?.name
+      const notInMap = !categoryMap.has(category.name)
+      const notDefault = !defaultCategories.has(category.name)
+
       console.log('🔍 Processing category', index, ':', {
         name: category?.name,
-        hasName: !!category?.name,
-        notInMap: !categoryMap.has(category.name),
-        notDefault: !defaultCategories.has(category.name),
-        category: category
+        label: category?.label,
+        key: category?.key,
+        hasName,
+        notInMap,
+        notDefault,
+        isDefaultMatch: category?.name ? defaultCategories.has(category.name) : false,
+        categoryStructure: Object.keys(category || {}),
+        fullCategory: category
       })
 
-      if (category?.name &&
-          !categoryMap.has(category.name) &&
-          !defaultCategories.has(category.name)) {
+      if (hasName && notInMap && notDefault) {
         console.log('✅ Adding category to merge:', category.name)
         categoryMap.set(category.name, category)
       } else {
-        console.log('❌ Skipping category:', category.name, {
-          reason: !category?.name ? 'no name' :
-                  categoryMap.has(category.name) ? 'already in map' :
-                  defaultCategories.has(category.name) ? 'is default' : 'unknown'
+        console.log('❌ Skipping category:', category?.name || 'unnamed', {
+          reason: !hasName ? 'no name property' :
+                  !notInMap ? 'already in map' :
+                  !notDefault ? `is default (matches: ${category.name})` : 'unknown',
+          hasName,
+          notInMap,
+          notDefault
         })
       }
     })

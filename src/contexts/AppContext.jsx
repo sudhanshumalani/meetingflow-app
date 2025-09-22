@@ -9,7 +9,7 @@ const AppContext = createContext()
 const initialState = {
   meetings: [],
   stakeholders: [],
-  stakeholderCategories: Object.values(DEFAULT_CATEGORIES),
+  stakeholderCategories: [], // Start empty, will be loaded from storage or set by sync
   currentMeeting: null,
   isLoading: false,
   error: null,
@@ -34,7 +34,7 @@ function appReducer(state, action) {
         ...state,
         meetings: action.payload.meetings || [],
         stakeholders: action.payload.stakeholders || [],
-        stakeholderCategories: action.payload.stakeholderCategories || Object.values(DEFAULT_CATEGORIES),
+        stakeholderCategories: action.payload.stakeholderCategories || [],
         isLoading: false
       }
     
@@ -473,9 +473,17 @@ export function AppProvider({ children }) {
         localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
         localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
 
-        // Use defaults if empty (first-time setup only)
+        // Only use defaults for true first-time setup (when no categories exist anywhere)
         if (!localCategories.length) {
-          localCategories = Object.values(DEFAULT_CATEGORIES)
+          // Check if this is first-time setup by looking for any existing app data
+          const hasExistingData = meetings.length > 0 || localStakeholders.length > 0
+          if (!hasExistingData) {
+            console.log('🔍 DEBUG: First-time setup detected, loading default categories')
+            localCategories = Object.values(DEFAULT_CATEGORIES)
+          } else {
+            console.log('🔍 DEBUG: Existing app data found, keeping empty categories (from sync)')
+            localCategories = []
+          }
         }
 
         console.log('🔍 DEBUG: Initial load from localStorage:', {
@@ -496,7 +504,7 @@ export function AppProvider({ children }) {
         console.warn('⚠️ localStorage failed, using defaults:', error)
         meetings = []
         localStakeholders = []
-        localCategories = Object.values(DEFAULT_CATEGORIES)
+        localCategories = [] // Don't load defaults on error, let them be set properly
       }
       
       // Deduplicate meetings before loading
@@ -510,7 +518,7 @@ export function AppProvider({ children }) {
         payload: {
           meetings: deduplicatedMeetings,
           stakeholders: localStakeholders || [],
-          stakeholderCategories: localCategories || Object.values(DEFAULT_CATEGORIES)
+          stakeholderCategories: localCategories || []
         }
       })
       

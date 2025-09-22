@@ -1119,10 +1119,16 @@ class SyncService {
           stakeholders: data.data?.stakeholders?.length || 0,
           meetings: data.data?.meetings?.length || 0,
           stakeholderCategories: data.data?.stakeholderCategories?.length || 0,
-          dataKeys: data.data ? Object.keys(data.data) : [],
-          fullDataStructure: data.data
+          dataKeys: data.data ? Object.keys(data.data) : []
         } : 'no data'
       })
+
+      // Enhanced debugging for categories issue
+      console.log('🔍 DETAILED CLOUD DATA STRUCTURE:')
+      console.log('   Top-level keys:', Object.keys(data))
+      console.log('   data.data keys:', data.data ? Object.keys(data.data) : 'no data.data')
+      console.log('   stakeholderCategories in data.data:', data.data?.stakeholderCategories?.length || 'not found')
+      console.log('   Full data.data object:', data.data)
 
       return { success: true, data }
     } catch (error) {

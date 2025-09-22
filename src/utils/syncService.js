@@ -255,16 +255,18 @@ class SyncService {
       const localDataSize = JSON.stringify(data).length
       const localStakeholders = data.stakeholders?.length || 0
       const localMeetings = data.meetings?.length || 0
+      const localCategories = data.stakeholderCategories?.length || 0
 
       console.log('🔍 Pre-upload validation:', {
         localDataSize,
         localStakeholders,
         localMeetings,
-        hasSignificantData: localDataSize > 1000 || localStakeholders > 0 || localMeetings > 0
+        localCategories,
+        hasSignificantData: localDataSize > 1000 || localStakeholders > 0 || localMeetings > 0 || localCategories > 0
       })
 
       // Check if cloud has more data than what we're about to upload
-      if (localStakeholders === 0 && localMeetings === 0) {
+      if (localStakeholders === 0 && localMeetings === 0 && localCategories === 0) {
         console.log('⚠️ Attempting to upload empty data - checking cloud first...')
 
         try {
@@ -272,14 +274,16 @@ class SyncService {
           if (cloudResult.success && cloudResult.data?.data) {
             const cloudStakeholders = cloudResult.data.data.stakeholders?.length || 0
             const cloudMeetings = cloudResult.data.data.meetings?.length || 0
+            const cloudCategories = cloudResult.data.data.stakeholderCategories?.length || 0
 
             console.log('🔍 Cloud data check:', {
               cloudStakeholders,
               cloudMeetings,
+              cloudCategories,
               cloudDataSize: JSON.stringify(cloudResult.data).length
             })
 
-            if (cloudStakeholders > 0 || cloudMeetings > 0) {
+            if (cloudStakeholders > 0 || cloudMeetings > 0 || cloudCategories > 0) {
               console.log('🛑 Preventing upload of empty data - cloud has more data')
               console.log('📥 Syncing from cloud instead...')
 
@@ -308,7 +312,8 @@ class SyncService {
         provider: this.syncConfig.provider,
         dataSize: localDataSize,
         meetings: localMeetings,
-        stakeholders: localStakeholders
+        stakeholders: localStakeholders,
+        categories: localCategories
       })
 
       const result = await this.uploadData('app_data', syncPayload)

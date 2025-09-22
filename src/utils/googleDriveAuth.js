@@ -142,9 +142,20 @@ export class GoogleDriveAuth {
    */
   isValidConfig() {
     // Check if we have a valid client ID (not empty and looks like a real Google client ID)
-    return GOOGLE_CONFIG.clientId &&
-           GOOGLE_CONFIG.clientId.length > 20 &&
-           GOOGLE_CONFIG.clientId.includes('.apps.googleusercontent.com')
+    const hasClientId = !!GOOGLE_CONFIG.clientId
+    const hasValidLength = GOOGLE_CONFIG.clientId && GOOGLE_CONFIG.clientId.length > 20
+    const hasValidFormat = GOOGLE_CONFIG.clientId && GOOGLE_CONFIG.clientId.includes('.apps.googleusercontent.com')
+
+    console.log('🔍 DEBUG: Google Client ID validation:', {
+      clientId: GOOGLE_CONFIG.clientId,
+      clientIdLength: GOOGLE_CONFIG.clientId?.length || 0,
+      hasClientId,
+      hasValidLength,
+      hasValidFormat,
+      isValid: hasClientId && hasValidLength && hasValidFormat
+    })
+
+    return hasClientId && hasValidLength && hasValidFormat
   }
 
   /**

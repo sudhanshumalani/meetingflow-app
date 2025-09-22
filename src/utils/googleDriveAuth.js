@@ -9,8 +9,31 @@ const GOOGLE_CONFIG = {
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
   redirectUri: window.location.origin + '/meetingflow-app/auth/google/callback',
   scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
-  responseType: 'token', // Changed from 'code' to 'token' for implicit flow
+  responseType: 'code', // Use authorization code flow for refresh tokens
   prompt: 'consent'
+}
+
+// PKCE helper functions
+class PKCEHelper {
+  static async generateCodeVerifier() {
+    const array = new Uint8Array(32)
+    crypto.getRandomValues(array)
+    return this.base64URLEncode(array)
+  }
+
+  static async generateCodeChallenge(verifier) {
+    const encoder = new TextEncoder()
+    const data = encoder.encode(verifier)
+    const digest = await crypto.subtle.digest('SHA-256', data)
+    return this.base64URLEncode(new Uint8Array(digest))
+  }
+
+  static base64URLEncode(array) {
+    return btoa(String.fromCharCode.apply(null, array))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '')
+  }
 }
 
 // Log for debugging (remove in production)
@@ -19,108 +42,285 @@ if (import.meta.env.DEV) {
   console.log('Client ID length:', GOOGLE_CONFIG.clientId?.length)
 }
 
-// Token storage manager for automatic re-authentication
+// Advanced token storage manager with refresh token support
 class TokenManager {
   constructor() {
-    // Load persisted token from localStorage
-    this.loadPersistedToken()
-    this.refreshCallback = null
+    this.loadPersistedTokens()
     this.refreshTimer = null
+    this.refreshInProgress = false
+    this.listeners = new Set()
+
+    // Set up cross-tab communication
+    this.setupCrossTabSync()
+
+    // Start background refresh monitoring
+    this.startRefreshMonitoring()
   }
 
-  loadPersistedToken() {
+  loadPersistedTokens() {
     try {
-      const stored = localStorage.getItem('google_drive_token')
+      const stored = localStorage.getItem('google_drive_tokens')
       if (stored) {
-        const { token, expiresAt } = JSON.parse(stored)
-        // Only load if not expired
-        if (expiresAt && Date.now() < expiresAt) {
-          this.token = token
-          this.expiresAt = expiresAt
-          console.log('Loaded persisted token, valid until:', new Date(expiresAt).toISOString())
+        const tokens = JSON.parse(stored)
 
-          // Set up refresh timer for loaded token
-          this.scheduleRefresh()
+        // Validate token structure
+        if (tokens.accessToken && tokens.expiresAt) {
+          this.accessToken = tokens.accessToken
+          this.refreshToken = tokens.refreshToken
+          this.expiresAt = tokens.expiresAt
+          this.tokenType = tokens.tokenType || 'Bearer'
+
+          console.log('✅ Loaded persisted tokens:', {
+            hasAccessToken: !!this.accessToken,
+            hasRefreshToken: !!this.refreshToken,
+            expiresAt: new Date(this.expiresAt).toISOString(),
+            isExpired: this.isExpired()
+          })
+
+          // If expired but we have refresh token, try to refresh immediately
+          if (this.isExpired() && this.refreshToken) {
+            console.log('🔄 Token expired, will refresh on next getValidToken() call')
+          }
         }
       }
     } catch (error) {
-      console.error('Failed to load persisted token:', error)
+      console.error('❌ Failed to load persisted tokens:', error)
+      this.clearTokens()
     }
   }
 
-  setToken(accessToken, expiresIn) {
-    this.token = accessToken
-    this.expiresAt = Date.now() + (expiresIn * 1000)
+  setTokens(tokenData) {
+    this.accessToken = tokenData.accessToken
+    this.refreshToken = tokenData.refreshToken
+    this.expiresAt = tokenData.expiresAt || (Date.now() + (tokenData.expiresIn * 1000))
+    this.tokenType = tokenData.tokenType || 'Bearer'
+    this.scope = tokenData.scope
 
-    // Persist token to localStorage
+    // Persist tokens securely
+    this.persistTokens()
+
+    // Notify listeners
+    this.notifyListeners('tokens_updated', {
+      hasAccessToken: !!this.accessToken,
+      hasRefreshToken: !!this.refreshToken,
+      expiresAt: this.expiresAt
+    })
+
+    console.log('✅ Tokens updated:', {
+      accessTokenLength: this.accessToken?.length || 0,
+      hasRefreshToken: !!this.refreshToken,
+      expiresAt: new Date(this.expiresAt).toISOString(),
+      scope: this.scope
+    })
+  }
+
+  persistTokens() {
     try {
-      localStorage.setItem('google_drive_token', JSON.stringify({
-        token: this.token,
-        expiresAt: this.expiresAt
-      }))
-      console.log('Token persisted, expires at:', new Date(this.expiresAt).toISOString())
+      const tokenData = {
+        accessToken: this.accessToken,
+        refreshToken: this.refreshToken,
+        expiresAt: this.expiresAt,
+        tokenType: this.tokenType,
+        scope: this.scope,
+        updatedAt: Date.now()
+      }
+
+      localStorage.setItem('google_drive_tokens', JSON.stringify(tokenData))
+
+      // Broadcast to other tabs
+      this.broadcastToTabs('tokens_updated', tokenData)
+
     } catch (error) {
-      console.error('Failed to persist token:', error)
-    }
-
-    // Schedule automatic refresh
-    this.scheduleRefresh()
-  }
-
-  scheduleRefresh() {
-    // Clear existing timer
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer)
-    }
-
-    // Set up automatic refresh 5 minutes before expiry
-    const timeUntilExpiry = this.expiresAt - Date.now()
-    const refreshIn = Math.max(0, timeUntilExpiry - (5 * 60 * 1000)) // 5 minutes before expiry
-
-    if (refreshIn > 0 && this.refreshCallback) {
-      this.refreshTimer = setTimeout(() => {
-        console.log('Token expiring soon, triggering re-authentication...')
-        this.refreshCallback()
-      }, refreshIn)
+      console.error('❌ Failed to persist tokens:', error)
     }
   }
 
-  getToken() {
-    // Check if token is still valid (with 1 minute buffer)
-    if (this.token && this.expiresAt && Date.now() < (this.expiresAt - 60000)) {
-      return this.token
+  async getValidToken() {
+    // If no access token, return null
+    if (!this.accessToken) {
+      console.log('📭 No access token available')
+      return null
     }
-    return null
-  }
 
-  isExpired() {
-    return !this.token || !this.expiresAt || Date.now() >= this.expiresAt
-  }
+    // If token is still valid (with 2 minute buffer), return it
+    if (!this.isExpired(120000)) { // 2 minutes buffer
+      return this.accessToken
+    }
 
-  clear() {
-    this.token = null
-    this.expiresAt = null
+    // Token is expired or expiring soon, try to refresh
+    console.log('🔄 Access token expired or expiring, attempting refresh...')
 
-    // Clear from localStorage
+    if (!this.refreshToken) {
+      console.log('❌ No refresh token available, need re-authentication')
+      return null
+    }
+
+    // Prevent concurrent refresh attempts
+    if (this.refreshInProgress) {
+      console.log('⏳ Refresh already in progress, waiting...')
+      return new Promise((resolve) => {
+        const checkRefresh = () => {
+          if (!this.refreshInProgress) {
+            resolve(this.accessToken)
+          } else {
+            setTimeout(checkRefresh, 100)
+          }
+        }
+        checkRefresh()
+      })
+    }
+
     try {
+      const refreshed = await this.refreshAccessToken()
+      return refreshed ? this.accessToken : null
+    } catch (error) {
+      console.error('❌ Token refresh failed:', error)
+      return null
+    }
+  }
+
+  async refreshAccessToken() {
+    if (this.refreshInProgress) return false
+
+    this.refreshInProgress = true
+
+    try {
+      console.log('🔄 Refreshing access token...')
+
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          client_id: GOOGLE_CONFIG.clientId,
+          refresh_token: this.refreshToken,
+          grant_type: 'refresh_token'
+        })
+      })
+
+      if (!response.ok) {
+        const error = await response.text()
+        throw new Error(`Token refresh failed: ${response.status} ${error}`)
+      }
+
+      const tokenData = await response.json()
+
+      // Update tokens (keep existing refresh token if not provided)
+      this.setTokens({
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token || this.refreshToken,
+        expiresIn: tokenData.expires_in,
+        tokenType: tokenData.token_type,
+        scope: tokenData.scope
+      })
+
+      console.log('✅ Access token refreshed successfully')
+      this.notifyListeners('token_refreshed', { success: true })
+
+      return true
+    } catch (error) {
+      console.error('❌ Failed to refresh access token:', error)
+      this.notifyListeners('token_refresh_failed', { error: error.message })
+
+      // If refresh token is invalid, clear all tokens
+      if (error.message.includes('invalid_grant')) {
+        console.log('🗑️ Refresh token invalid, clearing all tokens')
+        this.clearTokens()
+      }
+
+      return false
+    } finally {
+      this.refreshInProgress = false
+    }
+  }
+
+  isExpired(bufferMs = 60000) { // 1 minute buffer by default
+    if (!this.accessToken || !this.expiresAt) return true
+    return Date.now() >= (this.expiresAt - bufferMs)
+  }
+
+  startRefreshMonitoring() {
+    // Check every 5 minutes for tokens that need refreshing
+    setInterval(() => {
+      if (this.accessToken && this.refreshToken && this.isExpired(300000)) { // 5 minutes buffer
+        console.log('🔄 Proactive token refresh triggered')
+        this.refreshAccessToken()
+      }
+    }, 5 * 60 * 1000) // Every 5 minutes
+  }
+
+  setupCrossTabSync() {
+    // Listen for storage changes from other tabs
+    window.addEventListener('storage', (event) => {
+      if (event.key === 'google_drive_tokens' && event.newValue) {
+        try {
+          const tokens = JSON.parse(event.newValue)
+          if (tokens.updatedAt > (this.lastUpdateTime || 0)) {
+            console.log('🔄 Syncing tokens from another tab')
+            this.loadPersistedTokens()
+          }
+        } catch (error) {
+          console.error('Failed to sync tokens from other tab:', error)
+        }
+      }
+    })
+
+    // Use BroadcastChannel for real-time updates
+    if ('BroadcastChannel' in window) {
+      this.broadcastChannel = new BroadcastChannel('meetingflow-auth')
+      this.broadcastChannel.addEventListener('message', (event) => {
+        if (event.data.type === 'tokens_updated') {
+          console.log('📡 Received token update from another tab')
+          this.loadPersistedTokens()
+        }
+      })
+    }
+  }
+
+  broadcastToTabs(type, data) {
+    if (this.broadcastChannel) {
+      this.broadcastChannel.postMessage({ type, data })
+    }
+  }
+
+  clearTokens() {
+    this.accessToken = null
+    this.refreshToken = null
+    this.expiresAt = null
+    this.tokenType = null
+    this.scope = null
+
+    try {
+      localStorage.removeItem('google_drive_tokens')
+      // Also clear old token storage for cleanup
       localStorage.removeItem('google_drive_token')
     } catch (error) {
-      console.error('Failed to clear persisted token:', error)
+      console.error('Failed to clear persisted tokens:', error)
     }
 
-    // Clear refresh timer
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer)
-      this.refreshTimer = null
-    }
+    this.broadcastToTabs('tokens_cleared', {})
+    this.notifyListeners('tokens_cleared', {})
+
+    console.log('🗑️ All tokens cleared')
   }
 
-  setRefreshCallback(callback) {
-    this.refreshCallback = callback
-    // If token exists, schedule refresh
-    if (this.token && this.expiresAt) {
-      this.scheduleRefresh()
-    }
+  addListener(callback) {
+    this.listeners.add(callback)
+  }
+
+  removeListener(callback) {
+    this.listeners.delete(callback)
+  }
+
+  notifyListeners(event, data) {
+    this.listeners.forEach(callback => {
+      try {
+        callback(event, data)
+      } catch (error) {
+        console.error('Error in token listener:', error)
+      }
+    })
   }
 }
 
@@ -129,12 +329,26 @@ export class GoogleDriveAuth {
     this.authWindow = null
     this.authPromise = null
     this.tokenManager = new TokenManager()
-    this.silentAuthFrame = null
+    this.pendingPKCE = null
 
-    // Set up automatic re-authentication
-    this.tokenManager.setRefreshCallback(() => {
-      this.silentReauthenticate()
+    // Listen for token manager events
+    this.tokenManager.addListener((event, data) => {
+      this.handleTokenEvent(event, data)
     })
+  }
+
+  handleTokenEvent(event, data) {
+    switch (event) {
+      case 'token_refreshed':
+        console.log('🔄 Token refreshed automatically')
+        break
+      case 'token_refresh_failed':
+        console.warn('⚠️ Automatic token refresh failed:', data.error)
+        break
+      case 'tokens_cleared':
+        console.log('🗑️ Tokens cleared, user will need to re-authenticate')
+        break
+    }
   }
 
   /**
@@ -166,7 +380,7 @@ export class GoogleDriveAuth {
   }
 
   /**
-   * Initiate Google OAuth2 flow
+   * Initiate Google OAuth2 flow with PKCE
    */
   async authenticate() {
     // Check if authentication is already in progress
@@ -179,160 +393,156 @@ export class GoogleDriveAuth {
       throw new Error('Google OAuth not properly configured. Please set up valid Google API credentials.')
     }
 
-    this.authPromise = new Promise((resolve, reject) => {
-      const authUrl = this.buildAuthUrl()
+    this.authPromise = new Promise(async (resolve, reject) => {
+      try {
+        // Generate PKCE parameters
+        const codeVerifier = await PKCEHelper.generateCodeVerifier()
+        const codeChallenge = await PKCEHelper.generateCodeChallenge(codeVerifier)
 
-      // Open authentication window
-      this.authWindow = window.open(
-        authUrl,
-        'google-auth',
-        'width=500,height=600,scrollbars=yes,resizable=yes'
-      )
-
-      if (!this.authWindow) {
-        reject(new Error('Failed to open authentication window. Please allow popups for this site.'))
-        return
-      }
-
-      // Listen for the redirect
-      const checkClosed = setInterval(() => {
-        if (this.authWindow.closed) {
-          clearInterval(checkClosed)
-          this.authPromise = null
-          reject(new Error('Authentication window was closed'))
+        // Store PKCE data for later use in token exchange
+        this.pendingPKCE = {
+          codeVerifier,
+          codeChallenge,
+          state: this.generateState()
         }
-      }, 1000)
 
-      // Listen for messages from the auth window
-      const messageHandler = async (event) => {
-        if (event.origin !== window.location.origin) {
+        const authUrl = this.buildAuthUrl(codeChallenge, this.pendingPKCE.state)
+
+        console.log('🔐 Starting OAuth 2.0 Authorization Code flow with PKCE')
+
+        // Open authentication window
+        this.authWindow = window.open(
+          authUrl,
+          'google-auth',
+          'width=500,height=600,scrollbars=yes,resizable=yes'
+        )
+
+        if (!this.authWindow) {
+          reject(new Error('Failed to open authentication window. Please allow popups for this site.'))
           return
         }
 
-        if (event.data.type === 'google-auth-success') {
-          clearInterval(checkClosed)
-          window.removeEventListener('message', messageHandler)
-          this.authWindow.close()
-          this.authPromise = null
+        // Listen for the redirect
+        const checkClosed = setInterval(() => {
+          if (this.authWindow.closed) {
+            clearInterval(checkClosed)
+            this.authPromise = null
+            this.pendingPKCE = null
+            reject(new Error('Authentication window was closed'))
+          }
+        }, 1000)
 
-          // With implicit flow, we get the token directly
-          // Store in token manager
-          this.tokenManager.setToken(event.data.accessToken, event.data.expiresIn || 3600)
+        // Listen for messages from the auth window
+        const messageHandler = async (event) => {
+          if (event.origin !== window.location.origin) {
+            return
+          }
 
-          resolve({
-            accessToken: event.data.accessToken,
-            expiresAt: Date.now() + (event.data.expiresIn * 1000),
-            scope: event.data.scope,
-            tokenType: event.data.tokenType
-          })
-        } else if (event.data.type === 'google-auth-error') {
-          clearInterval(checkClosed)
-          window.removeEventListener('message', messageHandler)
-          this.authWindow.close()
-          this.authPromise = null
-          reject(new Error(event.data.error || 'Authentication failed'))
+          if (event.data.type === 'google-auth-success') {
+            clearInterval(checkClosed)
+            window.removeEventListener('message', messageHandler)
+            this.authWindow.close()
+            this.authPromise = null
+
+            try {
+              // Exchange authorization code for tokens
+              const tokens = await this.exchangeCodeForTokens(event.data.code, event.data.state)
+
+              // Store tokens in token manager
+              this.tokenManager.setTokens(tokens)
+
+              resolve({
+                accessToken: tokens.accessToken,
+                refreshToken: tokens.refreshToken,
+                expiresAt: tokens.expiresAt,
+                scope: tokens.scope,
+                tokenType: tokens.tokenType
+              })
+            } catch (error) {
+              console.error('❌ Token exchange failed:', error)
+              reject(new Error(`Token exchange failed: ${error.message}`))
+            }
+          } else if (event.data.type === 'google-auth-error') {
+            clearInterval(checkClosed)
+            window.removeEventListener('message', messageHandler)
+            this.authWindow.close()
+            this.authPromise = null
+            this.pendingPKCE = null
+            reject(new Error(event.data.error || 'Authentication failed'))
+          }
         }
-      }
 
-      window.addEventListener('message', messageHandler)
+        window.addEventListener('message', messageHandler)
+      } catch (error) {
+        this.authPromise = null
+        this.pendingPKCE = null
+        reject(error)
+      }
     })
 
     return this.authPromise
   }
 
-  /**
-   * Silently re-authenticate using an iframe (no user interaction required)
-   */
-  async silentReauthenticate() {
-    console.log('Attempting silent re-authentication...')
-
-    return new Promise((resolve, reject) => {
-      // Create hidden iframe for silent auth
-      const iframe = document.createElement('iframe')
-      iframe.style.display = 'none'
-      iframe.src = this.buildAuthUrl(true) // true for silent mode
-
-      const timeout = setTimeout(() => {
-        document.body.removeChild(iframe)
-        reject(new Error('Silent authentication timeout'))
-      }, 10000) // 10 second timeout
-
-      const messageHandler = (event) => {
-        if (event.origin !== window.location.origin) return
-
-        if (event.data.type === 'google-auth-success') {
-          clearTimeout(timeout)
-          window.removeEventListener('message', messageHandler)
-          document.body.removeChild(iframe)
-
-          // Update token manager
-          this.tokenManager.setToken(event.data.accessToken, event.data.expiresIn || 3600)
-
-          resolve({
-            accessToken: event.data.accessToken,
-            expiresAt: Date.now() + (event.data.expiresIn * 1000)
-          })
-        } else if (event.data.type === 'google-auth-error') {
-          clearTimeout(timeout)
-          window.removeEventListener('message', messageHandler)
-          document.body.removeChild(iframe)
-
-          // If silent auth fails, trigger interactive re-authentication
-          console.log('Silent auth failed, triggering interactive authentication...')
-          this.authenticate().then(resolve).catch(reject)
-        }
-      }
-
-      window.addEventListener('message', messageHandler)
-      document.body.appendChild(iframe)
-    })
+  generateState() {
+    const array = new Uint8Array(16)
+    crypto.getRandomValues(array)
+    return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('')
   }
 
   /**
-   * Build Google OAuth2 authorization URL
+   * Clear all stored tokens and reset authentication state
    */
-  buildAuthUrl(silent = false) {
+  clearTokens() {
+    this.tokenManager.clearTokens()
+    this.pendingPKCE = null
+    console.log('🗑️ Authentication state cleared')
+  }
+
+  /**
+   * Check if user is currently authenticated (has valid tokens)
+   */
+  async isAuthenticated() {
+    const token = await this.getValidToken()
+    return !!token
+  }
+
+  /**
+   * Build Google OAuth2 authorization URL with PKCE
+   */
+  buildAuthUrl(codeChallenge, state) {
     const params = new URLSearchParams({
       client_id: GOOGLE_CONFIG.clientId,
       redirect_uri: GOOGLE_CONFIG.redirectUri,
       scope: GOOGLE_CONFIG.scope,
       response_type: GOOGLE_CONFIG.responseType,
-      prompt: silent ? 'none' : GOOGLE_CONFIG.prompt // Use 'none' for silent auth
+      prompt: GOOGLE_CONFIG.prompt,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      state: state,
+      access_type: 'offline' // Required for refresh tokens
     })
 
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
   }
 
   /**
-   * Get current access token (automatically re-authenticates if expired)
+   * Get current access token (automatically refreshes if needed)
    */
   async getValidToken() {
-    const token = this.tokenManager.getToken()
-
-    if (token) {
-      return token
-    }
-
-    // Token expired or not available, re-authenticate
-    console.log('Token expired, re-authenticating...')
-    try {
-      const result = await this.silentReauthenticate()
-      return result.accessToken
-    } catch (error) {
-      console.error('Re-authentication failed:', error)
-      // Fall back to interactive authentication
-      const result = await this.authenticate()
-      return result.accessToken
-    }
+    return await this.tokenManager.getValidToken()
   }
 
   /**
-   * Exchange authorization code for access and refresh tokens
+   * Exchange authorization code for access and refresh tokens using PKCE
    */
-  async exchangeCodeForTokens(code) {
+  async exchangeCodeForTokens(code, state) {
     try {
-      // Note: In a production app, this should be done on your backend server
-      // for security reasons. For this demo, we'll use a proxy or CORS-enabled endpoint.
+      // Verify state parameter to prevent CSRF attacks
+      if (state !== this.pendingPKCE?.state) {
+        throw new Error('Invalid state parameter - possible CSRF attack')
+      }
+
+      console.log('🔄 Exchanging authorization code for tokens...')
 
       const response = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
@@ -341,28 +551,48 @@ export class GoogleDriveAuth {
         },
         body: new URLSearchParams({
           client_id: GOOGLE_CONFIG.clientId,
-          client_secret: 'YOUR_CLIENT_SECRET', // In production, this should be on backend
           code: code,
           grant_type: 'authorization_code',
-          redirect_uri: GOOGLE_CONFIG.redirectUri
+          redirect_uri: GOOGLE_CONFIG.redirectUri,
+          code_verifier: this.pendingPKCE.codeVerifier
         })
       })
 
+      // Clear PKCE data after use
+      this.pendingPKCE = null
+
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(`Token exchange failed: ${error.error_description || error.error}`)
+        const errorData = await response.text()
+        let errorMessage
+        try {
+          const parsedError = JSON.parse(errorData)
+          errorMessage = parsedError.error_description || parsedError.error
+        } catch {
+          errorMessage = errorData
+        }
+        throw new Error(`Token exchange failed: ${response.status} ${errorMessage}`)
       }
 
       const tokenData = await response.json()
+
+      console.log('✅ Token exchange successful:', {
+        hasAccessToken: !!tokenData.access_token,
+        hasRefreshToken: !!tokenData.refresh_token,
+        expiresIn: tokenData.expires_in,
+        scope: tokenData.scope
+      })
 
       return {
         accessToken: tokenData.access_token,
         refreshToken: tokenData.refresh_token,
         expiresAt: Date.now() + (tokenData.expires_in * 1000),
-        scope: tokenData.scope
+        expiresIn: tokenData.expires_in,
+        scope: tokenData.scope,
+        tokenType: tokenData.token_type || 'Bearer'
       }
     } catch (error) {
-      console.error('Token exchange error:', error)
+      console.error('❌ Token exchange error:', error)
+      this.pendingPKCE = null
       throw error
     }
   }
@@ -560,31 +790,44 @@ export class GoogleDriveAuth {
 
 // Auth callback handler - this should be included in your routing
 export function handleGoogleAuthCallback() {
-  // For implicit flow, tokens come in the URL hash fragment
-  const hashParams = new URLSearchParams(window.location.hash.substring(1))
-  const accessToken = hashParams.get('access_token')
-  const error = hashParams.get('error')
-  const expiresIn = hashParams.get('expires_in')
-  const scope = hashParams.get('scope')
-  const tokenType = hashParams.get('token_type')
+  // For authorization code flow, code comes in URL search params
+  const urlParams = new URLSearchParams(window.location.search)
+  const code = urlParams.get('code')
+  const error = urlParams.get('error')
+  const state = urlParams.get('state')
+  const errorDescription = urlParams.get('error_description')
+
+  console.log('🔐 Google Auth Callback received:', {
+    hasCode: !!code,
+    hasError: !!error,
+    hasState: !!state,
+    error: error,
+    errorDescription: errorDescription
+  })
 
   if (error) {
     // Send error to parent window
     if (window.opener) {
       window.opener.postMessage({
         type: 'google-auth-error',
-        error: error
+        error: errorDescription || error
       }, window.location.origin)
     }
-  } else if (accessToken) {
-    // Send success to parent window with token info
+  } else if (code) {
+    // Send success to parent window with authorization code
     if (window.opener) {
       window.opener.postMessage({
         type: 'google-auth-success',
-        accessToken: accessToken,
-        expiresIn: parseInt(expiresIn) || 3600,
-        scope: scope,
-        tokenType: tokenType || 'Bearer'
+        code: code,
+        state: state
+      }, window.location.origin)
+    }
+  } else {
+    // No code or error - something went wrong
+    if (window.opener) {
+      window.opener.postMessage({
+        type: 'google-auth-error',
+        error: 'No authorization code received'
       }, window.location.origin)
     }
   }

@@ -590,30 +590,38 @@ class SyncService {
     console.log('🔍 All categories to process:', allCategories.map(c => ({ name: c?.name, label: c?.label })))
 
     allCategories.forEach((category, index) => {
-      const hasName = !!category?.name
-      const notInMap = !categoryMap.has(category.name)
-      const notDefault = !defaultCategories.has(category.name)
+      // Use 'name' if available, otherwise fall back to 'label' for N8N categories
+      const categoryName = category?.name || category?.label
+      const hasName = !!categoryName
+      const notInMap = !categoryMap.has(categoryName)
+      const notDefault = !defaultCategories.has(categoryName)
 
       console.log('🔍 Processing category', index, ':', {
         name: category?.name,
         label: category?.label,
+        categoryName: categoryName, // The name we're actually using
         key: category?.key,
         hasName,
         notInMap,
         notDefault,
-        isDefaultMatch: category?.name ? defaultCategories.has(category.name) : false,
+        isDefaultMatch: categoryName ? defaultCategories.has(categoryName) : false,
         categoryStructure: Object.keys(category || {}),
         fullCategory: category
       })
 
       if (hasName && notInMap && notDefault) {
-        console.log('✅ Adding category to merge:', category.name)
-        categoryMap.set(category.name, category)
+        console.log('✅ Adding category to merge:', categoryName)
+        // Ensure the category has a 'name' property for consistency
+        const normalizedCategory = {
+          ...category,
+          name: categoryName
+        }
+        categoryMap.set(categoryName, normalizedCategory)
       } else {
-        console.log('❌ Skipping category:', category?.name || 'unnamed', {
-          reason: !hasName ? 'no name property' :
+        console.log('❌ Skipping category:', categoryName || 'unnamed', {
+          reason: !hasName ? 'no name/label property' :
                   !notInMap ? 'already in map' :
-                  !notDefault ? `is default (matches: ${category.name})` : 'unknown',
+                  !notDefault ? `is default (matches: ${categoryName})` : 'unknown',
           hasName,
           notInMap,
           notDefault

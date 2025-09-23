@@ -7,7 +7,9 @@
 const GOOGLE_CONFIG = {
   // For development/demo: Use environment variables or replace with actual credentials
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
-  redirectUri: 'urn:ietf:wg:oauth:2.0:oob', // Out-of-band redirect for Desktop apps
+  redirectUri: import.meta.env.PROD
+    ? 'https://sudhanshumalani.github.io/meetingflow-app/auth/google/callback'
+    : 'http://localhost:5173/auth/google/callback', // Web application redirect
   scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
   responseType: 'code', // Authorization code flow for refresh tokens
   prompt: 'consent'
@@ -431,30 +433,45 @@ export class GoogleDriveAuth {
           return
         }
 
-        // For Desktop OAuth with out-of-band redirect, Google displays the auth code on a page
-        console.log('📋 Using out-of-band flow - Google will display the authorization code')
+        // For Web Application OAuth with proper callback URL
+        console.log('🌐 Using Web Application OAuth flow with callback URL')
 
-        // Show immediate instructions to user after a short delay
-        setTimeout(() => {
-          if (!this.authWindow.closed) {
-            const code = prompt(`Desktop OAuth Flow (Out-of-Band):\n\n1. Complete the authorization in the popup window\n2. Google will display an authorization code on the success page\n3. Copy that code and paste it here:\n\n(Click Cancel if you want to close without authorizing)`)
+        // Listen for postMessage from callback window
+        const handleAuthMessage = (event) => {
+          // Verify origin for security
+          if (event.origin !== window.location.origin) {
+            return
+          }
 
+          if (event.data.type === 'google-auth-success') {
+            window.removeEventListener('message', handleAuthMessage)
             this.authWindow.close()
             this.authPromise = null
 
-            if (code && code.trim()) {
-              this.handleAuthCode(code.trim(), this.pendingPKCE.state, resolve, reject)
-            } else {
+            // Validate state parameter
+            if (event.data.state !== this.pendingPKCE.state) {
               this.pendingPKCE = null
-              reject(new Error('Authorization cancelled or no code provided'))
+              reject(new Error('State parameter mismatch - possible CSRF attack'))
+              return
             }
-          }
-        }, 3000) // Give user time to see the popup first
 
-        // Monitor if window is closed without providing code
+            this.handleAuthCode(event.data.code, event.data.state, resolve, reject)
+          } else if (event.data.type === 'google-auth-error') {
+            window.removeEventListener('message', handleAuthMessage)
+            this.authWindow.close()
+            this.authPromise = null
+            this.pendingPKCE = null
+            reject(new Error(`Authentication error: ${event.data.error}`))
+          }
+        }
+
+        window.addEventListener('message', handleAuthMessage)
+
+        // Monitor for window closed without auth
         const checkWindowClosed = setInterval(() => {
           if (this.authWindow.closed) {
             clearInterval(checkWindowClosed)
+            window.removeEventListener('message', handleAuthMessage)
             if (this.authPromise) {
               this.authPromise = null
               this.pendingPKCE = null

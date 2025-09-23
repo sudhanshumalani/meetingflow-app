@@ -1172,6 +1172,8 @@ class SyncService {
       console.log('🚀 UPLOAD: Using intelligent file selection to find the best available file')
       const bestFileId = await searchForBestFile()
 
+      let fileId // Declare fileId variable
+
       if (bestFileId) {
         if (bestFileId !== config.fileId) {
           console.log(`🔄 UPLOAD SWITCHING FILES: From ${config.fileId || 'none'} to ${bestFileId} (better file found)`)

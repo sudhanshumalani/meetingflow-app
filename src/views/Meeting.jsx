@@ -1730,7 +1730,90 @@ Example notes you might paste:
                     </div>
                   )}
 
-                  {/* Key Discussion Points */}
+                  {/* People & Context */}
+                  {aiResult.peopleAndContext && aiResult.peopleAndContext.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        👥 People & Context
+                      </h4>
+                      <div className="bg-white rounded p-3 border border-gray-200">
+                        <ul className="space-y-3">
+                          {aiResult.peopleAndContext.map((person, index) => (
+                            <li key={index} className="text-sm text-gray-700">
+                              <div className="font-medium text-gray-900">{person.name}</div>
+                              <div className="text-gray-600 mt-1">{person.background}</div>
+                              {person.relevance && (
+                                <div className="text-blue-600 text-xs mt-1 italic">{person.relevance}</div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Thematic Sections */}
+                  {aiResult.thematicSections && aiResult.thematicSections.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        📚 Key Topics
+                      </h4>
+                      <div className="bg-white rounded p-3 border border-gray-200 space-y-3">
+                        {aiResult.thematicSections.map((section, index) => (
+                          <div key={index}>
+                            <h5 className="font-medium text-gray-800 mb-1">{section.sectionTitle}</h5>
+                            <ul className="space-y-1 ml-3">
+                              {section.content.map((item, itemIndex) => (
+                                <li key={itemIndex} className="text-sm text-gray-700 flex items-start gap-2">
+                                  <span className="text-blue-500 font-medium min-w-0">•</span>
+                                  <span className="leading-relaxed">{item}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Strategic Insights */}
+                  {aiResult.strategicInsights && aiResult.strategicInsights.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        💡 Strategic Insights
+                      </h4>
+                      <div className="bg-white rounded p-3 border border-gray-200">
+                        <ul className="space-y-2">
+                          {aiResult.strategicInsights.map((insight, index) => (
+                            <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
+                              <span className="text-purple-500 font-medium min-w-0">•</span>
+                              <span className="leading-relaxed">{insight}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Key Contacts */}
+                  {aiResult.keyContacts && aiResult.keyContacts.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        🤝 Key Contacts
+                      </h4>
+                      <div className="bg-white rounded p-3 border border-gray-200 space-y-3">
+                        {aiResult.keyContacts.map((contact, index) => (
+                          <div key={index} className="border-l-4 border-green-200 pl-3">
+                            <div className="font-medium text-gray-800">{contact.name}</div>
+                            <div className="text-sm text-gray-600 mb-1">{contact.role}</div>
+                            <div className="text-sm text-gray-700">{contact.connection}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Backward Compatibility: Key Discussion Points (legacy format) */}
                   {aiResult.keyDiscussionPoints && aiResult.keyDiscussionPoints.length > 0 && (
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">

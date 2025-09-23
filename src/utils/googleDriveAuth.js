@@ -7,9 +7,9 @@
 const GOOGLE_CONFIG = {
   // For development/demo: Use environment variables or replace with actual credentials
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
-  redirectUri: window.location.origin + '/meetingflow-app/auth/google/callback',
+  redirectUri: 'urn:ietf:wg:oauth:2.0:oob', // Standard desktop app redirect for OAuth 2.0
   scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
-  responseType: 'token', // Fall back to implicit flow for now (will work with current Google setup)
+  responseType: 'code', // Authorization code flow for refresh tokens
   prompt: 'consent'
 }
 
@@ -404,9 +404,20 @@ export class GoogleDriveAuth {
 
     this.authPromise = new Promise(async (resolve, reject) => {
       try {
-        const authUrl = this.buildAuthUrl()
+        // Generate PKCE parameters
+        const codeVerifier = await PKCEHelper.generateCodeVerifier()
+        const codeChallenge = await PKCEHelper.generateCodeChallenge(codeVerifier)
 
-        console.log('🔐 Starting OAuth 2.0 Implicit flow (hybrid mode for compatibility)')
+        // Store PKCE data for later use in token exchange
+        this.pendingPKCE = {
+          codeVerifier,
+          codeChallenge,
+          state: this.generateState()
+        }
+
+        const authUrl = this.buildAuthUrl(codeChallenge, this.pendingPKCE.state)
+
+        console.log('🔐 Starting OAuth 2.0 Authorization Code flow with PKCE for Desktop application')
 
         // Open authentication window
         this.authWindow = window.open(
@@ -425,6 +436,7 @@ export class GoogleDriveAuth {
           if (this.authWindow.closed) {
             clearInterval(checkClosed)
             this.authPromise = null
+            this.pendingPKCE = null
             reject(new Error('Authentication window was closed'))
           }
         }, 1000)
@@ -441,28 +453,30 @@ export class GoogleDriveAuth {
             this.authWindow.close()
             this.authPromise = null
 
-            // Store tokens using new token manager (even with implicit flow)
-            const tokenData = {
-              accessToken: event.data.accessToken,
-              expiresIn: event.data.expiresIn || 3600,
-              scope: event.data.scope,
-              tokenType: event.data.tokenType || 'Bearer'
-              // Note: No refresh token with implicit flow, but our system can handle this
+            try {
+              // Exchange authorization code for tokens
+              const tokens = await this.exchangeCodeForTokens(event.data.code, event.data.state)
+
+              // Store tokens in token manager
+              this.tokenManager.setTokens(tokens)
+
+              resolve({
+                accessToken: tokens.accessToken,
+                refreshToken: tokens.refreshToken,
+                expiresAt: tokens.expiresAt,
+                scope: tokens.scope,
+                tokenType: tokens.tokenType
+              })
+            } catch (error) {
+              console.error('❌ Token exchange failed:', error)
+              reject(new Error(`Token exchange failed: ${error.message}`))
             }
-
-            this.tokenManager.setTokens(tokenData)
-
-            resolve({
-              accessToken: tokenData.accessToken,
-              expiresAt: Date.now() + (tokenData.expiresIn * 1000),
-              scope: tokenData.scope,
-              tokenType: tokenData.tokenType
-            })
           } else if (event.data.type === 'google-auth-error') {
             clearInterval(checkClosed)
             window.removeEventListener('message', messageHandler)
             this.authWindow.close()
             this.authPromise = null
+            this.pendingPKCE = null
             reject(new Error(event.data.error || 'Authentication failed'))
           }
         }
@@ -470,6 +484,7 @@ export class GoogleDriveAuth {
         window.addEventListener('message', messageHandler)
       } catch (error) {
         this.authPromise = null
+        this.pendingPKCE = null
         reject(error)
       }
     })
@@ -501,15 +516,19 @@ export class GoogleDriveAuth {
   }
 
   /**
-   * Build Google OAuth2 authorization URL (adaptive)
+   * Build Google OAuth2 authorization URL with PKCE for Desktop application
    */
-  buildAuthUrl() {
+  buildAuthUrl(codeChallenge, state) {
     const params = new URLSearchParams({
       client_id: GOOGLE_CONFIG.clientId,
       redirect_uri: GOOGLE_CONFIG.redirectUri,
       scope: GOOGLE_CONFIG.scope,
       response_type: GOOGLE_CONFIG.responseType,
-      prompt: GOOGLE_CONFIG.prompt
+      prompt: GOOGLE_CONFIG.prompt,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      state: state,
+      access_type: 'offline' // Required for refresh tokens
     })
 
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
@@ -522,6 +541,73 @@ export class GoogleDriveAuth {
     return await this.tokenManager.getValidToken()
   }
 
+  /**
+   * Exchange authorization code for access and refresh tokens using PKCE (Desktop app - no client secret)
+   */
+  async exchangeCodeForTokens(code, state) {
+    try {
+      // Verify state parameter to prevent CSRF attacks
+      if (state !== this.pendingPKCE?.state) {
+        throw new Error('Invalid state parameter - possible CSRF attack')
+      }
+
+      console.log('🔄 Exchanging authorization code for tokens (Desktop app)...')
+
+      const requestBody = new URLSearchParams({
+        client_id: GOOGLE_CONFIG.clientId,
+        code: code,
+        grant_type: 'authorization_code',
+        redirect_uri: GOOGLE_CONFIG.redirectUri,
+        code_verifier: this.pendingPKCE.codeVerifier
+        // Note: No client_secret for Desktop applications
+      })
+
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: requestBody
+      })
+
+      // Clear PKCE data after use
+      this.pendingPKCE = null
+
+      if (!response.ok) {
+        const errorData = await response.text()
+        let errorMessage
+        try {
+          const parsedError = JSON.parse(errorData)
+          errorMessage = parsedError.error_description || parsedError.error
+        } catch {
+          errorMessage = errorData
+        }
+        throw new Error(`Token exchange failed: ${response.status} ${errorMessage}`)
+      }
+
+      const tokenData = await response.json()
+
+      console.log('✅ Token exchange successful (Desktop app):', {
+        hasAccessToken: !!tokenData.access_token,
+        hasRefreshToken: !!tokenData.refresh_token,
+        expiresIn: tokenData.expires_in,
+        scope: tokenData.scope
+      })
+
+      return {
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token,
+        expiresAt: Date.now() + (tokenData.expires_in * 1000),
+        expiresIn: tokenData.expires_in,
+        scope: tokenData.scope,
+        tokenType: tokenData.token_type || 'Bearer'
+      }
+    } catch (error) {
+      console.error('❌ Token exchange error:', error)
+      this.pendingPKCE = null
+      throw error
+    }
+  }
 
   /**
    * Get user info from Google API
@@ -716,19 +802,19 @@ export class GoogleDriveAuth {
 
 // Auth callback handler - this should be included in your routing
 export function handleGoogleAuthCallback() {
-  // For implicit flow, tokens come in the URL hash fragment
-  const hashParams = new URLSearchParams(window.location.hash.substring(1))
-  const accessToken = hashParams.get('access_token')
-  const error = hashParams.get('error')
-  const expiresIn = hashParams.get('expires_in')
-  const scope = hashParams.get('scope')
-  const tokenType = hashParams.get('token_type')
+  // For authorization code flow, code comes in URL search params
+  const urlParams = new URLSearchParams(window.location.search)
+  const code = urlParams.get('code')
+  const error = urlParams.get('error')
+  const state = urlParams.get('state')
+  const errorDescription = urlParams.get('error_description')
 
-  console.log('🔐 Google Auth Callback received (implicit flow):', {
-    hasAccessToken: !!accessToken,
+  console.log('🔐 Google Auth Callback received (authorization code flow):', {
+    hasCode: !!code,
     hasError: !!error,
+    hasState: !!state,
     error: error,
-    expiresIn: expiresIn
+    errorDescription: errorDescription
   })
 
   if (error) {
@@ -736,26 +822,24 @@ export function handleGoogleAuthCallback() {
     if (window.opener) {
       window.opener.postMessage({
         type: 'google-auth-error',
-        error: error
+        error: errorDescription || error
       }, window.location.origin)
     }
-  } else if (accessToken) {
-    // Send success to parent window with token info
+  } else if (code) {
+    // Send success to parent window with authorization code
     if (window.opener) {
       window.opener.postMessage({
         type: 'google-auth-success',
-        accessToken: accessToken,
-        expiresIn: parseInt(expiresIn) || 3600,
-        scope: scope,
-        tokenType: tokenType || 'Bearer'
+        code: code,
+        state: state
       }, window.location.origin)
     }
   } else {
-    // No token or error - something went wrong
+    // No code or error - something went wrong
     if (window.opener) {
       window.opener.postMessage({
         type: 'google-auth-error',
-        error: 'No access token received'
+        error: 'No authorization code received'
       }, window.location.origin)
     }
   }

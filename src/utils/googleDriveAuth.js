@@ -7,7 +7,7 @@
 const GOOGLE_CONFIG = {
   // For development/demo: Use environment variables or replace with actual credentials
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
-  redirectUri: 'http://localhost', // Standard Desktop app redirect (works from any domain)
+  redirectUri: 'urn:ietf:wg:oauth:2.0:oob', // Out-of-band redirect for Desktop apps
   scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
   responseType: 'code', // Authorization code flow for refresh tokens
   prompt: 'consent'
@@ -431,76 +431,37 @@ export class GoogleDriveAuth {
           return
         }
 
-        // For Desktop OAuth, we need to handle the popup differently
-        // due to security restrictions
-        let hasShownPrompt = false
+        // For Desktop OAuth with out-of-band redirect, Google displays the auth code on a page
+        console.log('📋 Using out-of-band flow - Google will display the authorization code')
 
-        const checkAuthStatus = setInterval(() => {
-          try {
-            // Check if window is closed
-            if (this.authWindow.closed) {
-              clearInterval(checkAuthStatus)
+        // Show immediate instructions to user after a short delay
+        setTimeout(() => {
+          if (!this.authWindow.closed) {
+            const code = prompt(`Desktop OAuth Flow (Out-of-Band):\n\n1. Complete the authorization in the popup window\n2. Google will display an authorization code on the success page\n3. Copy that code and paste it here:\n\n(Click Cancel if you want to close without authorizing)`)
+
+            this.authWindow.close()
+            this.authPromise = null
+
+            if (code && code.trim()) {
+              this.handleAuthCode(code.trim(), this.pendingPKCE.state, resolve, reject)
+            } else {
+              this.pendingPKCE = null
+              reject(new Error('Authorization cancelled or no code provided'))
+            }
+          }
+        }, 3000) // Give user time to see the popup first
+
+        // Monitor if window is closed without providing code
+        const checkWindowClosed = setInterval(() => {
+          if (this.authWindow.closed) {
+            clearInterval(checkWindowClosed)
+            if (this.authPromise) {
               this.authPromise = null
               this.pendingPKCE = null
-
-              if (!hasShownPrompt) {
-                reject(new Error('Authentication window was closed'))
-              }
-              return
-            }
-
-            // Try to access window URL - this will throw on cross-origin
-            const currentUrl = this.authWindow.location.href
-
-            // If we can access the URL and it contains our code, extract it
-            if (currentUrl.includes('code=')) {
-              const urlParams = new URLSearchParams(new URL(currentUrl).search)
-              const code = urlParams.get('code')
-              const state = urlParams.get('state')
-              const error = urlParams.get('error')
-
-              clearInterval(checkAuthStatus)
-              this.authWindow.close()
-              this.authPromise = null
-
-              if (error) {
-                this.pendingPKCE = null
-                reject(new Error(error))
-                return
-              }
-
-              if (code) {
-                this.handleAuthCode(code, state, resolve, reject)
-              }
-            }
-          } catch (crossOriginError) {
-            // Expected - means we're on Google's domain or localhost
-            // Check if enough time has passed to show the prompt
-            if (!hasShownPrompt && Date.now() - authStartTime > 5000) {
-              hasShownPrompt = true
-
-              // Show prompt to user
-              setTimeout(() => {
-                if (!this.authWindow.closed) {
-                  const code = prompt(`Desktop OAuth Flow:\n\nAfter completing authorization in the popup window, Google will show you an authorization code.\n\nPlease copy that code and paste it here:`)
-
-                  clearInterval(checkAuthStatus)
-                  this.authWindow.close()
-                  this.authPromise = null
-
-                  if (code && code.trim()) {
-                    this.handleAuthCode(code.trim(), this.pendingPKCE.state, resolve, reject)
-                  } else {
-                    this.pendingPKCE = null
-                    reject(new Error('No authorization code provided'))
-                  }
-                }
-              }, 1000)
+              reject(new Error('Authentication window was closed'))
             }
           }
         }, 1000)
-
-        const authStartTime = Date.now()
       } catch (error) {
         this.authPromise = null
         this.pendingPKCE = null

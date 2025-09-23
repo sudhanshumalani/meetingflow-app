@@ -469,18 +469,34 @@ export class GoogleDriveAuth {
 
         window.addEventListener('message', handleAuthMessage)
 
-        // Monitor for window closed without auth
-        const checkWindowClosed = setInterval(() => {
-          if (this.authWindow.closed) {
-            clearInterval(checkWindowClosed)
-            window.removeEventListener('message', handleAuthMessage)
-            if (this.authPromise) {
-              this.authPromise = null
-              this.pendingPKCE = null
-              reject(new Error('Authentication window was closed'))
+        // Set timeout for authentication (fallback if user never completes auth)
+        const authTimeout = setTimeout(() => {
+          window.removeEventListener('message', handleAuthMessage)
+          try {
+            if (this.authWindow && !this.authWindow.closed) {
+              this.authWindow.close()
             }
+          } catch (e) {
+            // Ignore errors when trying to close window
           }
-        }, 1000)
+          if (this.authPromise) {
+            this.authPromise = null
+            this.pendingPKCE = null
+            reject(new Error('Authentication timed out after 5 minutes'))
+          }
+        }, 300000) // 5 minutes timeout
+
+        // Enhance message handler to clear timeout
+        const originalResolve = resolve
+        const originalReject = reject
+        resolve = (...args) => {
+          clearTimeout(authTimeout)
+          originalResolve(...args)
+        }
+        reject = (...args) => {
+          clearTimeout(authTimeout)
+          originalReject(...args)
+        }
       } catch (error) {
         this.authPromise = null
         this.pendingPKCE = null

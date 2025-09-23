@@ -54,21 +54,24 @@ import NotificationCenter from '../components/NotificationCenter'
 // Stakeholder management simplified - complex relationships removed
 import { SentimentAnalyzer } from '../utils/sentimentAnalysis'
 import { ExportManager } from '../utils/exportUtils'
-import { 
-  MobileHeader, 
-  MobileNavDrawer, 
-  TouchButton, 
+import {
+  MobileHeader,
+  MobileNavDrawer,
+  TouchButton,
   MobileTabs,
   PullToRefresh,
   ResponsiveGrid,
   MobileExpandableCard
 } from '../components/MobileOptimized'
+import performanceMonitor, { usePerformanceMonitor } from '../utils/performanceMonitor'
+import hapticFeedback from '../utils/hapticFeedback'
 import { BatchExportButton, ExportOptionsButton } from '../components/ExportOptions'
 
 export default function Home() {
   const navigate = useNavigate()
   const { meetings, stakeholders, stakeholderCategories, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder, addStakeholderCategory, updateStakeholderCategory, deleteStakeholderCategory } = useApp()
   const sync = useSyncContext()
+  const { measureInteraction } = usePerformanceMonitor('Home')
   const [searchTerm, setSearchTerm] = useState('')
   const [notifications, setNotifications] = useState([])
   const [activeTab, setActiveTab] = useState('all')
@@ -354,22 +357,25 @@ export default function Home() {
   }
 
   const handleNewMeeting = () => {
-    // Use a UUID-like ID to ensure uniqueness
-    const meetingId = `meeting_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    const newMeeting = {
-      id: meetingId, // Pre-assign the ID so we can navigate to it
-      title: '',
-      description: '',
-      attendees: [],
-      agenda: [],
-      notes: [],
-      attachments: [],
-      status: 'upcoming'
-    }
+    return measureInteraction('new-meeting', () => {
+      hapticFeedback.medium()
+      // Use a UUID-like ID to ensure uniqueness
+      const meetingId = `meeting_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      const newMeeting = {
+        id: meetingId, // Pre-assign the ID so we can navigate to it
+        title: '',
+        description: '',
+        attendees: [],
+        agenda: [],
+        notes: [],
+        attachments: [],
+        status: 'upcoming'
+      }
 
-    addMeeting(newMeeting)
-    // Navigate using the pre-assigned ID
-    navigate(`/meeting/${meetingId}`)
+      addMeeting(newMeeting)
+      // Navigate using the pre-assigned ID
+      navigate(`/meeting/${meetingId}`)
+    })
   }
 
   const handleEditMeeting = (meeting) => {
@@ -620,49 +626,28 @@ export default function Home() {
 
   // Mobile-specific handlers
   const handleMobileRefresh = async () => {
-    // Simulate refresh
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    window.location.reload()
+    return measureInteraction('pull-to-refresh', async () => {
+      hapticFeedback.light()
+      // Simulate refresh with better UX
+      await new Promise(resolve => setTimeout(resolve, 800))
+      hapticFeedback.success()
+      window.location.reload()
+    })
   }
 
   const mobileNavItems = [
     {
-      label: 'Overview',
-      icon: <Activity size={20} />,
-      onClick: () => setActiveView('overview')
-    },
-    {
-      label: 'Stakeholders',
-      icon: <Users size={20} />,
-      onClick: () => setActiveView('stakeholders')
-    },
-    {
-      label: 'Meetings',
-      icon: <Calendar size={20} />,
-      onClick: () => setActiveView('meetings')
-    },
-    {
-      label: 'Manage Meetings',
-      icon: <Edit2 size={20} />,
-      onClick: () => setShowMeetingManagement(true)
+      label: 'New Meeting',
+      icon: <Plus size={20} />,
+      onClick: () => {
+        const newMeetingId = Math.random().toString(36).substr(2, 9)
+        navigate(`/meeting/${newMeetingId}`)
+      }
     },
     {
       label: 'Manage Stakeholders',
       icon: <Users size={20} />,
       onClick: () => setShowStakeholderManagement(true)
-    },
-    {
-      label: 'Export Data',
-      icon: <Download size={20} />,
-      onClick: () => setShowExportMenu(true)
-    },
-    {
-      label: 'Batch Export',
-      icon: <Send size={20} />,
-      onClick: () => {
-        // This would open a mobile-friendly batch export dialog
-        console.log('Batch export clicked')
-      }
     },
     {
       label: 'Settings',
@@ -863,6 +848,8 @@ export default function Home() {
                 variant="primary"
                 size="large"
                 fullWidth
+                hapticType="medium"
+                ariaLabel="Create new meeting"
               >
                 <Plus size={20} className="mr-2" />
                 New Meeting

@@ -14,6 +14,7 @@ import {
   Maximize2,
   Minimize2
 } from 'lucide-react'
+import hapticFeedback from '../utils/hapticFeedback'
 
 // Mobile Navigation Drawer
 export function MobileNavDrawer({ isOpen, onClose, navigation }) {
@@ -50,31 +51,39 @@ export function MobileNavDrawer({ isOpen, onClose, navigation }) {
       {/* Drawer */}
       <div
         ref={drawerRef}
-        className={`fixed top-0 left-0 h-full w-80 bg-white shadow-lg transform transition-transform duration-300 ease-in-out z-50 md:hidden ${
+        className={`fixed top-0 left-0 h-full w-80 bg-white shadow-xl border-r border-gray-100 transform transition-transform duration-300 ease-in-out z-50 md:hidden ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="text-lg font-semibold">Navigation</h2>
+        <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-purple-50">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+              <span className="text-white text-sm font-bold">M</span>
+            </div>
+            <h2 className="text-lg font-semibold text-gray-900">MeetingFlow</h2>
+          </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg touch-target"
+            className="p-2 hover:bg-white hover:bg-opacity-60 rounded-lg touch-target transition-colors"
           >
-            <X size={20} />
+            <X size={20} className="text-gray-600" />
           </button>
         </div>
         
-        <nav className="p-4 space-y-2">
+        <nav className="p-4 space-y-2" role="navigation" aria-label="Main navigation">
           {navigation?.map((item, index) => (
             <button
               key={index}
               onClick={() => {
+                hapticFeedback.tap()
                 item.onClick?.()
                 onClose()
               }}
-              className="w-full text-left p-3 hover:bg-gray-100 rounded-lg touch-target flex items-center gap-3"
+              className="w-full text-left p-3 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 rounded-xl touch-target flex items-center gap-3 transition-all duration-200 text-gray-700 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              aria-label={item.label}
+              role="menuitem"
             >
-              {item.icon}
+              <span aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
             </button>
           ))}
@@ -87,7 +96,7 @@ export function MobileNavDrawer({ isOpen, onClose, navigation }) {
 // Mobile-Optimized Header
 export function MobileHeader({ title, subtitle, actions, rightContent, onMenuClick, onBack, showMenu = true }) {
   return (
-    <header className="bg-white shadow-sm border-b sticky top-0 z-30">
+    <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-30">
       <div className="flex items-center justify-between p-4">
         <div className="flex items-center gap-3 flex-1 min-w-0">
           {onBack && (
@@ -130,42 +139,61 @@ export function MobileHeader({ title, subtitle, actions, rightContent, onMenuCli
 }
 
 // Touch-Friendly Button
-export function TouchButton({ 
-  children, 
-  variant = 'primary', 
-  size = 'medium', 
+export function TouchButton({
+  children,
+  variant = 'primary',
+  size = 'medium',
   fullWidth = false,
   disabled = false,
   loading = false,
-  ...props 
+  hapticType = 'tap',
+  ariaLabel,
+  ...props
 }) {
-  const baseClasses = "touch-target font-medium rounded-lg transition-all duration-200 disabled:opacity-50 active:scale-95"
-  
+  const baseClasses = "touch-target font-medium rounded-lg transition-all duration-200 disabled:opacity-50 active:scale-95 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+
   const variants = {
-    primary: "bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800",
-    secondary: "bg-gray-100 text-gray-900 hover:bg-gray-200 active:bg-gray-300",
-    danger: "bg-red-600 text-white hover:bg-red-700 active:bg-red-800",
-    ghost: "text-gray-600 hover:bg-gray-100 active:bg-gray-200"
+    primary: "bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700 active:from-blue-800 active:to-purple-800 shadow-lg",
+    secondary: "bg-gray-50 text-gray-900 hover:bg-gray-100 active:bg-gray-200 border border-gray-200",
+    danger: "bg-gradient-to-r from-red-600 to-pink-600 text-white hover:from-red-700 hover:to-pink-700 active:from-red-800 active:to-pink-800 shadow-lg",
+    ghost: "text-gray-600 hover:bg-gray-50 active:bg-gray-100"
   }
-  
+
   const sizes = {
     small: "px-3 py-2 text-sm min-h-[36px]",
     medium: "px-4 py-3 text-base min-h-[44px]",
     large: "px-6 py-4 text-lg min-h-[52px]"
   }
-  
+
   const widthClass = fullWidth ? "w-full" : ""
-  
+
+  const handleClick = (e) => {
+    if (!disabled && !loading) {
+      // Provide haptic feedback
+      if (hapticType && hapticFeedback[hapticType]) {
+        hapticFeedback[hapticType]()
+      }
+
+      // Call original onClick if provided
+      if (props.onClick) {
+        props.onClick(e)
+      }
+    }
+  }
+
   return (
     <button
       className={`${baseClasses} ${variants[variant]} ${sizes[size]} ${widthClass}`}
       disabled={disabled || loading}
+      aria-label={ariaLabel}
+      role="button"
       {...props}
+      onClick={handleClick}
     >
       {loading ? (
-        <div className="flex items-center justify-center gap-2">
+        <div className="flex items-center justify-center gap-2" role="status" aria-label="Loading">
           <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-          Processing...
+          <span>Processing...</span>
         </div>
       ) : (
         children
@@ -260,55 +288,68 @@ export function TouchSelect({
 }
 
 // Expandable Card for Mobile
-export function MobileExpandableCard({ 
-  title, 
-  subtitle, 
+export function MobileExpandableCard({
+  title,
+  subtitle,
   badge,
-  children, 
+  children,
   defaultExpanded = false,
   actions
 }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
-  
+
+  const handleToggle = () => {
+    hapticFeedback.light()
+    setIsExpanded(!isExpanded)
+  }
+
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full p-4 text-left hover:bg-gray-50 active:bg-gray-100 touch-target"
+        onClick={handleToggle}
+        className="w-full p-4 text-left hover:bg-gray-50 active:bg-gray-100 touch-target transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        aria-expanded={isExpanded}
+        aria-controls={`card-content-${title?.replace(/\s+/g, '-').toLowerCase()}`}
+        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${title}`}
       >
         <div className="flex items-center justify-between">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <h3 className="font-medium text-gray-900 truncate">{title}</h3>
               {badge && (
-                <span className="flex-shrink-0">{badge}</span>
+                <span className="flex-shrink-0" aria-hidden="true">{badge}</span>
               )}
             </div>
             {subtitle && (
               <p className="text-sm text-gray-500 truncate">{subtitle}</p>
             )}
           </div>
-          
+
           <div className="flex items-center gap-2 flex-shrink-0 ml-3">
             {actions && (
-              <div className="flex gap-1">
+              <div className="flex gap-1" role="group" aria-label="Card actions">
                 {actions}
               </div>
             )}
-            {isExpanded ? (
-              <ChevronUp size={20} className="text-gray-400" />
-            ) : (
-              <ChevronDown size={20} className="text-gray-400" />
-            )}
+            <div className="transition-transform duration-200" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+              <ChevronDown size={20} className="text-gray-400" aria-hidden="true" />
+            </div>
           </div>
         </div>
       </button>
-      
-      {isExpanded && (
+
+      <div
+        id={`card-content-${title?.replace(/\s+/g, '-').toLowerCase()}`}
+        className={`transition-all duration-300 ease-in-out ${
+          isExpanded ? 'max-h-screen opacity-100' : 'max-h-0 opacity-0'
+        }`}
+        style={{ overflow: isExpanded ? 'visible' : 'hidden' }}
+        aria-hidden={!isExpanded}
+      >
         <div className="px-4 pb-4 border-t border-gray-100">
           {children}
         </div>
-      )}
+      </div>
     </div>
   )
 }

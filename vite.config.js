@@ -50,8 +50,8 @@ export default defineConfig({
     host: '0.0.0.0', // Allow external connections
     port: 5173,
     headers: {
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-      'Cross-Origin-Opener-Policy': 'same-origin'
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+      'Cross-Origin-Opener-Policy': 'same-origin-allow-popups'
     }
   },
   preview: {
@@ -59,8 +59,8 @@ export default defineConfig({
     host: '0.0.0.0', // Allow external connections
     port: 4173,
     headers: {
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-      'Cross-Origin-Opener-Policy': 'same-origin'
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+      'Cross-Origin-Opener-Policy': 'same-origin-allow-popups'
     }
   },
   optimizeDeps: {

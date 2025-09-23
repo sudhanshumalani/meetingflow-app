@@ -431,25 +431,25 @@ export class GoogleDriveAuth {
           return
         }
 
-        // Listen for the redirect
-        const checkClosed = setInterval(() => {
-          if (this.authWindow.closed) {
-            clearInterval(checkClosed)
-            this.authPromise = null
-            this.pendingPKCE = null
-            reject(new Error('Authentication window was closed'))
-          }
-        }, 1000)
+        // For Desktop OAuth, we need to handle the popup differently
+        // due to security restrictions
+        let hasShownPrompt = false
 
-        // For Desktop apps, Google will redirect to localhost and show the auth code
-        // We need to detect when user is redirected and prompt them to copy the code
-        const checkRedirect = setInterval(() => {
+        const checkAuthStatus = setInterval(() => {
           try {
+            // Check if window is closed
             if (this.authWindow.closed) {
-              return // Will be handled by checkClosed interval
+              clearInterval(checkAuthStatus)
+              this.authPromise = null
+              this.pendingPKCE = null
+
+              if (!hasShownPrompt) {
+                reject(new Error('Authentication window was closed'))
+              }
+              return
             }
 
-            // Try to detect if we've been redirected to localhost
+            // Try to access window URL - this will throw on cross-origin
             const currentUrl = this.authWindow.location.href
 
             // If we can access the URL and it contains our code, extract it
@@ -459,8 +459,7 @@ export class GoogleDriveAuth {
               const state = urlParams.get('state')
               const error = urlParams.get('error')
 
-              clearInterval(checkClosed)
-              clearInterval(checkRedirect)
+              clearInterval(checkAuthStatus)
               this.authWindow.close()
               this.authPromise = null
 
@@ -474,31 +473,34 @@ export class GoogleDriveAuth {
                 this.handleAuthCode(code, state, resolve, reject)
               }
             }
-          } catch (error) {
-            // Cross-origin error means we're likely on localhost now
-            // Check if the window title or content suggests we have a code
-            try {
-              if (this.authWindow.document && this.authWindow.document.title.includes('Success')) {
-                // Window shows success - prompt user for the code
-                clearInterval(checkClosed)
-                clearInterval(checkRedirect)
+          } catch (crossOriginError) {
+            // Expected - means we're on Google's domain or localhost
+            // Check if enough time has passed to show the prompt
+            if (!hasShownPrompt && Date.now() - authStartTime > 5000) {
+              hasShownPrompt = true
 
-                const code = prompt('Please copy the authorization code from the browser window and paste it here:')
-                this.authWindow.close()
-                this.authPromise = null
+              // Show prompt to user
+              setTimeout(() => {
+                if (!this.authWindow.closed) {
+                  const code = prompt(`Desktop OAuth Flow:\n\nAfter completing authorization in the popup window, Google will show you an authorization code.\n\nPlease copy that code and paste it here:`)
 
-                if (code && code.trim()) {
-                  this.handleAuthCode(code.trim(), this.pendingPKCE.state, resolve, reject)
-                } else {
-                  this.pendingPKCE = null
-                  reject(new Error('No authorization code provided'))
+                  clearInterval(checkAuthStatus)
+                  this.authWindow.close()
+                  this.authPromise = null
+
+                  if (code && code.trim()) {
+                    this.handleAuthCode(code.trim(), this.pendingPKCE.state, resolve, reject)
+                  } else {
+                    this.pendingPKCE = null
+                    reject(new Error('No authorization code provided'))
+                  }
                 }
-              }
-            } catch (docError) {
-              // Can't access document either - just continue monitoring
+              }, 1000)
             }
           }
-        }, 2000) // Check every 2 seconds
+        }, 1000)
+
+        const authStartTime = Date.now()
       } catch (error) {
         this.authPromise = null
         this.pendingPKCE = null

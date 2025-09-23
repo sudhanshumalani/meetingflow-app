@@ -31,14 +31,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Debug environment variables
-        run: |
-          echo "Checking environment variables..."
-          echo "VITE_GOOGLE_CLIENT_ID length: ${#VITE_GOOGLE_CLIENT_ID}"
-          echo "First 20 chars: ${VITE_GOOGLE_CLIENT_ID:0:20}..."
-        env:
-          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
-
       - name: Build application
         run: npm run build
         env:

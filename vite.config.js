@@ -47,9 +47,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          ai: ['./src/utils/aiProviders/ClaudeProvider.js'],
-          ocr: ['tesseract.js']
+          vendor: ['react', 'react-dom', 'react-router-dom']
         }
       }
     }

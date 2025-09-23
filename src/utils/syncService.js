@@ -1011,7 +1011,22 @@ class SyncService {
             body: content
           }
         )
-      } else {
+
+        // Handle file not found error - recover by creating new file
+        if (response.status === 404) {
+          console.warn(`⚠️ File not found (${fileId}), clearing invalid file ID and creating new file`)
+          // Clear the invalid file ID from config
+          config.fileId = null
+          await localforage.setItem('sync_config', this.syncConfig)
+          fileId = null // Fall through to create new file
+          response = null // Clear the failed response
+        } else if (!response.ok) {
+          const error = await response.json()
+          throw new Error(`Google Drive upload failed: ${error.error?.message || response.statusText}`)
+        }
+      }
+
+      if (!fileId) {
         // Create new file
         const metadata = {
           name: fileName,
@@ -1044,12 +1059,12 @@ class SyncService {
         )
       }
 
-      if (!response.ok) {
+      if (response && !response.ok) {
         const error = await response.json()
         throw new Error(`Google Drive upload failed: ${error.error?.message || response.statusText}`)
       }
 
-      const result = await response.json()
+      const result = response ? await response.json() : { id: null }
 
       // File integrity validation - verify upload was successful
       const originalSize = new Blob([content]).size

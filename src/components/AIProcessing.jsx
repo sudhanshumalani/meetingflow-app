@@ -410,7 +410,7 @@ export function AIInsightsDisplay({ insights, onActionClick }) {
               <div className="grid grid-cols-2 gap-3 text-sm">
                 {Object.entries(insight.data).map(([key, value]) => (
                   <div key={key}>
-                    <span className="text-gray-500 capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}:</span>
+                    <span className="text-gray-500 capitalize">{(key && typeof key === 'string') ? key.replace(/([A-Z])/g, ' $1').trim() : key}:</span>
                     <span className="ml-2 font-medium">
                       {typeof value === 'number' ? value.toFixed(2) : String(value)}
                     </span>

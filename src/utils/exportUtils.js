@@ -147,7 +147,7 @@ Attendees: ${data.attendees.join(', ')}
 
 MEETING NOTES:
 ${Object.entries(data.notes || {}).map(([section, content]) => 
-  `${section.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}: ${content}`
+  `${(section && typeof section === 'string') ? section.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase()) : section}: ${content}`
 ).join('\n\n')}
 
 ACTION ITEMS:

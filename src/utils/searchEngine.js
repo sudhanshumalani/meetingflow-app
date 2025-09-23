@@ -178,8 +178,8 @@ export class GlobalSearchEngine {
 }
 
 export const highlightSearchTerms = (text, searchTerms, className = 'bg-yellow-200') => {
-  if (!searchTerms || searchTerms.length === 0) return text
-  
+  if (!text || typeof text !== 'string' || !searchTerms || searchTerms.length === 0) return text
+
   let highlightedText = text
   searchTerms.forEach(term => {
     const regex = new RegExp(`(${term})`, 'gi')

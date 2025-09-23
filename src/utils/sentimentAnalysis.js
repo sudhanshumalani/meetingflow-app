@@ -35,6 +35,9 @@ export class SentimentAnalyzer {
     }
 
     words.forEach(word => {
+      if (!word || typeof word !== 'string') {
+        return
+      }
       const cleanWord = word.replace(/[^\w]/g, '')
       
       if (this.positiveWords.includes(cleanWord)) {

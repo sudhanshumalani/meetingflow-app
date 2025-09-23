@@ -309,7 +309,7 @@ export function MobileExpandableCard({
         onClick={handleToggle}
         className="w-full p-4 text-left hover:bg-gray-50 active:bg-gray-100 touch-target transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         aria-expanded={isExpanded}
-        aria-controls={`card-content-${title?.replace(/\s+/g, '-').toLowerCase()}`}
+        aria-controls={`card-content-${(title && typeof title === 'string') ? title.replace(/\s+/g, '-').toLowerCase() : 'default'}`}
         aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${title}`}
       >
         <div className="flex items-center justify-between">
@@ -339,7 +339,7 @@ export function MobileExpandableCard({
       </button>
 
       <div
-        id={`card-content-${title?.replace(/\s+/g, '-').toLowerCase()}`}
+        id={`card-content-${(title && typeof title === 'string') ? title.replace(/\s+/g, '-').toLowerCase() : 'default'}`}
         className={`transition-all duration-300 ease-in-out ${
           isExpanded ? 'max-h-screen opacity-100' : 'max-h-0 opacity-0'
         }`}

@@ -197,6 +197,9 @@ export class ActionItemExtractor {
   }
 
   cleanTaskText(text) {
+    if (!text || typeof text !== 'string') {
+      return ''
+    }
     return text
       .replace(/^(and|or|but|also|then)\s+/i, '')
       .replace(/\s+/g, ' ')
@@ -308,6 +311,9 @@ export class ActionItemExtractor {
     const seen = new Set()
     
     for (const item of actionItems) {
+      if (!item.title || typeof item.title !== 'string') {
+        continue
+      }
       const key = item.title.toLowerCase().replace(/\s+/g, ' ').trim()
       if (!seen.has(key)) {
         seen.add(key)

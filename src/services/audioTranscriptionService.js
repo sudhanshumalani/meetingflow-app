@@ -122,7 +122,13 @@ class AudioTranscriptionService {
       console.log('🤖 Loading Whisper model...')
       this.notifyListeners('status', { type: 'whisper_loading' })
 
-      const { pipeline } = await import('@xenova/transformers')
+      // Configure transformers.js environment to use Hugging Face CDN
+      const { pipeline, env } = await import('@xenova/transformers')
+
+      // Force use of Hugging Face CDN and disable local file loading
+      env.allowRemoteModels = true
+      env.allowLocalModels = false
+      env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@latest/dist/'
 
       // Use the smallest model for mobile compatibility
       this.whisperPipeline = await pipeline(

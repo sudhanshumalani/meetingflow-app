@@ -93,7 +93,7 @@ export default function Home() {
   
   // Mobile-specific states
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
-  const [activeView, setActiveView] = useState('overview') // 'overview', 'stakeholders', 'meetings'
+  const [activeView, setActiveView] = useState('meetings') // Default to meetings view
 
   // Meeting management states
   const [editingMeeting, setEditingMeeting] = useState(null)
@@ -658,18 +658,6 @@ export default function Home() {
 
   const mobileTabs = [
     {
-      id: 'overview',
-      label: 'Overview',
-      icon: <Activity size={16} />,
-      badge: aiInsights.length
-    },
-    {
-      id: 'stakeholders',
-      label: 'Stakeholders',
-      icon: <Users size={16} />,
-      badge: displayStakeholders.length
-    },
-    {
       id: 'meetings',
       label: 'Meetings',
       icon: <Calendar size={16} />,
@@ -840,6 +828,15 @@ export default function Home() {
       <main className="w-full bg-gray-50">
         <div className="max-w-7xl mx-auto">
         <PullToRefresh onRefresh={handleMobileRefresh}>
+          {/* Mobile Tabs - Only show on mobile */}
+          <div className="md:hidden">
+            <MobileTabs
+              tabs={mobileTabs}
+              activeTab={activeView}
+              onTabChange={setActiveView}
+            />
+          </div>
+
           <div className="px-4 py-4 md:py-8 space-y-6 min-h-screen">
             {/* Mobile New Meeting Button */}
             <div className="md:hidden">

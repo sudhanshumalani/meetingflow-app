@@ -35,6 +35,9 @@ class SyncService {
     this.autoSyncInterval = null
     this.syncListeners = []
 
+    // Token refresh concurrency control
+    this.tokenRefreshPromise = null
+
     // Initialization promise for singleton pattern
     this.initializationPromise = null
     this.isInitialized = false
@@ -221,6 +224,16 @@ class SyncService {
 
       if (result.success) {
         console.log('✅ Sync connection test successful')
+
+        // Clean up test file after successful connection
+        try {
+          await this.cleanupTestFile()
+          console.log('🧹 Test file cleaned up successfully')
+        } catch (cleanupError) {
+          console.warn('⚠️ Could not clean up test file:', cleanupError.message)
+          // Don't fail the connection test if cleanup fails
+        }
+
         this.notifyListeners('connection_success')
         return true
       } else {
@@ -916,14 +929,48 @@ class SyncService {
   }
 
   /**
+   * Retry wrapper with exponential backoff
+   */
+  async retryWithBackoff(operation, maxRetries = 3, baseDelay = 1000) {
+    let lastError
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🔄 Attempt ${attempt}/${maxRetries}:`, operation.name || 'operation')
+        return await operation()
+      } catch (error) {
+        lastError = error
+        console.warn(`❌ Attempt ${attempt} failed:`, error.message)
+
+        // Don't retry on certain errors
+        if (error.message.includes('Invalid credentials') ||
+            error.message.includes('Permission denied') ||
+            error.message.includes('File corruption detected')) {
+          throw error
+        }
+
+        if (attempt < maxRetries) {
+          const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000
+          console.log(`⏳ Waiting ${Math.round(delay)}ms before retry...`)
+          await new Promise(resolve => setTimeout(resolve, delay))
+        }
+      }
+    }
+
+    throw lastError
+  }
+
+  /**
    * Google Drive API sync implementation
    */
   async uploadToGoogleDrive(key, data) {
     const config = this.syncConfig.config
 
-    try {
-      // Ensure we have a valid access token
-      await this.ensureValidGoogleToken()
+    // Wrap the upload operation with retry logic
+    return this.retryWithBackoff(async () => {
+      try {
+        // Ensure we have a valid access token
+        await this.ensureValidGoogleToken()
 
       const fileName = `meetingflow_${key}.json`
       const content = JSON.stringify(data, null, 2)
@@ -972,15 +1019,16 @@ class SyncService {
           description: `MeetingFlow App Data - ${key}`
         }
 
-        // Use multipart upload for new files
+        // Use multipart upload for new files with proper RFC 2387 format
         const boundary = '-------314159265358979323846'
         const delimiter = "\r\n--" + boundary + "\r\n"
         const close_delim = "\r\n--" + boundary + "--"
 
         const metadataContent = delimiter +
-          'Content-Type: application/json\r\n\r\n' +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
           JSON.stringify(metadata) + delimiter +
-          'Content-Type: application/json\r\n\r\n' +
+          'Content-Type: application/json\r\n' +
+          'Content-Transfer-Encoding: binary\r\n\r\n' +
           content + close_delim
 
         response = await fetch(
@@ -1003,17 +1051,63 @@ class SyncService {
 
       const result = await response.json()
 
+      // File integrity validation - verify upload was successful
+      const originalSize = new Blob([content]).size
+      console.log('📊 Upload validation:', {
+        uploadedFileId: result.id,
+        originalContentSize: originalSize,
+        fileName: fileName
+      })
+
+      // Verify the uploaded file by checking its size
+      try {
+        const verifyResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${result.id}?fields=size,name`,
+          {
+            headers: {
+              'Authorization': `Bearer ${config.accessToken}`,
+            }
+          }
+        )
+
+        if (verifyResponse.ok) {
+          const fileInfo = await verifyResponse.json()
+          const uploadedSize = parseInt(fileInfo.size || '0')
+
+          console.log('✅ File integrity check:', {
+            originalSize,
+            uploadedSize,
+            sizeDifference: Math.abs(originalSize - uploadedSize),
+            integrityOk: Math.abs(originalSize - uploadedSize) < 100 // Allow small encoding differences
+          })
+
+          // If there's a significant size difference, this indicates corruption
+          if (Math.abs(originalSize - uploadedSize) > 100) {
+            console.error('❌ FILE CORRUPTION DETECTED:', {
+              expected: originalSize,
+              actual: uploadedSize,
+              fileName: fileInfo.name
+            })
+            throw new Error(`File corruption detected: expected ${originalSize} bytes, got ${uploadedSize} bytes`)
+          }
+        }
+      } catch (verifyError) {
+        console.warn('⚠️ Could not verify file integrity:', verifyError.message)
+        // Don't fail the upload for verification issues, just log them
+      }
+
       // Save file ID for future updates
       if (!config.fileId) {
         config.fileId = result.id
         await localforage.setItem('sync_config', this.syncConfig)
       }
 
-      return { success: true, id: result.id }
-    } catch (error) {
-      console.error('Google Drive upload error:', error)
-      return { success: false, error: error.message }
-    }
+        return { success: true, id: result.id, originalSize, uploadedSize: result.size }
+      } catch (error) {
+        console.error('Google Drive upload error:', error)
+        throw error // Let retry logic handle this
+      }
+    }) // End retry wrapper
   }
 
   async downloadFromGoogleDrive(key) {
@@ -1147,6 +1241,7 @@ class SyncService {
 
   /**
    * Ensure Google Drive access token is valid, refresh if needed
+   * Uses promise-based concurrency control to prevent multiple simultaneous refresh attempts
    */
   async ensureValidGoogleToken() {
     const config = this.syncConfig.config
@@ -1159,11 +1254,25 @@ class SyncService {
     if (config.expiresAt && Date.now() >= (config.expiresAt - 300000)) {
       console.log('⏰ Google Drive token expired or expiring soon, attempting automatic refresh...')
 
-      // Try to refresh the token automatically
-      const refreshed = await this.refreshGoogleToken()
+      // If a refresh is already in progress, wait for it
+      if (this.tokenRefreshPromise) {
+        console.log('⏳ Token refresh already in progress, waiting for completion...')
+        await this.tokenRefreshPromise
+        return
+      }
 
-      if (!refreshed) {
-        throw new Error('Google Drive token expired - please re-authenticate through Settings')
+      // Start token refresh and store promise to prevent concurrent attempts
+      this.tokenRefreshPromise = this.refreshGoogleToken()
+
+      try {
+        const refreshed = await this.tokenRefreshPromise
+
+        if (!refreshed) {
+          throw new Error('Google Drive token expired - please re-authenticate through Settings')
+        }
+      } finally {
+        // Clear the refresh promise when done
+        this.tokenRefreshPromise = null
       }
     }
   }
@@ -1254,6 +1363,91 @@ class SyncService {
       deviceId: this.deviceId,
       deviceName: this.getDeviceName(),
       queuedOperations: this.syncQueue.length
+    }
+  }
+
+  /**
+   * Clean up test connection file from cloud storage
+   */
+  async cleanupTestFile() {
+    if (!this.syncConfig) {
+      throw new Error('Sync not configured')
+    }
+
+    try {
+      switch (this.syncConfig.provider) {
+        case SYNC_PROVIDERS.GOOGLE_DRIVE:
+          return this.deleteFromGoogleDrive('test_connection')
+        case SYNC_PROVIDERS.GITHUB_GIST:
+          // GitHub Gist cleanup would go here
+          console.log('GitHub Gist test file cleanup not implemented')
+          return { success: true }
+        case SYNC_PROVIDERS.N8N:
+          // N8N cleanup would go here
+          console.log('N8N test file cleanup not implemented')
+          return { success: true }
+        default:
+          throw new Error(`Unsupported sync provider: ${this.syncConfig.provider}`)
+      }
+    } catch (error) {
+      console.error('Test file cleanup failed:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Delete file from Google Drive
+   */
+  async deleteFromGoogleDrive(key) {
+    const config = this.syncConfig.config
+
+    try {
+      await this.ensureValidGoogleToken()
+
+      const fileName = `meetingflow_${key}.json`
+
+      // Search for the test file
+      const searchResponse = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and parents in '${config.folderId || 'root'}'`,
+        {
+          headers: {
+            'Authorization': `Bearer ${config.accessToken}`,
+          }
+        }
+      )
+
+      if (!searchResponse.ok) {
+        throw new Error(`Drive search failed: ${searchResponse.statusText}`)
+      }
+
+      const searchResult = await searchResponse.json()
+      const fileId = searchResult.files?.[0]?.id
+
+      if (fileId) {
+        // Delete the file
+        const deleteResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${fileId}`,
+          {
+            method: 'DELETE',
+            headers: {
+              'Authorization': `Bearer ${config.accessToken}`,
+            }
+          }
+        )
+
+        if (!deleteResponse.ok) {
+          throw new Error(`Drive delete failed: ${deleteResponse.statusText}`)
+        }
+
+        console.log(`🗑️ Deleted test file: ${fileName}`)
+        return { success: true, fileId }
+      } else {
+        console.log(`ℹ️ Test file not found: ${fileName}`)
+        return { success: true, message: 'File not found' }
+      }
+    } catch (error) {
+      console.error('Google Drive delete error:', error)
+      return { success: false, error: error.message }
     }
   }
 

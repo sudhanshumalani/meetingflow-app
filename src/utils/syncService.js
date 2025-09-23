@@ -994,7 +994,18 @@ class SyncService {
         }
 
         const searchResult = await searchResponse.json()
-        fileId = searchResult.files?.[0]?.id
+        const discoveredFileId = searchResult.files?.[0]?.id
+
+        if (discoveredFileId) {
+          console.log('🔍 Found existing file in Google Drive:', discoveredFileId)
+          fileId = discoveredFileId
+          // Save the discovered file ID immediately
+          if (!config.fileId || config.fileId !== discoveredFileId) {
+            console.log('💾 Updating stored file ID to discovered file:', discoveredFileId)
+            config.fileId = discoveredFileId
+            await localforage.setItem('sync_config', this.syncConfig)
+          }
+        }
       }
 
       let response
@@ -1246,6 +1257,13 @@ class SyncService {
       console.log('   data.data keys:', data.data ? Object.keys(data.data) : 'no data.data')
       console.log('   stakeholderCategories in data.data:', data.data?.stakeholderCategories?.length || 'not found')
       console.log('   Full data.data object:', data.data)
+
+      // Save file ID for future use if we discovered it during this download
+      if (fileId && !config.fileId) {
+        console.log('💾 Saving discovered file ID for future syncs:', fileId)
+        config.fileId = fileId
+        await localforage.setItem('sync_config', this.syncConfig)
+      }
 
       return { success: true, data }
     } catch (error) {

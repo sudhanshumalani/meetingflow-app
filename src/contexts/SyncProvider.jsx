@@ -80,66 +80,17 @@ export function SyncProvider({ children }) {
       })
 
       if (result.success && result.data) {
-        console.log('🔍 DEBUG: Categories in result.data:', {
-          count: result.data.stakeholderCategories?.length || 0,
-          categories: result.data.stakeholderCategories?.map(c => c.name) || []
-        })
-
-        // Update app context with synced data
-        console.log('🔄 Updating app with synced data from cloud...', {
+        console.log('🔍 DEBUG: Sync completed successfully, data will be reloaded automatically via storage event')
+        console.log('🔍 DEBUG: Synced data summary:', {
           meetings: result.data.meetings?.length || 0,
           stakeholders: result.data.stakeholders?.length || 0,
           categories: result.data.stakeholderCategories?.length || 0
         })
 
-        // Clear current data and load synced data
-        if (result.data.meetings?.length > 0) {
-          // Replace meetings
-          app.meetings.forEach(meeting => {
-            app.deleteMeeting(meeting.id)
-          })
-
-          result.data.meetings.forEach(meeting => {
-            app.addMeeting(meeting)
-          })
-        }
-
-        if (result.data.stakeholders?.length > 0) {
-          // Replace stakeholders
-          app.stakeholders.forEach(stakeholder => {
-            app.deleteStakeholder(stakeholder.id)
-          })
-
-          result.data.stakeholders.forEach(stakeholder => {
-            app.addStakeholder(stakeholder)
-          })
-        }
-
-        // Update stakeholder categories
-        console.log('🔍 DEBUG: About to update categories with:', {
-          categoriesArray: result.data.stakeholderCategories,
-          arrayLength: result.data.stakeholderCategories?.length,
-          arrayType: typeof result.data.stakeholderCategories,
-          isArray: Array.isArray(result.data.stakeholderCategories)
-        })
-
-        if (result.data.stakeholderCategories !== undefined) {
-          console.log('📂 Updating stakeholder categories:', result.data.stakeholderCategories.length)
-          console.log('📂 Category names being set:', result.data.stakeholderCategories.map(c => c.name))
-
-          // Call the AppContext method
-          app.setStakeholderCategories(result.data.stakeholderCategories)
-
-          // Verify the update happened
-          setTimeout(() => {
-            console.log('🔍 DEBUG: Categories after setStakeholderCategories call:', {
-              count: app.stakeholderCategories?.length || 0,
-              categories: app.stakeholderCategories?.map(c => c.name) || []
-            })
-          }, 100)
-        } else {
-          console.log('⚠️ DEBUG: No stakeholderCategories in result.data')
-        }
+        // Note: No manual data manipulation needed here anymore.
+        // The SyncService will emit a 'meetingflow-storage-updated' event that triggers
+        // AppContext to reload all data from localStorage automatically.
+        // This ensures atomic updates and prevents race conditions.
 
         return result
       }

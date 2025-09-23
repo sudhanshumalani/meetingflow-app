@@ -459,16 +459,11 @@ export function AppProvider({ children }) {
       console.log('💾 AppContext: Saving meetings count:', state.meetings.length)
       console.log('💾 AppContext: Meeting IDs being saved:', state.meetings.map(m => m.id))
 
+      // Save to localStorage only - SyncService handles localforage separately
       localStorage.setItem('meetingflow_meetings', JSON.stringify(state.meetings))
       localStorage.setItem('meetingflow_stakeholders', JSON.stringify(state.stakeholders))
       localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(state.stakeholderCategories))
       localStorage.setItem('meetingflow_deleted_items', JSON.stringify(state.deletedItems))
-
-      // Also save to localforage to maintain sync consistency
-      localforage.setItem('meetingflow_meetings', state.meetings)
-      localforage.setItem('meetingflow_stakeholders', state.stakeholders)
-      localforage.setItem('meetingflow_stakeholder_categories', state.stakeholderCategories)
-      localforage.setItem('meetingflow_deleted_items', state.deletedItems)
 
       const saved = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
       console.log('✅ AppContext: VERIFIED save - meetings in storage:', saved.length)
@@ -508,10 +503,12 @@ export function AppProvider({ children }) {
     }
   }, [])
 
-  const loadData = () => {
+  const loadData = useCallback(() => {
     try {
       dispatch({ type: 'SET_LOADING', payload: true })
-      
+
+      console.log('📂 LOAD: Starting data load from localStorage...')
+
       // Load from localStorage ONLY (synchronous, reliable)
       let meetings, localStakeholders, localCategories
 
@@ -578,7 +575,31 @@ export function AppProvider({ children }) {
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: 'Failed to load data from storage' })
     }
-  }
+  }, [])
+
+  // Listen for storage updates from sync operations
+  useEffect(() => {
+    const handleStorageUpdate = () => {
+      console.log('📡 Storage update detected, reloading data...')
+      loadData()
+    }
+
+    // Listen for custom storage update events from sync operations
+    window.addEventListener('meetingflow-storage-updated', handleStorageUpdate)
+
+    // Also listen for cross-tab storage changes
+    window.addEventListener('storage', (e) => {
+      if (e.key && e.key.startsWith('meetingflow_')) {
+        console.log('📡 Cross-tab storage change detected:', e.key)
+        handleStorageUpdate()
+      }
+    })
+
+    return () => {
+      window.removeEventListener('meetingflow-storage-updated', handleStorageUpdate)
+      window.removeEventListener('storage', handleStorageUpdate)
+    }
+  }, [loadData])
 
   // saveData is now inline in debouncedSave to prevent stale closure issues
 
@@ -715,7 +736,13 @@ export function AppProvider({ children }) {
       dispatch({ type: 'UPDATE_NOTE_IN_MEETING', payload: { meetingId, noteId, updatedNote } }),
     
     clearError: () => dispatch({ type: 'SET_ERROR', payload: null }),
-    
+
+    // Storage management
+    reloadFromStorage: () => {
+      console.log('🔄 Manual reload from storage requested')
+      loadData()
+    },
+
     // n8n integration actions
     syncStakeholdersFromN8n,
 

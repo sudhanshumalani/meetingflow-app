@@ -418,6 +418,20 @@ class SyncService {
         localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedData.stakeholderCategories))
         localStorage.setItem('meetingflow_deleted_items', JSON.stringify(mergedData.deletedItems))
 
+        // Notify AppContext that storage has been updated
+        console.log('📡 Emitting storage update event to reload AppContext...')
+        window.dispatchEvent(new CustomEvent('meetingflow-storage-updated', {
+          detail: {
+            source: 'sync',
+            operation: 'syncFromCloud',
+            dataUpdated: {
+              meetings: mergedData.meetings?.length || 0,
+              stakeholders: mergedData.stakeholders?.length || 0,
+              stakeholderCategories: mergedData.stakeholderCategories?.length || 0
+            }
+          }
+        }))
+
         console.log('🔍 DEBUG: mergedData after localStorage save:', {
           meetings: mergedData.meetings?.length || 0,
           stakeholders: mergedData.stakeholders?.length || 0,

@@ -407,10 +407,16 @@ class SyncService {
           stakeholderCategories: mergedData.stakeholderCategories?.length || 0,
         })
 
-        // Save merged data to localStorage
+        // Save merged data to both localStorage and localforage for consistency
         await localforage.setItem('meetingflow_meetings', mergedData.meetings)
         await localforage.setItem('meetingflow_stakeholders', mergedData.stakeholders)
         await localforage.setItem('meetingflow_stakeholder_categories', mergedData.stakeholderCategories)
+
+        // Also save to localStorage to maintain AppContext consistency
+        localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedData.meetings))
+        localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedData.stakeholders))
+        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedData.stakeholderCategories))
+        localStorage.setItem('meetingflow_deleted_items', JSON.stringify(mergedData.deletedItems))
 
         console.log('🔍 DEBUG: mergedData after localStorage save:', {
           meetings: mergedData.meetings?.length || 0,
@@ -808,9 +814,21 @@ class SyncService {
    */
   async getLocalData() {
     try {
-      const meetings = await localforage.getItem('meetingflow_meetings') || []
-      const stakeholders = await localforage.getItem('meetingflow_stakeholders') || []
-      const stakeholderCategories = await localforage.getItem('meetingflow_stakeholder_categories') || []
+      // Try localStorage first (primary source used by AppContext), fallback to localforage
+      let meetings, stakeholders, stakeholderCategories, deletedItems
+
+      try {
+        meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        stakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+        stakeholderCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+        deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
+      } catch (error) {
+        console.warn('localStorage read failed, falling back to localforage:', error)
+        meetings = await localforage.getItem('meetingflow_meetings') || []
+        stakeholders = await localforage.getItem('meetingflow_stakeholders') || []
+        stakeholderCategories = await localforage.getItem('meetingflow_stakeholder_categories') || []
+        deletedItems = await localforage.getItem('meetingflow_deleted_items') || []
+      }
 
       console.log('🔍 DEBUG getLocalData:', {
         meetingsCount: meetings.length,
@@ -827,7 +845,7 @@ class SyncService {
       }
 
       return {
-        data: { meetings, stakeholders, stakeholderCategories },
+        data: { meetings, stakeholders, stakeholderCategories, deletedItems },
         metadata
       }
     } catch (error) {

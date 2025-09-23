@@ -530,8 +530,9 @@ export function AppProvider({ children }) {
             console.log('🔍 DEBUG: First-time setup detected, loading default categories')
             localCategories = Object.values(DEFAULT_CATEGORIES)
           } else {
-            console.log('🔍 DEBUG: Existing app data found, keeping empty categories (from sync)')
-            localCategories = []
+            console.log('🔍 DEBUG: Existing app data found but no categories - this may be a sync issue, loading defaults temporarily')
+            // Load defaults temporarily, sync will override if needed
+            localCategories = Object.values(DEFAULT_CATEGORIES)
           }
         }
 

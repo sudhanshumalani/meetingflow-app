@@ -7,7 +7,7 @@
 const GOOGLE_CONFIG = {
   // For development/demo: Use environment variables or replace with actual credentials
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
-  redirectUri: 'urn:ietf:wg:oauth:2.0:oob', // Standard desktop app redirect for OAuth 2.0
+  redirectUri: window.location.origin + '/meetingflow-app/auth/google/callback', // Keep using our callback page
   scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
   responseType: 'code', // Authorization code flow for refresh tokens
   prompt: 'consent'

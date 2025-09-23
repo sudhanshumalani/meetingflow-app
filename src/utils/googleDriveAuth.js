@@ -7,7 +7,7 @@
 const GOOGLE_CONFIG = {
   // For development/demo: Use environment variables or replace with actual credentials
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
-  redirectUri: window.location.origin + '/meetingflow-app/auth/google/callback', // Keep using our callback page
+  redirectUri: 'http://localhost', // Standard Desktop app redirect (works from any domain)
   scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
   responseType: 'code', // Authorization code flow for refresh tokens
   prompt: 'consent'
@@ -441,47 +441,60 @@ export class GoogleDriveAuth {
           }
         }, 1000)
 
-        // Listen for messages from the auth window
-        const messageHandler = async (event) => {
-          if (event.origin !== window.location.origin) {
-            return
-          }
-
-          if (event.data.type === 'google-auth-success') {
-            clearInterval(checkClosed)
-            window.removeEventListener('message', messageHandler)
-            this.authWindow.close()
-            this.authPromise = null
-
-            try {
-              // Exchange authorization code for tokens
-              const tokens = await this.exchangeCodeForTokens(event.data.code, event.data.state)
-
-              // Store tokens in token manager
-              this.tokenManager.setTokens(tokens)
-
-              resolve({
-                accessToken: tokens.accessToken,
-                refreshToken: tokens.refreshToken,
-                expiresAt: tokens.expiresAt,
-                scope: tokens.scope,
-                tokenType: tokens.tokenType
-              })
-            } catch (error) {
-              console.error('❌ Token exchange failed:', error)
-              reject(new Error(`Token exchange failed: ${error.message}`))
+        // For Desktop apps, Google shows auth code in browser - monitor the window URL
+        const checkAuthCode = setInterval(async () => {
+          try {
+            if (this.authWindow.closed) {
+              return // Will be handled by checkClosed interval
             }
-          } else if (event.data.type === 'google-auth-error') {
-            clearInterval(checkClosed)
-            window.removeEventListener('message', messageHandler)
-            this.authWindow.close()
-            this.authPromise = null
-            this.pendingPKCE = null
-            reject(new Error(event.data.error || 'Authentication failed'))
-          }
-        }
 
-        window.addEventListener('message', messageHandler)
+            // Check if we can access the window URL (same-origin policy allows this)
+            const currentUrl = this.authWindow.location.href
+
+            // Look for authorization code in URL
+            if (currentUrl.includes('code=')) {
+              const urlParams = new URLSearchParams(new URL(currentUrl).search)
+              const code = urlParams.get('code')
+              const state = urlParams.get('state')
+              const error = urlParams.get('error')
+
+              clearInterval(checkClosed)
+              clearInterval(checkAuthCode)
+              this.authWindow.close()
+              this.authPromise = null
+
+              if (error) {
+                this.pendingPKCE = null
+                reject(new Error(error))
+                return
+              }
+
+              if (code) {
+                try {
+                  // Exchange authorization code for tokens
+                  const tokens = await this.exchangeCodeForTokens(code, state)
+
+                  // Store tokens in token manager
+                  this.tokenManager.setTokens(tokens)
+
+                  resolve({
+                    accessToken: tokens.accessToken,
+                    refreshToken: tokens.refreshToken,
+                    expiresAt: tokens.expiresAt,
+                    scope: tokens.scope,
+                    tokenType: tokens.tokenType
+                  })
+                } catch (error) {
+                  console.error('❌ Token exchange failed:', error)
+                  reject(new Error(`Token exchange failed: ${error.message}`))
+                }
+              }
+            }
+          } catch (error) {
+            // Cross-origin error - can't access window URL
+            // This is normal for Desktop apps, just continue monitoring
+          }
+        }, 1000)
       } catch (error) {
         this.authPromise = null
         this.pendingPKCE = null

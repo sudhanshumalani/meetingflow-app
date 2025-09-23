@@ -421,7 +421,7 @@ export class GoogleDriveAuth {
 
         const authUrl = this.buildAuthUrl(codeChallenge, this.pendingPKCE.state)
 
-        console.log('🔐 Starting OAuth 2.0 Authorization Code flow with PKCE for Web Application')
+        console.log('🔐 Starting OAuth 2.0 Authorization Code flow with PKCE for Web Application (with client_secret)')
 
         // Open authentication window
         this.authWindow = window.open(

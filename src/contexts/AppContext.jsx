@@ -456,6 +456,7 @@ function deduplicateMeetings(meetings) {
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(appReducer, initialState)
   const saveTimeoutRef = useRef(null)
+  const isLoadingRef = useRef(false)
 
   useEffect(() => {
     loadData()
@@ -520,7 +521,14 @@ export function AppProvider({ children }) {
   }, [])
 
   const loadData = useCallback(() => {
+    // Prevent concurrent loads
+    if (isLoadingRef.current) {
+      console.log('📂 LOAD: Already loading, skipping concurrent call')
+      return
+    }
+
     try {
+      isLoadingRef.current = true
       dispatch({ type: 'SET_LOADING', payload: true })
 
       console.log('📂 LOAD: Starting data load from localStorage...')
@@ -562,13 +570,17 @@ export function AppProvider({ children }) {
 
         console.log('📂 LOAD: Loaded from localStorage - meetings:', meetings.length)
         console.log('📂 LOAD: Meeting IDs loaded:', meetings.map(m => m.id))
+        console.log('📂 LOAD: About to exit localStorage try block successfully')
 
       } catch (error) {
-        console.warn('⚠️ localStorage failed, using defaults:', error)
+        console.error('❌ localStorage failed, using defaults:', error)
+        console.error('❌ Error stack:', error.stack)
         meetings = []
         localStakeholders = []
         localCategories = [] // Don't load defaults on error, let them be set properly
       }
+
+      console.log('📂 LOAD: After localStorage section, about to process meetings...')
       
       // Deduplicate meetings before loading
       console.log('📂 LOAD: Raw meetings from storage:', meetings?.length || 0)
@@ -597,6 +609,8 @@ export function AppProvider({ children }) {
       console.log('🔄 LOAD: Skipping n8n cache to focus on core persistence')
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: 'Failed to load data from storage' })
+    } finally {
+      isLoadingRef.current = false
     }
   }, [])
 

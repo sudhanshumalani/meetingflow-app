@@ -441,17 +441,18 @@ export class GoogleDriveAuth {
           }
         }, 1000)
 
-        // For Desktop apps, Google shows auth code in browser - monitor the window URL
-        const checkAuthCode = setInterval(async () => {
+        // For Desktop apps, Google will redirect to localhost and show the auth code
+        // We need to detect when user is redirected and prompt them to copy the code
+        const checkRedirect = setInterval(() => {
           try {
             if (this.authWindow.closed) {
               return // Will be handled by checkClosed interval
             }
 
-            // Check if we can access the window URL (same-origin policy allows this)
+            // Try to detect if we've been redirected to localhost
             const currentUrl = this.authWindow.location.href
 
-            // Look for authorization code in URL
+            // If we can access the URL and it contains our code, extract it
             if (currentUrl.includes('code=')) {
               const urlParams = new URLSearchParams(new URL(currentUrl).search)
               const code = urlParams.get('code')
@@ -459,7 +460,7 @@ export class GoogleDriveAuth {
               const error = urlParams.get('error')
 
               clearInterval(checkClosed)
-              clearInterval(checkAuthCode)
+              clearInterval(checkRedirect)
               this.authWindow.close()
               this.authPromise = null
 
@@ -470,31 +471,34 @@ export class GoogleDriveAuth {
               }
 
               if (code) {
-                try {
-                  // Exchange authorization code for tokens
-                  const tokens = await this.exchangeCodeForTokens(code, state)
-
-                  // Store tokens in token manager
-                  this.tokenManager.setTokens(tokens)
-
-                  resolve({
-                    accessToken: tokens.accessToken,
-                    refreshToken: tokens.refreshToken,
-                    expiresAt: tokens.expiresAt,
-                    scope: tokens.scope,
-                    tokenType: tokens.tokenType
-                  })
-                } catch (error) {
-                  console.error('❌ Token exchange failed:', error)
-                  reject(new Error(`Token exchange failed: ${error.message}`))
-                }
+                this.handleAuthCode(code, state, resolve, reject)
               }
             }
           } catch (error) {
-            // Cross-origin error - can't access window URL
-            // This is normal for Desktop apps, just continue monitoring
+            // Cross-origin error means we're likely on localhost now
+            // Check if the window title or content suggests we have a code
+            try {
+              if (this.authWindow.document && this.authWindow.document.title.includes('Success')) {
+                // Window shows success - prompt user for the code
+                clearInterval(checkClosed)
+                clearInterval(checkRedirect)
+
+                const code = prompt('Please copy the authorization code from the browser window and paste it here:')
+                this.authWindow.close()
+                this.authPromise = null
+
+                if (code && code.trim()) {
+                  this.handleAuthCode(code.trim(), this.pendingPKCE.state, resolve, reject)
+                } else {
+                  this.pendingPKCE = null
+                  reject(new Error('No authorization code provided'))
+                }
+              }
+            } catch (docError) {
+              // Can't access document either - just continue monitoring
+            }
           }
-        }, 1000)
+        }, 2000) // Check every 2 seconds
       } catch (error) {
         this.authPromise = null
         this.pendingPKCE = null
@@ -503,6 +507,27 @@ export class GoogleDriveAuth {
     })
 
     return this.authPromise
+  }
+
+  async handleAuthCode(code, state, resolve, reject) {
+    try {
+      // Exchange authorization code for tokens
+      const tokens = await this.exchangeCodeForTokens(code, state)
+
+      // Store tokens in token manager
+      this.tokenManager.setTokens(tokens)
+
+      resolve({
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+        scope: tokens.scope,
+        tokenType: tokens.tokenType
+      })
+    } catch (error) {
+      console.error('❌ Token exchange failed:', error)
+      reject(new Error(`Token exchange failed: ${error.message}`))
+    }
   }
 
   generateState() {

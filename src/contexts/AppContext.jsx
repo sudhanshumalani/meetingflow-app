@@ -31,7 +31,15 @@ function appReducer(state, action) {
       return { ...state, error: action.payload, isLoading: false }
     
     case 'LOAD_DATA':
-      return {
+      console.log('🔍 LOAD_DATA REDUCER: Processing data load...')
+      console.log('🔍 LOAD_DATA REDUCER: Payload:', {
+        meetings: action.payload.meetings?.length || 0,
+        stakeholders: action.payload.stakeholders?.length || 0,
+        stakeholderCategories: action.payload.stakeholderCategories?.length || 0,
+        deletedItems: action.payload.deletedItems?.length || 0
+      })
+
+      const loadedState = {
         ...state,
         meetings: action.payload.meetings || [],
         stakeholders: action.payload.stakeholders || [],
@@ -39,6 +47,14 @@ function appReducer(state, action) {
         deletedItems: action.payload.deletedItems || [],
         isLoading: false
       }
+
+      console.log('🔍 LOAD_DATA REDUCER: New state:', {
+        meetings: loadedState.meetings?.length || 0,
+        stakeholders: loadedState.stakeholders?.length || 0,
+        stakeholderCategories: loadedState.stakeholderCategories?.length || 0
+      })
+
+      return loadedState
     
     case 'ADD_MEETING':
       // UUID must be provided - never generate inside reducer to avoid duplicates
@@ -560,6 +576,13 @@ export function AppProvider({ children }) {
       console.log('📂 LOAD: Deduplicated meetings:', deduplicatedMeetings.length)
 
       // Load local data immediately
+      console.log('🔍 DISPATCH: About to dispatch LOAD_DATA with:', {
+        meetings: deduplicatedMeetings?.length || 0,
+        stakeholders: localStakeholders?.length || 0,
+        stakeholderCategories: localCategories?.length || 0,
+        deletedItems: deletedItems?.length || 0
+      })
+
       dispatch({
         type: 'LOAD_DATA',
         payload: {

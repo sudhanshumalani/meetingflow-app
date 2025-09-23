@@ -1,4 +1,5 @@
 // Simple, reliable OCR service with Claude AI integration
+// Static import fix v2.0 - Force cache refresh
 import { ClaudeProvider } from './aiProviders/ClaudeProvider.js'
 
 export class SimpleOCRService {

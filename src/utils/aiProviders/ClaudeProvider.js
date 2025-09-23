@@ -1,4 +1,5 @@
 // World-class Claude API integration with CORS support
+// Cache-busting update: Fixed static import issue - v2.0
 export class ClaudeProvider {
   constructor(apiKey = null) {
     this.apiKey = apiKey || localStorage.getItem('claudeApiKey')

@@ -60,47 +60,92 @@ export class ClaudeProvider {
   buildMeetingPrompt(text, context = {}) {
     const { meetingType = 'general', stakeholder = null, date = null } = context
 
-    return `You are an expert meeting analyst. Analyze the following meeting notes and provide a structured response.
+    return `You are an expert meeting notes analyst. Transform the following meeting transcript into comprehensive, structured meeting notes.
 
 **Meeting Context:**
 - Type: ${meetingType}
 - Date: ${date || 'Not specified'}
 - Primary Stakeholder: ${stakeholder || 'Not specified'}
 
-**Raw Meeting Notes:**
+**Raw Meeting Notes/Transcript:**
 """
 ${text}
 """
 
-**Instructions:**
-1. Create a concise summary (2-3 sentences)
-2. Extract key discussion points as clear bullet points
-3. Identify action items with assignee, priority, and deadlines where possible
-4. Determine overall meeting sentiment
+**ANALYSIS REQUIREMENTS:**
+
+1. **IDENTIFY PEOPLE & CONTEXT**
+   - Extract each person's background, current role, and relevant experience
+   - Include specific details, timelines, and quantifiable information
+
+2. **ORGANIZE BY LOGICAL THEMES**
+   - Group related topics under clear, descriptive headers
+   - Use bullet points and sub-bullets for hierarchical information
+   - Bold key terms and proper nouns for easy scanning
+
+3. **CAPTURE STRATEGIC INSIGHTS**
+   - Extract lessons learned, challenges identified, and solutions proposed
+   - Include specific methodologies, frameworks, and best practices mentioned
+   - Note any data points, metrics, or measurable outcomes
+
+4. **HIGHLIGHT ACTIONABLE INFORMATION**
+   - Identify collaboration opportunities and potential partnerships
+   - Extract concrete next steps with responsible parties
+   - Note key contacts, referrals, and recommended resources
+
+5. **MAINTAIN PROFESSIONAL ACCURACY**
+   - Use precise terminology and proper names
+   - Include relevant context that adds meaning
+   - Preserve nuanced distinctions and qualifications
 
 **Response Format (JSON):**
 {
-  "summary": "Brief meeting overview highlighting main outcomes...",
-  "keyDiscussionPoints": [
-    "Main topic 1 discussed in detail",
-    "Important decision made about X",
-    "Concerns raised regarding Y"
+  "summary": "Brief overview capturing strategic context and main outcomes",
+  "peopleAndContext": [
+    {
+      "name": "Person Name",
+      "background": "Current role, experience, relevant details with specifics",
+      "relevance": "Why they matter to the discussion"
+    }
+  ],
+  "thematicSections": [
+    {
+      "sectionTitle": "Clear, descriptive header that captures essence",
+      "content": [
+        "Specific detail with context and quantifiable information",
+        "Key insight or methodology mentioned",
+        "Strategic consideration or challenge identified"
+      ]
+    }
+  ],
+  "strategicInsights": [
+    "Lesson learned with specific context",
+    "Best practice or framework mentioned",
+    "Challenge identified with proposed solution"
   ],
   "actionItems": [
     {
-      "task": "Clear description of what needs to be done",
+      "task": "Specific action with responsible party named",
       "assignee": "Name or 'Unassigned'",
       "priority": "high|medium|low",
       "dueDate": "Date mentioned or null",
+      "type": "next_step|collaboration|follow_up|research",
       "confidence": 0.9
+    }
+  ],
+  "keyContacts": [
+    {
+      "name": "Contact name",
+      "role": "Their position/relevance",
+      "connection": "How they relate to discussed opportunities"
     }
   ],
   "sentiment": "positive|neutral|negative",
   "confidence": 0.95,
-  "processingNotes": "Any important analysis notes"
+  "processingNotes": "Analysis notes about structure and strategic value"
 }
 
-Return only valid JSON without any markdown formatting.`
+Generate meeting notes that capture both strategic insights and tactical details, making them immediately useful for follow-up actions and future reference. Return only valid JSON without any markdown formatting.`
   }
 
   async analyze(text, context = {}) {
@@ -170,8 +215,11 @@ Return only valid JSON without any markdown formatting.`
     // Fallback text parser for non-JSON responses
     const result = {
       summary: '',
-      keyDiscussionPoints: [],
+      peopleAndContext: [],
+      thematicSections: [],
+      strategicInsights: [],
       actionItems: [],
+      keyContacts: [],
       sentiment: 'neutral',
       confidence: 0.7
     }

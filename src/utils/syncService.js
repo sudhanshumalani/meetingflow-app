@@ -552,27 +552,82 @@ class SyncService {
     const merged = {
       meetings: [],
       stakeholders: [],
-      stakeholderCategories: []
+      stakeholderCategories: [],
+      deletedItems: []
     }
 
-    // Merge meetings by ID, keeping the most recent
+    // Combine all deletion tombstones from both sources
+    const allDeletions = [
+      ...(safeLocalData.deletedItems || []),
+      ...(safeCloudData.deletedItems || [])
+    ]
+
+    // Create a map of deletions by type and ID for fast lookup
+    const deletionMap = new Map()
+    allDeletions.forEach(deletion => {
+      const key = `${deletion.type}:${deletion.id}`
+      const existing = deletionMap.get(key)
+      // Keep the most recent deletion record
+      if (!existing || new Date(deletion.deletedAt) > new Date(existing.deletedAt)) {
+        deletionMap.set(key, deletion)
+      }
+    })
+
+
+    // Merge meetings by ID, respecting deletions and keeping the most recent
     const allMeetings = [...(safeLocalData.meetings || []), ...(safeCloudData.meetings || [])]
     const meetingMap = new Map()
 
     allMeetings.forEach(meeting => {
+      // Check if this meeting has been deleted
+      const deletionKey = `meeting:${meeting.id}`
+      const deletion = deletionMap.get(deletionKey)
+
+      if (deletion) {
+        // Item was deleted - check if deletion is newer than the meeting
+        const meetingTimestamp = new Date(meeting.lastSaved || meeting.updatedAt || meeting.createdAt)
+        const deletionTimestamp = new Date(deletion.deletedAt)
+
+        if (deletionTimestamp > meetingTimestamp) {
+          console.log(`🗑️ Excluding deleted meeting: ${meeting.title || meeting.id} (deleted: ${deletion.deletedAt})`)
+          return // Skip this meeting - it was deleted after last modification
+        }
+        console.log(`⚰️ Resurrecting meeting: ${meeting.title || meeting.id} (modified after deletion)`)
+        // Remove the deletion record since the item was modified after deletion
+        deletionMap.delete(deletionKey)
+      }
+
       const existing = meetingMap.get(meeting.id)
-      if (!existing || new Date(meeting.lastSaved || meeting.createdAt) > new Date(existing.lastSaved || existing.createdAt)) {
+      if (!existing || new Date(meeting.lastSaved || meeting.updatedAt || meeting.createdAt) > new Date(existing.lastSaved || existing.updatedAt || existing.createdAt)) {
         meetingMap.set(meeting.id, meeting)
       }
     })
 
     merged.meetings = Array.from(meetingMap.values())
 
-    // Merge stakeholders by ID, keeping the most recent
+    // Merge stakeholders by ID, respecting deletions and keeping the most recent
     const allStakeholders = [...(safeLocalData.stakeholders || []), ...(safeCloudData.stakeholders || [])]
     const stakeholderMap = new Map()
 
     allStakeholders.forEach(stakeholder => {
+      // Check if this stakeholder has been deleted
+      const deletionKey = `stakeholder:${stakeholder.id}`
+      const deletion = deletionMap.get(deletionKey)
+
+      if (deletion) {
+        // Item was deleted - check if deletion is newer than the stakeholder
+        const stakeholderTimestamp = new Date(stakeholder.updatedAt || stakeholder.createdAt)
+        const deletionTimestamp = new Date(deletion.deletedAt)
+
+        if (deletionTimestamp > stakeholderTimestamp) {
+          console.log(`🗑️ Excluding deleted stakeholder: ${stakeholder.name || stakeholder.id} (deleted: ${deletion.deletedAt})`)
+          return // Skip this stakeholder - it was deleted after last modification
+        }
+        console.log(`⚰️ Resurrecting stakeholder: ${stakeholder.name || stakeholder.id} (modified after deletion)`)
+        // Remove the deletion record since the item was modified after deletion
+        deletionMap.delete(deletionKey)
+      }
+
       const existing = stakeholderMap.get(stakeholder.id)
       if (!existing || new Date(stakeholder.updatedAt || stakeholder.createdAt) > new Date(existing.updatedAt || existing.createdAt)) {
         stakeholderMap.set(stakeholder.id, stakeholder)
@@ -605,14 +660,34 @@ class SyncService {
     allCategories.forEach((category, index) => {
       // Use 'name' if available, otherwise fall back to 'label' for N8N categories
       const categoryName = category?.name || category?.label
+      const categoryId = category?.id || categoryName // Use ID if available, otherwise use name as identifier
       const hasName = !!categoryName
       const notInMap = !categoryMap.has(categoryName)
       const notDefault = !defaultCategories.has(categoryName)
+
+      // Check if this category has been deleted
+      const deletionKey = `stakeholderCategory:${categoryId}`
+      const deletion = deletionMap.get(deletionKey)
+
+      if (deletion) {
+        // Item was deleted - check if deletion is newer than the category
+        const categoryTimestamp = new Date(category.updatedAt || category.createdAt || 0)
+        const deletionTimestamp = new Date(deletion.deletedAt)
+
+        if (deletionTimestamp > categoryTimestamp) {
+          console.log(`🗑️ Excluding deleted category: ${categoryName || categoryId} (deleted: ${deletion.deletedAt})`)
+          return // Skip this category - it was deleted after last modification
+        }
+        console.log(`⚰️ Resurrecting category: ${categoryName || categoryId} (modified after deletion)`)
+        // Remove the deletion record since the item was modified after deletion
+        deletionMap.delete(deletionKey)
+      }
 
       console.log('🔍 Processing category', index, ':', {
         name: category?.name,
         label: category?.label,
         categoryName: categoryName, // The name we're actually using
+        categoryId: categoryId,
         key: category?.key,
         hasName,
         notInMap,
@@ -651,10 +726,14 @@ class SyncService {
       categoryNames: merged.stakeholderCategories.map(c => c.name)
     })
 
+    // Final assignment of cleaned deletion records (after all resurrection checks)
+    merged.deletedItems = Array.from(deletionMap.values())
+
     console.log('✅ Data merge complete:', {
       meetings: merged.meetings.length,
       stakeholders: merged.stakeholders.length,
       stakeholderCategories: merged.stakeholderCategories.length,
+      deletedItems: merged.deletedItems.length,
       localMeetings: safeLocalData.meetings?.length || 0,
       cloudMeetings: safeCloudData.meetings?.length || 0,
       localStakeholders: safeLocalData.stakeholders?.length || 0,
@@ -975,13 +1054,37 @@ class SyncService {
       const fileName = `meetingflow_${key}.json`
       const content = JSON.stringify(data, null, 2)
 
-      // Check if file already exists
-      let fileId = config.fileId
+      // Function to search for existing files by name (same as download)
+      const searchForExistingFiles = async () => {
+        console.log('🔍 UPLOAD: Searching for existing files in Google Drive...')
 
-      if (!fileId) {
-        // Search for existing file
+        // First, let's see ALL files in this folder to understand what's there
+        const folderContentsResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=parents in '${config.folderId || 'root'}'&fields=files(id,name,size,modifiedTime)`,
+          {
+            headers: {
+              'Authorization': `Bearer ${config.accessToken}`,
+            }
+          }
+        )
+
+        if (folderContentsResponse.ok) {
+          const folderContents = await folderContentsResponse.json()
+          console.log('📁 UPLOAD DEBUG: All files in folder:', {
+            folderId: config.folderId,
+            totalFiles: folderContents.files?.length || 0,
+            files: folderContents.files?.map(f => ({
+              id: f.id,
+              name: f.name,
+              size: f.size + ' bytes',
+              modified: f.modifiedTime
+            }))
+          })
+        }
+
+        // Search for the specific file by name
         const searchResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and parents in '${config.folderId || 'root'}'`,
+          `https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and parents in '${config.folderId || 'root'}'&fields=files(id,name,size,modifiedTime)`,
           {
             headers: {
               'Authorization': `Bearer ${config.accessToken}`,
@@ -994,17 +1097,60 @@ class SyncService {
         }
 
         const searchResult = await searchResponse.json()
-        const discoveredFileId = searchResult.files?.[0]?.id
+        console.log('🔍 UPLOAD DEBUG Google Drive search result:', {
+          filesFound: searchResult.files?.length || 0,
+          files: searchResult.files?.map(f => ({
+            id: f.id,
+            name: f.name,
+            size: f.size + ' bytes',
+            modified: f.modifiedTime
+          }))
+        })
 
-        if (discoveredFileId) {
-          console.log('🔍 Found existing file in Google Drive:', discoveredFileId)
-          fileId = discoveredFileId
-          // Save the discovered file ID immediately
-          if (!config.fileId || config.fileId !== discoveredFileId) {
-            console.log('💾 Updating stored file ID to discovered file:', discoveredFileId)
-            config.fileId = discoveredFileId
+        return searchResult.files?.[0]?.id || null
+      }
+
+      // Check if file already exists - try stored ID first, then search
+      let fileId = config.fileId
+
+      if (fileId) {
+        console.log(`🔍 UPLOAD: Trying stored file ID: ${fileId}`)
+        // Verify the stored file ID is valid before using it
+        const testResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${fileId}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${config.accessToken}`,
+            }
+          }
+        )
+
+        if (testResponse.ok) {
+          console.log('✅ UPLOAD: Stored file ID is valid, using it')
+          // File exists, will use this ID for upload
+        } else if (testResponse.status === 404) {
+          console.log(`⚠️ UPLOAD: Stored file ID ${fileId} not found (404), searching for existing files...`)
+          // File not found, search for existing files
+          fileId = await searchForExistingFiles()
+          if (fileId) {
+            console.log(`✅ UPLOAD: Found existing file with ID: ${fileId}, updating stored ID`)
+            // Update stored file ID
+            config.fileId = fileId
             await localforage.setItem('sync_config', this.syncConfig)
           }
+        } else {
+          // Other error, propagate it
+          throw new Error(`Google Drive access failed: ${testResponse.statusText}`)
+        }
+      } else {
+        // No stored file ID, search for existing files
+        console.log('🔍 UPLOAD: No stored file ID, searching for existing files')
+        fileId = await searchForExistingFiles()
+        if (fileId) {
+          console.log(`✅ UPLOAD: Found existing file with ID: ${fileId}, storing ID`)
+          // Store the found file ID
+          config.fileId = fileId
+          await localforage.setItem('sync_config', this.syncConfig)
         }
       }
 
@@ -1023,14 +1169,44 @@ class SyncService {
           }
         )
 
-        // Handle file not found error - recover by creating new file
+        // Handle file not found error - file was deleted between validation and upload
         if (response.status === 404) {
-          console.warn(`⚠️ File not found (${fileId}), clearing invalid file ID and creating new file`)
+          console.warn(`⚠️ UPLOAD: File ${fileId} was deleted during upload, searching for alternatives...`)
           // Clear the invalid file ID from config
           config.fileId = null
           await localforage.setItem('sync_config', this.syncConfig)
-          fileId = null // Fall through to create new file
-          response = null // Clear the failed response
+
+          // Try to find if there are other files we can use
+          const alternativeFileId = await searchForExistingFiles()
+          if (alternativeFileId) {
+            console.log(`✅ UPLOAD: Found alternative file ${alternativeFileId}, using it`)
+            fileId = alternativeFileId
+            config.fileId = alternativeFileId
+            await localforage.setItem('sync_config', this.syncConfig)
+
+            // Retry upload with the alternative file
+            response = await fetch(
+              `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
+              {
+                method: 'PATCH',
+                headers: {
+                  'Authorization': `Bearer ${config.accessToken}`,
+                  'Content-Type': 'application/json',
+                },
+                body: content
+              }
+            )
+
+            if (response.status === 404) {
+              console.warn(`⚠️ UPLOAD: Alternative file also deleted, creating new file`)
+              fileId = null // Fall through to create new file
+              response = null
+            }
+          } else {
+            console.log(`⚠️ UPLOAD: No alternative files found, creating new file`)
+            fileId = null // Fall through to create new file
+            response = null // Clear the failed response
+          }
         } else if (!response.ok) {
           const error = await response.json()
           throw new Error(`Google Drive upload failed: ${error.error?.message || response.statusText}`)
@@ -1152,7 +1328,10 @@ class SyncService {
         hasStoredFileId: !!fileId
       })
 
-      if (!fileId) {
+      // Function to search for existing files by name
+      const searchForExistingFiles = async () => {
+        console.log('🔍 Searching for existing files in Google Drive...')
+
         // First, let's see ALL files in this folder to understand what's there
         const folderContentsResponse = await fetch(
           `https://www.googleapis.com/drive/v3/files?q=parents in '${config.folderId || 'root'}'&fields=files(id,name,size,modifiedTime)`,
@@ -1177,7 +1356,7 @@ class SyncService {
           })
         }
 
-        // Search for the specific file
+        // Search for the specific file by name
         const searchResponse = await fetch(
           `https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and parents in '${config.folderId || 'root'}'&fields=files(id,name,size,modifiedTime)`,
           {
@@ -1201,15 +1380,58 @@ class SyncService {
             modified: f.modifiedTime
           }))
         })
-        fileId = searchResult.files?.[0]?.id
 
-        if (!fileId) {
-          console.log('⚠️ No file found in Google Drive')
-          return { success: true, data: null } // File not found
+        return searchResult.files?.[0]?.id || null
+      }
+
+      // Try stored fileId first, then search if that fails
+      if (fileId) {
+        console.log(`🔍 Trying stored file ID: ${fileId}`)
+        // Try to download using stored file ID
+        const testResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+          {
+            headers: {
+              'Authorization': `Bearer ${config.accessToken}`,
+            }
+          }
+        )
+
+        if (testResponse.ok) {
+          console.log('✅ Stored file ID is valid, using it')
+          // File exists, proceed with download (will be handled below)
+        } else if (testResponse.status === 404) {
+          console.log(`⚠️ Stored file ID ${fileId} not found (404), searching for existing files...`)
+          // File not found, search for existing files
+          fileId = await searchForExistingFiles()
+          if (fileId) {
+            console.log(`✅ Found existing file with ID: ${fileId}, updating stored ID`)
+            // Update stored file ID
+            config.fileId = fileId
+            await localforage.setItem('sync_config', this.syncConfig)
+          }
+        } else {
+          // Other error, propagate it
+          throw new Error(`Google Drive access failed: ${testResponse.statusText}`)
+        }
+      } else {
+        // No stored file ID, search for existing files
+        console.log('🔍 No stored file ID, searching for existing files')
+        fileId = await searchForExistingFiles()
+        if (fileId) {
+          console.log(`✅ Found existing file with ID: ${fileId}, storing ID`)
+          // Store the found file ID
+          config.fileId = fileId
+          await localforage.setItem('sync_config', this.syncConfig)
         }
       }
 
-      // Download file content
+      if (!fileId) {
+        console.log('⚠️ No file found in Google Drive')
+        return { success: true, data: null } // File not found
+      }
+
+      // Download file content using the confirmed valid fileId
       const response = await fetch(
         `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
         {
@@ -1221,6 +1443,10 @@ class SyncService {
 
       if (!response.ok) {
         if (response.status === 404) {
+          console.log(`⚠️ File ${fileId} was deleted during download, clearing stored ID`)
+          // Clear the invalid file ID
+          config.fileId = null
+          await localforage.setItem('sync_config', this.syncConfig)
           return { success: true, data: null } // File not found
         }
         throw new Error(`Google Drive download failed: ${response.statusText}`)

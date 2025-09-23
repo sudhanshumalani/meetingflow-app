@@ -10,6 +10,7 @@ const initialState = {
   meetings: [],
   stakeholders: [],
   stakeholderCategories: [], // Start empty, will be loaded from storage or set by sync
+  deletedItems: [], // Tombstone records for deleted items to prevent resurrection
   currentMeeting: null,
   isLoading: false,
   error: null,
@@ -35,6 +36,7 @@ function appReducer(state, action) {
         meetings: action.payload.meetings || [],
         stakeholders: action.payload.stakeholders || [],
         stakeholderCategories: action.payload.stakeholderCategories || [],
+        deletedItems: action.payload.deletedItems || [],
         isLoading: false
       }
     
@@ -83,9 +85,23 @@ function appReducer(state, action) {
       }
     
     case 'DELETE_MEETING':
+      const deletedMeeting = state.meetings.find(meeting => meeting.id === action.payload)
       return {
         ...state,
         meetings: state.meetings.filter(meeting => meeting.id !== action.payload),
+        deletedItems: [
+          ...state.deletedItems,
+          {
+            type: 'meeting',
+            id: action.payload,
+            deletedAt: new Date().toISOString(),
+            deletedBy: `device_${navigator.userAgent.slice(0, 50)}`, // Basic device identification
+            originalItem: deletedMeeting ? {
+              title: deletedMeeting.title,
+              date: deletedMeeting.date
+            } : null
+          }
+        ],
         currentMeeting: state.currentMeeting?.id === action.payload ? null : state.currentMeeting
       }
     
@@ -117,9 +133,23 @@ function appReducer(state, action) {
       }
     
     case 'DELETE_STAKEHOLDER':
+      const deletedStakeholder = state.stakeholders.find(stakeholder => stakeholder.id === action.payload)
       return {
         ...state,
-        stakeholders: state.stakeholders.filter(stakeholder => stakeholder.id !== action.payload)
+        stakeholders: state.stakeholders.filter(stakeholder => stakeholder.id !== action.payload),
+        deletedItems: [
+          ...state.deletedItems,
+          {
+            type: 'stakeholder',
+            id: action.payload,
+            deletedAt: new Date().toISOString(),
+            deletedBy: `device_${navigator.userAgent.slice(0, 50)}`,
+            originalItem: deletedStakeholder ? {
+              name: deletedStakeholder.name,
+              role: deletedStakeholder.role
+            } : null
+          }
+        ]
       }
 
     case 'ADD_STAKEHOLDER_CATEGORY':
@@ -146,6 +176,9 @@ function appReducer(state, action) {
 
     case 'DELETE_STAKEHOLDER_CATEGORY':
       const categoryToDelete = action.payload
+      const deletedCategory = state.stakeholderCategories.find(category =>
+        category.key === categoryToDelete || category.id === categoryToDelete
+      )
       // Also update any stakeholders using this category to use a default category
       const updatedStakeholders = state.stakeholders.map(stakeholder =>
         stakeholder.category === categoryToDelete
@@ -157,7 +190,20 @@ function appReducer(state, action) {
         stakeholderCategories: state.stakeholderCategories.filter(category =>
           category.key !== categoryToDelete && category.id !== categoryToDelete
         ),
-        stakeholders: updatedStakeholders
+        stakeholders: updatedStakeholders,
+        deletedItems: [
+          ...state.deletedItems,
+          {
+            type: 'stakeholderCategory',
+            id: categoryToDelete,
+            deletedAt: new Date().toISOString(),
+            deletedBy: `device_${navigator.userAgent.slice(0, 50)}`,
+            originalItem: deletedCategory ? {
+              name: deletedCategory.name || deletedCategory.label,
+              key: deletedCategory.key
+            } : null
+          }
+        ]
       }
 
     case 'SET_STAKEHOLDER_CATEGORIES':
@@ -416,11 +462,13 @@ export function AppProvider({ children }) {
       localStorage.setItem('meetingflow_meetings', JSON.stringify(state.meetings))
       localStorage.setItem('meetingflow_stakeholders', JSON.stringify(state.stakeholders))
       localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(state.stakeholderCategories))
+      localStorage.setItem('meetingflow_deleted_items', JSON.stringify(state.deletedItems))
 
       // Also save to localforage to maintain sync consistency
       localforage.setItem('meetingflow_meetings', state.meetings)
       localforage.setItem('meetingflow_stakeholders', state.stakeholders)
       localforage.setItem('meetingflow_stakeholder_categories', state.stakeholderCategories)
+      localforage.setItem('meetingflow_deleted_items', state.deletedItems)
 
       const saved = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
       console.log('✅ AppContext: VERIFIED save - meetings in storage:', saved.length)
@@ -472,6 +520,7 @@ export function AppProvider({ children }) {
         meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
         localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
         localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+        const deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
 
         // Only use defaults for true first-time setup (when no categories exist anywhere)
         if (!localCategories.length) {
@@ -518,7 +567,8 @@ export function AppProvider({ children }) {
         payload: {
           meetings: deduplicatedMeetings,
           stakeholders: localStakeholders || [],
-          stakeholderCategories: localCategories || []
+          stakeholderCategories: localCategories || [],
+          deletedItems: deletedItems || []
         }
       })
       

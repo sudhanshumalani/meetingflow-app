@@ -1577,7 +1577,7 @@ export default function Home() {
                             if (newCategory.label.trim()) {
                               addStakeholderCategory({
                                 ...newCategory,
-                                key: newCategory.label.toLowerCase().replace(/\s+/g, '-'),
+                                key: (newCategory.label || '').toLowerCase().replace(/\s+/g, '-'),
                                 createdAt: new Date().toISOString()
                               })
                               setShowAddCategoryForm(false)

@@ -406,7 +406,7 @@ class StorageManager {
 
   async getStorageInfo() {
     try {
-      const keys = await this.keys()
+      const keys = await localforage.keys()
       const length = await this.length()
       
       // Estimate storage usage
@@ -446,7 +446,7 @@ class StorageManager {
   async exportAllData() {
     try {
       const data = {}
-      const keys = await this.keys()
+      const keys = await localforage.keys()
       
       for (const key of keys) {
         data[key] = await localforage.getItem(key)

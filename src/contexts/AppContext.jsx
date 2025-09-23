@@ -124,7 +124,7 @@ function appReducer(state, action) {
 
     case 'ADD_STAKEHOLDER_CATEGORY':
       const newCategory = {
-        key: action.payload.key || action.payload.label.toLowerCase().replace(/\s+/g, '-'),
+        key: action.payload.key || (action.payload.label || '').toLowerCase().replace(/\s+/g, '-'),
         ...action.payload,
         id: uuidv4(),
         createdAt: new Date().toISOString()

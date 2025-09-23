@@ -197,24 +197,13 @@ export function SyncProvider({ children }) {
   }, [sync.resolveConflict, sync.conflictData, app])
 
   /**
-   * Initialize sync on app startup
+   * Initialize sync on app startup - DISABLED to prevent data loss
+   * Users should manually sync when they want to pull cloud data
    */
   useEffect(() => {
-    const initializeSync = async () => {
-      if (sync.isConfigured && app.meetings.length > 0) {
-        try {
-          console.log('🔄 Checking for cloud updates on app startup...')
-          await syncFromCloudWithUpdate()
-        } catch (error) {
-          console.log('Startup sync check failed:', error.message)
-        }
-      }
-    }
-
-    // Only run after initial app data load is complete
-    if (!app.isLoading) {
-      initializeSync()
-    }
+    // Automatic startup sync disabled to prevent overwriting local data
+    // Users can manually sync via the Settings page when needed
+    console.log('🔄 Sync initialization complete - automatic startup sync disabled for data safety')
   }, [app.isLoading, sync.isConfigured])
 
   // Enhanced sync actions that integrate with app context

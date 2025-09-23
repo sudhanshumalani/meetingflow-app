@@ -1,4 +1,6 @@
 // Simple, reliable OCR service with Claude AI integration
+import { ClaudeProvider } from './aiProviders/ClaudeProvider.js'
+
 export class SimpleOCRService {
   constructor() {
     this.apiKey = localStorage.getItem('ocrApiKey') || null
@@ -152,7 +154,6 @@ export class SimpleOCRService {
     if (this.claudeApiKey) {
       try {
         console.log('🧠 Using direct Claude API...')
-        const { ClaudeProvider } = await import('./aiProviders/ClaudeProvider.js')
         const claudeProvider = new ClaudeProvider(this.claudeApiKey)
 
         console.log('✅ API key exists, attempting direct analysis (skipping availability check)...')

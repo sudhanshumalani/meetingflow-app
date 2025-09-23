@@ -43,7 +43,16 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
-    sourcemap: false
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          ai: ['./src/utils/aiProviders/ClaudeProvider.js'],
+          ocr: ['tesseract.js']
+        }
+      }
+    }
   },
   server: {
     https: true,

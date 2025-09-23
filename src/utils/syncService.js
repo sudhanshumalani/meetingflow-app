@@ -1110,14 +1110,13 @@ class SyncService {
         return searchResult.files?.[0]?.id || null
       }
 
-      // Check if file already exists - try stored ID first, then search
-      let fileId = config.fileId
+      // Enhanced search that analyzes all files to find the best one
+      const searchForBestFile = async () => {
+        console.log('🔍 UPLOAD: Searching for ALL existing files in Google Drive...')
 
-      if (fileId) {
-        console.log(`🔍 UPLOAD: Trying stored file ID: ${fileId}`)
-        // Verify the stored file ID is valid before using it
-        const testResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${fileId}`,
+        // Search for ALL files with our target name
+        const searchResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and parents in '${config.folderId || 'root'}'&fields=files(id,name,size,modifiedTime)`,
           {
             headers: {
               'Authorization': `Bearer ${config.accessToken}`,
@@ -1125,33 +1124,68 @@ class SyncService {
           }
         )
 
-        if (testResponse.ok) {
-          console.log('✅ UPLOAD: Stored file ID is valid, using it')
-          // File exists, will use this ID for upload
-        } else if (testResponse.status === 404) {
-          console.log(`⚠️ UPLOAD: Stored file ID ${fileId} not found (404), searching for existing files...`)
-          // File not found, search for existing files
-          fileId = await searchForExistingFiles()
-          if (fileId) {
-            console.log(`✅ UPLOAD: Found existing file with ID: ${fileId}, updating stored ID`)
-            // Update stored file ID
-            config.fileId = fileId
-            await localforage.setItem('sync_config', this.syncConfig)
+        if (!searchResponse.ok) {
+          return null
+        }
+
+        const searchResult = await searchResponse.json()
+        const foundFiles = searchResult.files || []
+
+        console.log('🔍 UPLOAD: Found files to analyze:', {
+          filesFound: foundFiles.length,
+          files: foundFiles.map(f => ({
+            id: f.id,
+            size: f.size + ' bytes',
+            modified: f.modifiedTime
+          }))
+        })
+
+        if (foundFiles.length === 0) {
+          return null
+        }
+
+        if (foundFiles.length === 1) {
+          return foundFiles[0].id
+        }
+
+        // Multiple files - pick the largest one (likely has more data)
+        const bestFile = foundFiles.sort((a, b) => {
+          const aSize = parseInt(a.size) || 0
+          const bSize = parseInt(b.size) || 0
+          if (aSize !== bSize) {
+            return bSize - aSize // Largest first
           }
-        } else {
-          // Other error, propagate it
-          throw new Error(`Google Drive access failed: ${testResponse.statusText}`)
-        }
-      } else {
-        // No stored file ID, search for existing files
-        console.log('🔍 UPLOAD: No stored file ID, searching for existing files')
-        fileId = await searchForExistingFiles()
-        if (fileId) {
-          console.log(`✅ UPLOAD: Found existing file with ID: ${fileId}, storing ID`)
-          // Store the found file ID
-          config.fileId = fileId
+          // If same size, pick most recent
+          return new Date(b.modifiedTime) - new Date(a.modifiedTime)
+        })[0]
+
+        console.log('🎯 UPLOAD: Selected file based on size:', {
+          selectedId: bestFile.id,
+          size: bestFile.size + ' bytes',
+          allFiles: foundFiles.map(f => ({ id: f.id, size: f.size }))
+        })
+
+        return bestFile.id
+      }
+
+      // ALWAYS use intelligent file selection to ensure all devices use the best file
+      console.log('🚀 UPLOAD: Using intelligent file selection to find the best available file')
+      const bestFileId = await searchForBestFile()
+
+      if (bestFileId) {
+        if (bestFileId !== config.fileId) {
+          console.log(`🔄 UPLOAD SWITCHING FILES: From ${config.fileId || 'none'} to ${bestFileId} (better file found)`)
+          // Update stored file ID to the best one
+          config.fileId = bestFileId
           await localforage.setItem('sync_config', this.syncConfig)
+        } else {
+          console.log(`✅ UPLOAD: Stored file ID ${config.fileId} is already the best available file`)
         }
+        fileId = bestFileId
+      } else {
+        // No files found, will create new one
+        fileId = config.fileId // Keep existing stored ID (may be null)
+        console.log('🔍 UPLOAD: No existing files found, will create new file if needed')
       }
 
       let response
@@ -1177,7 +1211,7 @@ class SyncService {
           await localforage.setItem('sync_config', this.syncConfig)
 
           // Try to find if there are other files we can use
-          const alternativeFileId = await searchForExistingFiles()
+          const alternativeFileId = await searchForBestFile()
           if (alternativeFileId) {
             console.log(`✅ UPLOAD: Found alternative file ${alternativeFileId}, using it`)
             fileId = alternativeFileId
@@ -1328,9 +1362,9 @@ class SyncService {
         hasStoredFileId: !!fileId
       })
 
-      // Function to search for existing files by name
-      const searchForExistingFiles = async () => {
-        console.log('🔍 Searching for existing files in Google Drive...')
+      // Function to search for and intelligently select the best file
+      const findBestFile = async () => {
+        console.log('🔍 INTELLIGENT FILE SEARCH: Finding the best file in Google Drive...')
 
         // First, let's see ALL files in this folder to understand what's there
         const folderContentsResponse = await fetch(
@@ -1356,7 +1390,7 @@ class SyncService {
           })
         }
 
-        // Search for the specific file by name
+        // Search for ALL files with our target name
         const searchResponse = await fetch(
           `https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and parents in '${config.folderId || 'root'}'&fields=files(id,name,size,modifiedTime)`,
           {
@@ -1371,9 +1405,11 @@ class SyncService {
         }
 
         const searchResult = await searchResponse.json()
-        console.log('🔍 DEBUG Google Drive search result:', {
-          filesFound: searchResult.files?.length || 0,
-          files: searchResult.files?.map(f => ({
+        const foundFiles = searchResult.files || []
+
+        console.log('🔍 DEBUG: Found files to analyze:', {
+          filesFound: foundFiles.length,
+          files: foundFiles.map(f => ({
             id: f.id,
             name: f.name,
             size: f.size + ' bytes',
@@ -1381,48 +1417,136 @@ class SyncService {
           }))
         })
 
-        return searchResult.files?.[0]?.id || null
+        if (foundFiles.length === 0) {
+          return null
+        }
+
+        if (foundFiles.length === 1) {
+          console.log('✅ Only one file found, using it:', foundFiles[0].id)
+          return foundFiles[0].id
+        }
+
+        // Multiple files found - analyze their content to pick the best one
+        console.log('🔬 ANALYZING MULTIPLE FILES: Downloading content to compare...')
+        const fileAnalysis = []
+
+        for (const file of foundFiles) {
+          try {
+            const contentResponse = await fetch(
+              `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+              {
+                headers: {
+                  'Authorization': `Bearer ${config.accessToken}`,
+                }
+              }
+            )
+
+            if (contentResponse.ok) {
+              const content = await contentResponse.text()
+              let parsedContent = null
+              let dataCount = 0
+
+              try {
+                parsedContent = JSON.parse(content)
+                const data = parsedContent?.data || {}
+                dataCount = (data.meetings?.length || 0) +
+                          (data.stakeholders?.length || 0) +
+                          (data.stakeholderCategories?.length || 0)
+              } catch (e) {
+                console.warn(`Failed to parse content for file ${file.id}:`, e)
+              }
+
+              fileAnalysis.push({
+                id: file.id,
+                size: parseInt(file.size) || 0,
+                modified: new Date(file.modifiedTime),
+                contentLength: content.length,
+                dataCount,
+                hasValidContent: !!parsedContent,
+                metadata: parsedContent?.metadata
+              })
+
+              console.log(`📊 FILE ANALYSIS ${file.id}:`, {
+                size: file.size + ' bytes',
+                contentLength: content.length,
+                dataCount,
+                hasValidContent: !!parsedContent,
+                modified: file.modifiedTime
+              })
+            }
+          } catch (error) {
+            console.warn(`Failed to analyze file ${file.id}:`, error)
+            fileAnalysis.push({
+              id: file.id,
+              size: parseInt(file.size) || 0,
+              modified: new Date(file.modifiedTime),
+              contentLength: 0,
+              dataCount: 0,
+              hasValidContent: false
+            })
+          }
+        }
+
+        // Select the best file based on: 1) Valid content, 2) Most data, 3) Most recent
+        const validFiles = fileAnalysis.filter(f => f.hasValidContent)
+        const filesToConsider = validFiles.length > 0 ? validFiles : fileAnalysis
+
+        const bestFile = filesToConsider.sort((a, b) => {
+          // First priority: valid content
+          if (a.hasValidContent !== b.hasValidContent) {
+            return b.hasValidContent ? 1 : -1
+          }
+          // Second priority: most data
+          if (a.dataCount !== b.dataCount) {
+            return b.dataCount - a.dataCount
+          }
+          // Third priority: most recent
+          return b.modified - a.modified
+        })[0]
+
+        console.log('🎯 SELECTED BEST FILE:', {
+          selectedId: bestFile.id,
+          reason: `${bestFile.hasValidContent ? 'valid content' : 'invalid content'}, ${bestFile.dataCount} items, modified ${bestFile.modified.toISOString()}`,
+          allAnalyzed: fileAnalysis.map(f => ({
+            id: f.id,
+            dataCount: f.dataCount,
+            valid: f.hasValidContent
+          }))
+        })
+
+        return bestFile.id
       }
 
-      // Try stored fileId first, then search if that fails
-      if (fileId) {
-        console.log(`🔍 Trying stored file ID: ${fileId}`)
-        // Try to download using stored file ID
-        const testResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
-          {
-            headers: {
-              'Authorization': `Bearer ${config.accessToken}`,
-            }
-          }
-        )
+      // ALWAYS use intelligent file selection to ensure all devices use the best file
+      console.log('🚀 DOWNLOAD: Using intelligent file selection to find the best available file')
+      const bestFileId = await findBestFile()
 
-        if (testResponse.ok) {
-          console.log('✅ Stored file ID is valid, using it')
-          // File exists, proceed with download (will be handled below)
-        } else if (testResponse.status === 404) {
-          console.log(`⚠️ Stored file ID ${fileId} not found (404), searching for existing files...`)
-          // File not found, search for existing files
-          fileId = await searchForExistingFiles()
-          if (fileId) {
-            console.log(`✅ Found existing file with ID: ${fileId}, updating stored ID`)
-            // Update stored file ID
-            config.fileId = fileId
-            await localforage.setItem('sync_config', this.syncConfig)
-          }
+      if (bestFileId) {
+        if (bestFileId !== fileId) {
+          console.log(`🔄 SWITCHING FILES: From ${fileId || 'none'} to ${bestFileId} (better file found)`)
+          fileId = bestFileId
+          // Update stored file ID to the best one
+          config.fileId = bestFileId
+          await localforage.setItem('sync_config', this.syncConfig)
         } else {
-          // Other error, propagate it
-          throw new Error(`Google Drive access failed: ${testResponse.statusText}`)
+          console.log(`✅ DOWNLOAD: Stored file ID ${fileId} is already the best available file`)
         }
       } else {
-        // No stored file ID, search for existing files
-        console.log('🔍 No stored file ID, searching for existing files')
-        fileId = await searchForExistingFiles()
+        // Fallback: try stored fileId if intelligent search found nothing
         if (fileId) {
-          console.log(`✅ Found existing file with ID: ${fileId}, storing ID`)
-          // Store the found file ID
-          config.fileId = fileId
-          await localforage.setItem('sync_config', this.syncConfig)
+          console.log(`🔄 FALLBACK: No files found by search, trying stored file ID: ${fileId}`)
+          const testResponse = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+            {
+              headers: {
+                'Authorization': `Bearer ${config.accessToken}`,
+              }
+            }
+          )
+          if (testResponse.status === 404) {
+            console.log(`⚠️ FALLBACK FAILED: Stored file ID ${fileId} not found either`)
+            fileId = null
+          }
         }
       }
 

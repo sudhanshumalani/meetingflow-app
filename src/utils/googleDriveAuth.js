@@ -7,6 +7,7 @@
 const GOOGLE_CONFIG = {
   // For development/demo: Use environment variables or replace with actual credentials
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
+  clientSecret: import.meta.env.VITE_GOOGLE_CLIENT_SECRET || '', // Required for Web Application OAuth
   redirectUri: import.meta.env.PROD
     ? 'https://sudhanshumalani.github.io/meetingflow-app/auth/google/callback'
     : 'http://localhost:5173/auth/google/callback', // Web application redirect
@@ -205,6 +206,7 @@ class TokenManager {
         },
         body: new URLSearchParams({
           client_id: GOOGLE_CONFIG.clientId,
+          client_secret: GOOGLE_CONFIG.clientSecret, // Required for Web Application OAuth
           refresh_token: this.refreshToken,
           grant_type: 'refresh_token'
         })
@@ -419,7 +421,7 @@ export class GoogleDriveAuth {
 
         const authUrl = this.buildAuthUrl(codeChallenge, this.pendingPKCE.state)
 
-        console.log('🔐 Starting OAuth 2.0 Authorization Code flow with PKCE for Desktop application')
+        console.log('🔐 Starting OAuth 2.0 Authorization Code flow with PKCE for Web Application')
 
         // Open authentication window
         this.authWindow = window.open(
@@ -569,15 +571,15 @@ export class GoogleDriveAuth {
         throw new Error('Invalid state parameter - possible CSRF attack')
       }
 
-      console.log('🔄 Exchanging authorization code for tokens (Desktop app)...')
+      console.log('🔄 Exchanging authorization code for tokens (Web Application)...')
 
       const requestBody = new URLSearchParams({
         client_id: GOOGLE_CONFIG.clientId,
+        client_secret: GOOGLE_CONFIG.clientSecret, // Required for Web Application OAuth
         code: code,
         grant_type: 'authorization_code',
         redirect_uri: GOOGLE_CONFIG.redirectUri,
         code_verifier: this.pendingPKCE.codeVerifier
-        // Note: No client_secret for Desktop applications
       })
 
       const response = await fetch('https://oauth2.googleapis.com/token', {
@@ -605,7 +607,7 @@ export class GoogleDriveAuth {
 
       const tokenData = await response.json()
 
-      console.log('✅ Token exchange successful (Desktop app):', {
+      console.log('✅ Token exchange successful (Web Application):', {
         hasAccessToken: !!tokenData.access_token,
         hasRefreshToken: !!tokenData.refresh_token,
         expiresIn: tokenData.expires_in,

@@ -51,7 +51,7 @@ class AudioTranscriptionService {
       return {
         success: true,
         realtimeSupported: this.realtimeEnabled,
-        whisperSupported: true
+        whisperSupported: true // We'll check this lazily when needed
       }
     } catch (error) {
       console.error('❌ Failed to initialize transcription service:', error)
@@ -130,7 +130,7 @@ class AudioTranscriptionService {
       // Import the modern Hugging Face Transformers.js
       const { pipeline } = await import('@huggingface/transformers')
 
-      // Try WebGPU first for better performance
+      // Try WebGPU first, then fall back to WASM (not CPU)
       try {
         console.log('🎯 Attempting WebGPU acceleration...')
         this.whisperPipeline = await pipeline(
@@ -143,18 +143,36 @@ class AudioTranscriptionService {
         )
         console.log('✅ Whisper WebGPU model loaded successfully')
       } catch (webgpuError) {
-        console.warn('⚠️ WebGPU failed, falling back to CPU:', webgpuError.message)
+        console.warn('⚠️ WebGPU failed, falling back to WASM:', webgpuError.message)
 
-        // Fallback to CPU
-        this.whisperPipeline = await pipeline(
-          'automatic-speech-recognition',
-          'Xenova/whisper-tiny.en',
-          {
-            device: 'cpu',
-            dtype: 'fp32'
+        // Fallback to WASM (not CPU - that's not supported)
+        try {
+          this.whisperPipeline = await pipeline(
+            'automatic-speech-recognition',
+            'Xenova/whisper-tiny.en',
+            {
+              device: 'wasm',
+              dtype: 'fp32'
+            }
+          )
+          console.log('✅ Whisper WASM fallback loaded successfully')
+        } catch (wasmError) {
+          console.error('❌ WASM fallback also failed:', wasmError.message)
+
+          // Final fallback - try without specifying device (let library choose)
+          try {
+            console.log('🔄 Trying default device configuration...')
+            this.whisperPipeline = await pipeline(
+              'automatic-speech-recognition',
+              'Xenova/whisper-tiny.en'
+              // No device specified - let the library choose the best available
+            )
+            console.log('✅ Whisper default configuration loaded successfully')
+          } catch (defaultError) {
+            console.error('❌ All Whisper fallbacks failed:', defaultError.message)
+            throw new Error(`Whisper initialization failed: WebGPU (${webgpuError.message}), WASM (${wasmError.message}), Default (${defaultError.message})`)
           }
-        )
-        console.log('✅ Whisper CPU fallback loaded successfully')
+        }
       }
 
       this.notifyListeners('status', { type: 'whisper_ready' })
@@ -162,11 +180,18 @@ class AudioTranscriptionService {
 
     } catch (error) {
       console.error('❌ Failed to load Whisper:', error)
-      this.notifyListeners('error', {
-        type: 'whisper_error',
-        error: error.message
+
+      // Don't throw the error - gracefully continue with real-time only mode
+      console.warn('⚠️ Whisper unavailable, continuing with real-time transcription only')
+      this.whisperPipeline = null
+
+      this.notifyListeners('status', {
+        type: 'whisper_unavailable',
+        message: 'Whisper high-accuracy transcription is not available. Using real-time transcription only.'
       })
-      throw error
+
+      // Return null to indicate Whisper is not available
+      return null
     }
   }
 
@@ -273,13 +298,16 @@ class AudioTranscriptionService {
         this.mediaRecorder.onstop = async () => {
           console.log('🎤 Recording stopped, processing with Whisper...')
           try {
-            await this.processRecordingWithWhisper()
+            const result = await this.processRecordingWithWhisper()
+            if (!result) {
+              console.log('⚠️ Whisper processing skipped - using real-time transcript only')
+            }
           } catch (error) {
             console.error('Whisper processing failed:', error)
             // Don't crash - just continue without Whisper output
-            this.notifyListeners('error', {
+            this.notifyListeners('status', {
               type: 'whisper_processing_failed',
-              message: 'Whisper processing failed but recording was saved',
+              message: 'High-accuracy processing unavailable. Real-time transcript saved.',
               error: error.message
             })
           }
@@ -355,7 +383,7 @@ class AudioTranscriptionService {
    * Process recorded audio with modern Transformers.js
    */
   async processRecordingWithWhisper() {
-    if (this.audioChunks.length === 0) return
+    if (this.audioChunks.length === 0) return null
 
     try {
       console.log('🤖 Processing audio with modern Transformers.js...')
@@ -364,6 +392,10 @@ class AudioTranscriptionService {
 
       // Initialize Whisper if not already done
       const pipeline = await this.initializeWhisper()
+      if (!pipeline) {
+        console.log('⚠️ Whisper not available, skipping processing')
+        return null
+      }
       console.log('✅ Pipeline ready, processing audio...')
 
       // Convert audio chunks to blob

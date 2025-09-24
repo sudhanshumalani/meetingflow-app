@@ -71,7 +71,7 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    include: ['tesseract.js']
+    include: ['@huggingface/transformers']
   },
   worker: {
     format: 'es'

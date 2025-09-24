@@ -74,6 +74,16 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             setIsProcessing(true)
           } else if (data.type === 'whisper_ready' || data.type === 'whisper_processing') {
             setIsProcessing(data.type === 'whisper_processing')
+          } else if (data.type === 'whisper_unavailable') {
+            setIsProcessing(false)
+            console.log('ℹ️ Whisper unavailable:', data.message)
+            // Auto-switch to real-time mode if we're not already
+            if (mode !== 'realtime') {
+              setMode('realtime')
+            }
+          } else if (data.type === 'whisper_processing_failed') {
+            setIsProcessing(false)
+            console.log('⚠️ Whisper processing failed:', data.message)
           }
           break
 

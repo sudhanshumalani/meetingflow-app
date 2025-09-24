@@ -3,11 +3,11 @@ import { Mic, MicOff, Square, Play, Pause, Volume2, Settings, ChevronDown } from
 import audioTranscriptionService from '../services/audioTranscriptionService'
 import { processWithClaude } from '../utils/ocrServiceNew'
 
-const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
+const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, initialTranscript = '', className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
-  const [transcript, setTranscript] = useState('')
+  const [transcript, setTranscript] = useState(initialTranscript)
   const [interimText, setInterimText] = useState('')
   const [mode, setMode] = useState('hybrid')
   const [error, setError] = useState(null)
@@ -91,6 +91,16 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       audioTranscriptionService.cleanup()
     }
   }, [])
+
+  // Initialize transcript from prop (only once or when significantly different)
+  useEffect(() => {
+    if (initialTranscript && initialTranscript !== transcript &&
+        (transcript === '' || Math.abs(initialTranscript.length - transcript.length) > 50)) {
+      console.log('🔄 Initializing AudioRecorder with existing transcript:', initialTranscript.substring(0, 100) + '...')
+      setTranscript(initialTranscript)
+      lastSavedTranscriptRef.current = initialTranscript
+    }
+  }, [initialTranscript])
 
   // Update parent component when transcript changes
   useEffect(() => {

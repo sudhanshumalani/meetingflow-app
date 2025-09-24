@@ -167,7 +167,8 @@ class AudioTranscriptionService {
       const {
         mode = 'hybrid',
         continuous = true,
-        language = 'en-US'
+        language = 'en-US',
+        deviceId = null
       } = options
 
       if (this.isRecording) {
@@ -179,15 +180,50 @@ class AudioTranscriptionService {
       this.isRecording = true
       this.audioChunks = []
 
-      // Request microphone permission
-      const stream = await navigator.mediaDevices.getUserMedia({
+      // Enhanced audio constraints for simultaneous speaker/mic usage
+      const audioConstraints = {
         audio: {
+          deviceId: deviceId ? { exact: deviceId } : undefined,
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-          sampleRate: 16000 // Optimal for Whisper
+          sampleRate: 16000, // Optimal for Whisper
+          // Advanced constraints for better speaker/mic coexistence
+          suppressLocalAudioPlayback: false, // Allow local audio playback
+          googEchoCancellation: true,
+          googAutoGainControl: true,
+          googNoiseSuppression: true,
+          googHighpassFilter: true,
+          googAudioMirroring: false,
+          // Prevent audio device conflicts
+          latency: 0.01, // Low latency for better real-time performance
+          channelCount: 1, // Mono to reduce processing load
+          volume: 1.0
         }
-      })
+      }
+
+      console.log('🎤 Requesting microphone with enhanced constraints for speaker coexistence', deviceId ? `(device: ${deviceId})` : '(default device)')
+
+      // Try enhanced constraints first, fallback to basic if not supported
+      let stream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(audioConstraints)
+        console.log('✅ Enhanced audio constraints applied')
+      } catch (enhancedError) {
+        console.warn('⚠️ Enhanced constraints failed, trying basic constraints:', enhancedError)
+        // Fallback with device selection if specified
+        const fallbackConstraints = {
+          audio: {
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 16000
+          }
+        }
+        stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints)
+        console.log('✅ Basic audio constraints applied')
+      }
 
       this.stream = stream
 

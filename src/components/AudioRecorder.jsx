@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Mic, MicOff, Square, Play, Pause, Volume2, Settings } from 'lucide-react'
+import { Mic, MicOff, Square, Play, Pause, Volume2, Settings, ChevronDown } from 'lucide-react'
 import audioTranscriptionService from '../services/audioTranscriptionService'
 import { processWithClaude } from '../utils/ocrServiceNew'
 
@@ -15,6 +15,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const [audioLevel, setAudioLevel] = useState(0)
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [wakeLock, setWakeLock] = useState(null)
+  const [availableDevices, setAvailableDevices] = useState([])
+  const [selectedDevice, setSelectedDevice] = useState('')
+  const [showDeviceSelector, setShowDeviceSelector] = useState(false)
 
   const timerRef = useRef(null)
   const audioContextRef = useRef(null)
@@ -133,6 +136,24 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     return () => clearInterval(autoSaveInterval)
   }, [isRecording, transcript, interimText])
 
+  // Get available audio devices
+  const getAudioDevices = async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const audioInputs = devices.filter(device => device.kind === 'audioinput')
+      setAvailableDevices(audioInputs)
+      console.log('🎤 Available audio devices:', audioInputs.map(d => ({ label: d.label, deviceId: d.deviceId })))
+
+      // Auto-select default device if none selected
+      if (!selectedDevice && audioInputs.length > 0) {
+        const defaultDevice = audioInputs.find(d => d.deviceId === 'default') || audioInputs[0]
+        setSelectedDevice(defaultDevice.deviceId)
+      }
+    } catch (error) {
+      console.error('Failed to enumerate devices:', error)
+    }
+  }
+
   // Check microphone permissions
   const checkPermissions = async () => {
     try {
@@ -142,10 +163,38 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       result.addEventListener('change', () => {
         setPermissions(result.state)
       })
+
+      // Get devices after permission check
+      if (result.state === 'granted') {
+        await getAudioDevices()
+      }
     } catch (error) {
       console.warn('Permissions API not supported')
     }
   }
+
+  // Monitor device changes
+  useEffect(() => {
+    const handleDeviceChange = () => {
+      console.log('🔄 Audio devices changed')
+      getAudioDevices()
+    }
+
+    navigator.mediaDevices?.addEventListener('devicechange', handleDeviceChange)
+    return () => navigator.mediaDevices?.removeEventListener('devicechange', handleDeviceChange)
+  }, [])
+
+  // Close device selector when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showDeviceSelector && !event.target.closest('.device-selector')) {
+        setShowDeviceSelector(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showDeviceSelector])
 
   // Start audio level monitoring
   const startAudioLevelMonitoring = async () => {
@@ -227,7 +276,8 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       const result = await audioTranscriptionService.startRecording({
         mode,
         continuous: true,
-        language: 'en-US'
+        language: 'en-US',
+        deviceId: selectedDevice
       })
 
       if (result.success) {
@@ -342,7 +392,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {/* Mode Selector */}
             <select
               value={mode}
@@ -354,6 +404,52 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
               <option value="realtime">Real-time</option>
               <option value="whisper">High Accuracy</option>
             </select>
+
+            {/* Device Selector Button */}
+            <div className="relative device-selector">
+              <button
+                onClick={() => setShowDeviceSelector(!showDeviceSelector)}
+                disabled={isRecording}
+                className="text-xs px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1"
+                title="Select microphone device"
+              >
+                <Settings size={12} />
+                <ChevronDown size={10} />
+              </button>
+
+              {/* Device Dropdown */}
+              {showDeviceSelector && (
+                <div className="absolute top-full left-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-20 min-w-48 max-h-40 overflow-y-auto">
+                  <div className="p-2 border-b border-gray-200 text-xs font-medium text-gray-700">
+                    Select Microphone
+                  </div>
+                  {availableDevices.length === 0 ? (
+                    <div className="p-2 text-xs text-gray-500">No devices found</div>
+                  ) : (
+                    availableDevices.map((device) => (
+                      <button
+                        key={device.deviceId}
+                        onClick={() => {
+                          setSelectedDevice(device.deviceId)
+                          setShowDeviceSelector(false)
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 ${
+                          selectedDevice === device.deviceId ? 'bg-blue-100 text-blue-700' : 'text-gray-700'
+                        }`}
+                      >
+                        {device.label || `Microphone ${device.deviceId.slice(0, 8)}...`}
+                        {selectedDevice === device.deviceId && (
+                          <span className="float-right text-blue-600">✓</span>
+                        )}
+                      </button>
+                    ))
+                  )}
+                  <div className="p-2 border-t border-gray-200 text-xs text-gray-500">
+                    💡 For Zoom meetings: Select a different mic than your speakers use
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Clear Transcript Button */}
             {transcript && !isRecording && (

@@ -118,67 +118,55 @@ class AudioTranscriptionService {
   }
 
   /**
-   * Initialize Whisper WebGPU pipeline (modern approach)
+   * Initialize Whisper with modern Hugging Face Transformers (2024)
    */
   async initializeWhisper() {
     if (this.whisperPipeline) return this.whisperPipeline
 
     try {
-      console.log('🚀 Loading Whisper WebGPU model...')
+      console.log('🚀 Loading Whisper with modern Transformers.js...')
       this.notifyListeners('status', { type: 'whisper_loading' })
 
-      // Import the modern Whisper WebGPU implementation
-      const { WhisperWebGPU } = await import('whisper-webgpu')
+      // Import the modern Hugging Face Transformers.js
+      const { pipeline } = await import('@huggingface/transformers')
 
-      // Initialize Whisper WebGPU with optimized settings
-      this.whisperPipeline = new WhisperWebGPU({
-        model: 'whisper-base.en', // ~200MB, good balance of size and accuracy
-        device: 'webgpu',         // Use WebGPU for better performance
-        dtype: 'fp16',           // Half precision for better performance
-        progressCallback: (progress) => {
-          console.log(`📥 Loading Whisper: ${Math.round(progress.loaded / progress.total * 100)}%`)
-          this.notifyListeners('status', {
-            type: 'whisper_loading',
-            progress: Math.round(progress.loaded / progress.total * 100)
-          })
-        }
-      })
-
-      await this.whisperPipeline.initialize()
-
-      console.log('✅ Whisper WebGPU model loaded successfully')
-      this.notifyListeners('status', { type: 'whisper_ready' })
-
-      return this.whisperPipeline
-    } catch (webgpuError) {
-      console.warn('⚠️ WebGPU failed, falling back to CPU:', webgpuError.message)
-
-      // Fallback to CPU-based Whisper
+      // Try WebGPU first for better performance
       try {
-        const { WhisperWebGPU } = await import('whisper-webgpu')
-
-        this.whisperPipeline = new WhisperWebGPU({
-          model: 'whisper-tiny.en', // Smaller model for CPU
-          device: 'cpu',
-          dtype: 'fp32',
-          progressCallback: (progress) => {
-            console.log(`📥 Loading Whisper (CPU): ${Math.round(progress.loaded / progress.total * 100)}%`)
+        console.log('🎯 Attempting WebGPU acceleration...')
+        this.whisperPipeline = await pipeline(
+          'automatic-speech-recognition',
+          'onnx-community/whisper-tiny.en',
+          {
+            device: 'webgpu',
+            dtype: 'fp16'
           }
-        })
+        )
+        console.log('✅ Whisper WebGPU model loaded successfully')
+      } catch (webgpuError) {
+        console.warn('⚠️ WebGPU failed, falling back to CPU:', webgpuError.message)
 
-        await this.whisperPipeline.initialize()
+        // Fallback to CPU
+        this.whisperPipeline = await pipeline(
+          'automatic-speech-recognition',
+          'Xenova/whisper-tiny.en',
+          {
+            device: 'cpu',
+            dtype: 'fp32'
+          }
+        )
         console.log('✅ Whisper CPU fallback loaded successfully')
-        this.notifyListeners('status', { type: 'whisper_ready' })
-
-        return this.whisperPipeline
-      } catch (cpuError) {
-        console.error('❌ Both WebGPU and CPU Whisper failed:', cpuError)
-        this.notifyListeners('error', {
-          type: 'whisper_error',
-          error: `WebGPU: ${webgpuError.message}, CPU: ${cpuError.message}`
-        })
-        throw cpuError
       }
+
+      this.notifyListeners('status', { type: 'whisper_ready' })
+      return this.whisperPipeline
+
+    } catch (error) {
+      console.error('❌ Failed to load Whisper:', error)
+      this.notifyListeners('error', {
+        type: 'whisper_error',
+        error: error.message
+      })
+      throw error
     }
   }
 
@@ -364,34 +352,32 @@ class AudioTranscriptionService {
   }
 
   /**
-   * Process recorded audio with Whisper WebGPU
+   * Process recorded audio with modern Transformers.js
    */
   async processRecordingWithWhisper() {
     if (this.audioChunks.length === 0) return
 
     try {
-      console.log('🤖 Processing audio with Whisper WebGPU...')
+      console.log('🤖 Processing audio with modern Transformers.js...')
       this.notifyListeners('status', { type: 'whisper_processing' })
 
-      // Initialize Whisper WebGPU if not already done
+      // Initialize Whisper if not already done
       const pipeline = await this.initializeWhisper()
 
       // Convert audio chunks to blob
       const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' })
 
-      // Convert to audio buffer for Whisper WebGPU
+      // Convert to audio buffer for Transformers.js
       const audioBuffer = await this.convertBlobToAudioBuffer(audioBlob)
 
-      // Transcribe with Whisper WebGPU using the new API
-      const result = await pipeline.transcribe(audioBuffer, {
-        language: 'en',
-        return_timestamps: true,
+      // Transcribe with modern Transformers.js pipeline API
+      const result = await pipeline(audioBuffer, {
+        return_timestamps: 'word',
         chunk_length_s: 30,
-        stride_length_s: 5,
-        task: 'transcribe'
+        stride_length_s: 5
       })
 
-      console.log('✅ Whisper WebGPU transcription complete')
+      console.log('✅ Modern Transformers.js transcription complete')
 
       this.notifyListeners('transcript', {
         type: 'whisper',
@@ -405,7 +391,7 @@ class AudioTranscriptionService {
 
       return result
     } catch (error) {
-      console.error('❌ Whisper WebGPU processing failed:', error)
+      console.error('❌ Modern Transformers.js processing failed:', error)
       this.notifyListeners('error', {
         type: 'whisper_processing_error',
         error: error.message

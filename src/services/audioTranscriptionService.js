@@ -128,60 +128,22 @@ class AudioTranscriptionService {
       this.notifyListeners('status', { type: 'whisper_loading' })
 
       // Configure transformers.js environment to use Hugging Face CDN
-      const { pipeline, env, AutoModelForSpeechSeq2Seq } = await import('@xenova/transformers')
+      const { pipeline, env } = await import('@xenova/transformers')
 
       // Force use of Hugging Face CDN and disable local file loading
       env.allowRemoteModels = true
       env.allowLocalModels = false
       env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@latest/dist/'
 
-      console.log('🔧 Transformers.js environment configured for Whisper')
-
-      // Try different Whisper model configurations with fallbacks
-      const modelConfigs = [
+      // Use the smallest model for mobile compatibility
+      this.whisperPipeline = await pipeline(
+        'automatic-speech-recognition',
+        'Xenova/whisper-tiny.en',
         {
-          name: 'Xenova/whisper-small.en',
-          options: { dtype: 'fp32', device: 'cpu', quantized: false }
-        },
-        {
-          name: 'Xenova/whisper-base.en',
-          options: { dtype: 'fp32', device: 'cpu', quantized: false }
-        },
-        {
-          name: 'openai/whisper-tiny.en',
-          options: { dtype: 'fp32', device: 'cpu' }
+          dtype: 'fp32', // Use fp32 for better mobile compatibility
+          device: 'cpu'   // Ensure CPU usage for compatibility
         }
-      ]
-
-      let lastError = null
-      for (const config of modelConfigs) {
-        try {
-          console.log(`🔄 Trying Whisper model: ${config.name}`)
-          this.whisperPipeline = await pipeline(
-            'automatic-speech-recognition',
-            config.name,
-            {
-              ...config.options,
-              progress_callback: (progress) => {
-                if (progress.status === 'downloading') {
-                  console.log(`📥 Loading ${config.name}: ${Math.round(progress.loaded / progress.total * 100)}%`)
-                }
-              }
-            }
-          )
-          console.log(`✅ Successfully loaded ${config.name}`)
-          break
-        } catch (error) {
-          console.warn(`❌ Failed to load ${config.name}:`, error.message)
-          lastError = error
-          continue
-        }
-      }
-
-      // If all models failed, throw the last error
-      if (!this.whisperPipeline) {
-        throw new Error(`All Whisper models failed to load. Last error: ${lastError?.message}`)
-      }
+      )
 
       console.log('✅ Whisper model loaded')
       this.notifyListeners('status', { type: 'whisper_ready' })
@@ -299,21 +261,7 @@ class AudioTranscriptionService {
 
         this.mediaRecorder.onstop = async () => {
           console.log('🎤 Recording stopped, processing with Whisper...')
-          // Save chunks before processing in case of error
-          const savedChunks = [...this.audioChunks]
-          try {
-            await this.processRecordingWithWhisper()
-          } catch (error) {
-            console.error('Failed to process recording:', error)
-            console.log('⚠️ Whisper processing failed, continuing with real-time transcript only')
-            // Don't treat Whisper failure as fatal error - real-time transcript is sufficient
-            this.audioChunks = [] // Clear chunks since we can't process them
-            this.notifyListeners('status', {
-              type: 'whisper_processing_failed',
-              message: 'Whisper processing failed, using real-time transcript',
-              fallback: true
-            })
-          }
+          await this.processRecordingWithWhisper()
         }
 
         this.mediaRecorder.onerror = (event) => {

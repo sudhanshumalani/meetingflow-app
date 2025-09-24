@@ -1604,9 +1604,7 @@ Example notes you might paste:
                   </h2>
 
                   <AudioRecorder
-                    initialTranscript={audioTranscript}
                     onTranscriptUpdate={(transcript) => {
-                      console.log('📝 Audio transcript update:', transcript.substring(0, 100) + '...')
                       setAudioTranscript(transcript)
                       // Automatically populate digital notes when we have transcript
                       if (transcript && transcript.length > 50) {

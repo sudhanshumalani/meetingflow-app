@@ -3,11 +3,11 @@ import { Mic, MicOff, Square, Play, Pause, Volume2, Settings, ChevronDown } from
 import audioTranscriptionService from '../services/audioTranscriptionService'
 import { processWithClaude } from '../utils/ocrServiceNew'
 
-const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, initialTranscript = '', className = '', disabled = false }) => {
+const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
-  const [transcript, setTranscript] = useState(initialTranscript)
+  const [transcript, setTranscript] = useState('')
   const [interimText, setInterimText] = useState('')
   const [mode, setMode] = useState('hybrid')
   const [error, setError] = useState(null)
@@ -18,6 +18,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, initialTranscript = '',
   const [availableDevices, setAvailableDevices] = useState([])
   const [selectedDevice, setSelectedDevice] = useState('')
   const [showDeviceSelector, setShowDeviceSelector] = useState(false)
+  const [wasManualStop, setWasManualStop] = useState(false)
 
   const timerRef = useRef(null)
   const audioContextRef = useRef(null)
@@ -33,14 +34,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, initialTranscript = '',
         const result = await audioTranscriptionService.initialize()
         setIsInitialized(true)
 
-        // Temporarily default to realtime-only due to Whisper model issues
-        if (result.realtimeSupported) {
+        // Set mode based on capabilities
+        if (result.realtimeSupported && result.whisperSupported) {
+          setMode('hybrid')
+        } else if (result.realtimeSupported) {
           setMode('realtime')
-          console.log('🎤 Defaulting to realtime-only mode due to Whisper compatibility issues')
-        } else if (result.whisperSupported) {
-          setMode('whisper')
         } else {
-          console.warn('⚠️ No transcription methods available')
+          setMode('whisper')
         }
       } catch (error) {
         console.error('Failed to initialize transcription:', error)
@@ -93,15 +93,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, initialTranscript = '',
     }
   }, [])
 
-  // Initialize transcript from prop (only once or when significantly different)
-  useEffect(() => {
-    if (initialTranscript && initialTranscript !== transcript &&
-        (transcript === '' || Math.abs(initialTranscript.length - transcript.length) > 50)) {
-      console.log('🔄 Initializing AudioRecorder with existing transcript:', initialTranscript.substring(0, 100) + '...')
-      setTranscript(initialTranscript)
-      lastSavedTranscriptRef.current = initialTranscript
-    }
-  }, [initialTranscript])
 
   // Update parent component when transcript changes
   useEffect(() => {
@@ -272,12 +263,15 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, initialTranscript = '',
   const startRecording = async () => {
     try {
       setError(null)
-      // Don't clear transcript on restart - accumulate instead
-      // setTranscript('') // Removed
+      // Only clear transcript if it was manually stopped (not disrupted)
+      if (wasManualStop) {
+        console.log('🧹 Clearing transcript after manual stop')
+        setTranscript('')
+        lastSavedTranscriptRef.current = ''
+      }
       setInterimText('')
       setRecordingDuration(0)
-      // Keep last saved reference to prevent duplicate saves
-      // lastSavedTranscriptRef.current = '' // Removed
+      setWasManualStop(false)
 
       await checkPermissions()
 
@@ -311,6 +305,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, initialTranscript = '',
   // Stop recording
   const stopRecording = async () => {
     try {
+      // Mark as manual stop so next start will clear transcript
+      setWasManualStop(true)
+
       // Auto-save before stopping
       handleAutoSave('stop')
 
@@ -356,6 +353,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, initialTranscript = '',
     setTranscript('')
     setInterimText('')
     lastSavedTranscriptRef.current = ''
+    setWasManualStop(true) // Mark as manual action
     if (onTranscriptUpdate) {
       onTranscriptUpdate('')
     }

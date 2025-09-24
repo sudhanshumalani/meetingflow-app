@@ -315,6 +315,13 @@ export default function Home() {
   const smartRecommendations = generateSmartRecommendations()
 
   // Filter meetings by search term and stakeholder
+  console.log('🔍 DEBUG: Sample meeting structure for filtering:', displayMeetings[0] ? {
+    id: displayMeetings[0].id,
+    selectedStakeholder: displayMeetings[0].selectedStakeholder,
+    stakeholderIds: displayMeetings[0].stakeholderIds,
+    title: displayMeetings[0].title
+  } : 'No meetings')
+
   const filteredMeetings = displayMeetings.filter(meeting => {
     const matchesSearch = meeting.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       meeting.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -323,6 +330,7 @@ export default function Home() {
       )
 
     const matchesStakeholder = !selectedStakeholder ||
+      meeting.selectedStakeholder === selectedStakeholder ||
       meeting.stakeholderIds?.includes(selectedStakeholder) ||
       meeting.attendees?.some(attendee =>
         displayStakeholders.find(s => s.id === selectedStakeholder)?.name === attendee

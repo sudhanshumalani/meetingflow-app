@@ -359,25 +359,31 @@ class AudioTranscriptionService {
 
     try {
       console.log('🤖 Processing audio with modern Transformers.js...')
+      console.log(`📊 Audio chunks: ${this.audioChunks.length} chunks`)
       this.notifyListeners('status', { type: 'whisper_processing' })
 
       // Initialize Whisper if not already done
       const pipeline = await this.initializeWhisper()
+      console.log('✅ Pipeline ready, processing audio...')
 
       // Convert audio chunks to blob
       const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' })
+      console.log(`📦 Audio blob size: ${audioBlob.size} bytes, type: ${audioBlob.type}`)
 
       // Convert to audio buffer for Transformers.js
+      console.log('🔄 Converting audio blob to Float32Array...')
       const audioBuffer = await this.convertBlobToAudioBuffer(audioBlob)
+      console.log(`🎵 Audio buffer length: ${audioBuffer.length} samples, sample rate: 16kHz`)
 
       // Transcribe with modern Transformers.js pipeline API
+      console.log('🚀 Starting transcription...')
       const result = await pipeline(audioBuffer, {
         return_timestamps: 'word',
         chunk_length_s: 30,
         stride_length_s: 5
       })
 
-      console.log('✅ Modern Transformers.js transcription complete')
+      console.log('✅ Modern Transformers.js transcription complete:', result)
 
       this.notifyListeners('transcript', {
         type: 'whisper',
@@ -392,6 +398,12 @@ class AudioTranscriptionService {
       return result
     } catch (error) {
       console.error('❌ Modern Transformers.js processing failed:', error)
+      console.error('❌ Error details:', {
+        message: error.message,
+        stack: error.stack,
+        audioChunks: this.audioChunks.length,
+        pipelineStatus: !!this.whisperPipeline
+      })
       this.notifyListeners('error', {
         type: 'whisper_processing_error',
         error: error.message
@@ -401,7 +413,7 @@ class AudioTranscriptionService {
   }
 
   /**
-   * Convert blob to audio buffer for Whisper
+   * Convert blob to audio buffer for Whisper (optimized for Transformers.js)
    */
   async convertBlobToAudioBuffer(blob) {
     return new Promise((resolve, reject) => {
@@ -409,39 +421,73 @@ class AudioTranscriptionService {
 
       reader.onload = async () => {
         try {
+          console.log('📥 Reading audio blob as ArrayBuffer...')
           const arrayBuffer = reader.result
-          const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+          console.log(`📊 ArrayBuffer size: ${arrayBuffer.byteLength} bytes`)
+
+          // Create AudioContext optimized for Whisper
+          const audioContext = new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: 16000 // Try to match target sample rate
+          })
+          console.log(`🎛️ AudioContext created with sample rate: ${audioContext.sampleRate}`)
+
+          // Decode the audio data
+          console.log('🔄 Decoding audio data...')
           const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+          console.log(`🎵 Decoded audio: ${audioBuffer.duration}s, ${audioBuffer.sampleRate}Hz, ${audioBuffer.numberOfChannels} channels`)
 
-          // Convert to mono and resample to 16kHz for Whisper
-          const sampleRate = 16000
+          // Get the first channel and convert to Float32Array
           const channelData = audioBuffer.getChannelData(0)
-          const samples = new Float32Array(
-            Math.floor(channelData.length * sampleRate / audioBuffer.sampleRate)
-          )
+          console.log(`📊 Channel data length: ${channelData.length} samples`)
 
-          // Simple linear interpolation for resampling
-          const ratio = channelData.length / samples.length
-          for (let i = 0; i < samples.length; i++) {
-            const index = i * ratio
-            const lower = Math.floor(index)
-            const upper = Math.ceil(index)
-            const weight = index - lower
+          let samples
+          if (audioBuffer.sampleRate === 16000) {
+            // Already at target sample rate, just use the data
+            console.log('✅ Audio already at 16kHz, using directly')
+            samples = channelData.slice()
+          } else {
+            // Resample to 16kHz for Whisper
+            console.log(`🔄 Resampling from ${audioBuffer.sampleRate}Hz to 16000Hz`)
+            const sampleRate = 16000
+            const resampledLength = Math.floor(channelData.length * sampleRate / audioBuffer.sampleRate)
+            samples = new Float32Array(resampledLength)
 
-            if (upper < channelData.length) {
-              samples[i] = channelData[lower] * (1 - weight) + channelData[upper] * weight
-            } else {
-              samples[i] = channelData[lower]
+            // Simple linear interpolation for resampling
+            const ratio = channelData.length / samples.length
+            for (let i = 0; i < samples.length; i++) {
+              const index = i * ratio
+              const lower = Math.floor(index)
+              const upper = Math.ceil(index)
+              const weight = index - lower
+
+              if (upper < channelData.length) {
+                samples[i] = channelData[lower] * (1 - weight) + channelData[upper] * weight
+              } else {
+                samples[i] = channelData[lower]
+              }
             }
+          }
+
+          console.log(`✅ Audio conversion complete: ${samples.length} samples at 16kHz`)
+
+          // Validate the audio data
+          if (samples.length === 0) {
+            throw new Error('Audio conversion resulted in empty buffer')
           }
 
           resolve(samples)
         } catch (error) {
-          reject(error)
+          console.error('❌ Audio conversion failed:', error)
+          reject(new Error(`Audio conversion failed: ${error.message}`))
         }
       }
 
-      reader.onerror = () => reject(new Error('Failed to read audio blob'))
+      reader.onerror = () => {
+        console.error('❌ FileReader failed')
+        reject(new Error('Failed to read audio blob'))
+      }
+
+      console.log('📖 Starting to read audio blob...')
       reader.readAsArrayBuffer(blob)
     })
   }

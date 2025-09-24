@@ -534,14 +534,14 @@ export function AppProvider({ children }) {
       console.log('📂 LOAD: Starting data load from localStorage...')
 
       // Load from localStorage ONLY (synchronous, reliable)
-      let meetings, localStakeholders, localCategories
+      let meetings, localStakeholders, localCategories, deletedItems
 
       try {
         // Load from localStorage first (synchronous and immediate)
         meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
         localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
         localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
-        const deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
+        deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
 
         // Only use defaults for true first-time setup (when no categories exist anywhere)
         if (!localCategories.length) {
@@ -581,6 +581,7 @@ export function AppProvider({ children }) {
         meetings = []
         localStakeholders = []
         localCategories = [] // Don't load defaults on error, let them be set properly
+        deletedItems = []
       }
 
       console.log('📂 LOAD: After localStorage section, about to process meetings...')

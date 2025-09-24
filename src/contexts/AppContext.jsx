@@ -459,6 +459,11 @@ export function AppProvider({ children }) {
   const isLoadingRef = useRef(false)
 
   useEffect(() => {
+    console.log('🚀 AppContext: Initial mount, checking localStorage before load:', {
+      hasData: localStorage?.getItem('meetingflow_meetings') !== null,
+      meetingsCount: JSON.parse(localStorage?.getItem('meetingflow_meetings') || '[]').length,
+      stakeholdersCount: JSON.parse(localStorage?.getItem('meetingflow_stakeholders') || '[]').length
+    })
     loadData()
   }, [])
 
@@ -485,6 +490,14 @@ export function AppProvider({ children }) {
       const saved = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
       console.log('✅ AppContext: VERIFIED save - meetings in storage:', saved.length)
       console.log('✅ AppContext: VERIFIED IDs:', saved.map(m => m.id))
+
+      // Extra verification for desktop issues
+      console.log('🔍 DEBUG: Post-save localStorage state:', {
+        totalKeys: localStorage.length,
+        meetingflowKeys: Object.keys(localStorage).filter(k => k.startsWith('meetingflow_')),
+        meetingsSize: localStorage.getItem('meetingflow_meetings')?.length || 0,
+        categoriesSize: localStorage.getItem('meetingflow_stakeholder_categories')?.length || 0
+      })
     }
   }, [state.meetings, state.stakeholders, state.stakeholderCategories, state.isLoading])
 
@@ -532,6 +545,12 @@ export function AppProvider({ children }) {
       dispatch({ type: 'SET_LOADING', payload: true })
 
       console.log('📂 LOAD: Starting data load from localStorage...')
+      console.log('🔍 DEBUG: localStorage before load:', {
+        hasLocalStorage: typeof localStorage !== 'undefined',
+        localStorageLength: localStorage?.length,
+        keys: localStorage ? Object.keys(localStorage).filter(k => k.startsWith('meetingflow_')) : [],
+        meetingsRaw: localStorage?.getItem('meetingflow_meetings')?.substring(0, 100) + '...'
+      })
 
       // Load from localStorage ONLY (synchronous, reliable)
       let meetings, localStakeholders, localCategories, deletedItems

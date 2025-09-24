@@ -195,9 +195,16 @@ export default function Meeting() {
       setCurrentMeeting(meeting)
 
       // Set form data
+      console.log('🔍 DEBUG: Loading meeting data:', {
+        id: meeting.id,
+        selectedStakeholder: meeting.selectedStakeholder,
+        stakeholderIds: meeting.stakeholderIds,
+        formDataBeingSaved: meeting
+      })
+
       setFormData({
         title: meeting.title || '',
-        selectedStakeholder: meeting.stakeholderIds?.[0] || '',
+        selectedStakeholder: meeting.selectedStakeholder || meeting.stakeholderIds?.[0] || '',
         date: meeting.scheduledAt ? meeting.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
         priority: meeting.priority || 'medium',
         template: meeting.template || null
@@ -684,6 +691,9 @@ export default function Meeting() {
         const newMeetingData = buildMeetingData(newMeetingId)
 
         console.log('🔍 DEBUG: Saving new meeting data:', {
+          id: newMeetingData.id,
+          selectedStakeholder: newMeetingData.selectedStakeholder,
+          formDataSelectedStakeholder: formData.selectedStakeholder,
           digitalNotes: newMeetingData.digitalNotes,
           aiResult: newMeetingData.aiResult,
           notes: newMeetingData.notes,
@@ -697,6 +707,12 @@ export default function Meeting() {
       } else {
         // UPDATE EXISTING MEETING
         const updatedMeetingData = buildMeetingData(id)
+
+        console.log('🔍 DEBUG: Updating existing meeting data:', {
+          id: updatedMeetingData.id,
+          selectedStakeholder: updatedMeetingData.selectedStakeholder,
+          formDataSelectedStakeholder: formData.selectedStakeholder
+        })
 
         // Update in context
         updateMeeting(updatedMeetingData)
@@ -793,9 +809,16 @@ export default function Meeting() {
     const meeting = meetings.find(m => m.id === id)
     if (meeting) {
       setCurrentMeeting(meeting)
+      console.log('🔍 DEBUG: Loading meeting data:', {
+        id: meeting.id,
+        selectedStakeholder: meeting.selectedStakeholder,
+        stakeholderIds: meeting.stakeholderIds,
+        formDataBeingSaved: meeting
+      })
+
       setFormData({
         title: meeting.title || '',
-        selectedStakeholder: meeting.stakeholderIds?.[0] || '',
+        selectedStakeholder: meeting.selectedStakeholder || meeting.stakeholderIds?.[0] || '',
         date: meeting.scheduledAt ? meeting.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
         priority: meeting.priority || 'medium',
         template: meeting.template || null

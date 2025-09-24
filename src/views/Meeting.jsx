@@ -1614,6 +1614,26 @@ Example notes you might paste:
                         }))
                       }
                     }}
+                    onAutoSave={(transcript, reason) => {
+                      console.log(`🔄 Auto-saving audio transcript (${reason})`)
+                      setAudioTranscript(transcript)
+                      // Auto-populate digital notes
+                      setDigitalNotes(prev => ({
+                        ...prev,
+                        summary: transcript
+                      }))
+                      // Trigger save if not a new meeting
+                      if (id !== 'new') {
+                        const updatedMeetingData = {
+                          ...buildMeetingData(id),
+                          audioTranscript: transcript,
+                          lastAutoSaved: new Date().toISOString(),
+                          autoSaveReason: reason
+                        }
+                        updateMeeting(updatedMeetingData)
+                        console.log(`✅ Auto-saved meeting due to: ${reason}`)
+                      }
+                    }}
                     className="mb-4"
                   />
 

@@ -16,6 +16,11 @@ class AudioTranscriptionService {
     // Transcription modes
     this.mode = 'hybrid' // 'realtime', 'whisper', 'hybrid'
     this.realtimeEnabled = this.checkWebSpeechSupport()
+
+    // Error recovery
+    this.stream = null
+    this.autoReconnectAttempts = 0
+    this.maxReconnectAttempts = 3
   }
 
   /**
@@ -184,6 +189,22 @@ class AudioTranscriptionService {
         }
       })
 
+      this.stream = stream
+
+      // Monitor stream health
+      stream.getTracks().forEach(track => {
+        track.addEventListener('ended', () => {
+          console.warn('⚠️ Audio track ended unexpectedly')
+          if (this.isRecording) {
+            this.notifyListeners('error', {
+              type: 'recording_disrupted',
+              reason: 'track_ended',
+              message: 'Recording was disrupted: microphone disconnected'
+            })
+          }
+        })
+      })
+
       // Start real-time transcription if enabled
       if ((mode === 'realtime' || mode === 'hybrid') && this.realtimeEnabled) {
         this.recognition.lang = language
@@ -204,7 +225,31 @@ class AudioTranscriptionService {
 
         this.mediaRecorder.onstop = async () => {
           console.log('🎤 Recording stopped, processing with Whisper...')
-          await this.processRecordingWithWhisper()
+          // Save chunks before processing in case of error
+          const savedChunks = [...this.audioChunks]
+          try {
+            await this.processRecordingWithWhisper()
+          } catch (error) {
+            console.error('Failed to process recording:', error)
+            // Attempt to recover chunks
+            this.audioChunks = savedChunks
+            this.notifyListeners('error', {
+              type: 'processing_error',
+              error: error.message,
+              recoverable: true
+            })
+          }
+        }
+
+        this.mediaRecorder.onerror = (event) => {
+          console.error('MediaRecorder error:', event.error)
+          if (this.isRecording) {
+            this.notifyListeners('error', {
+              type: 'recording_disrupted',
+              reason: 'recorder_error',
+              message: `Recording error: ${event.error}`
+            })
+          }
         }
 
         // Record in chunks for processing
@@ -249,11 +294,12 @@ class AudioTranscriptionService {
     // Stop audio recording
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       this.mediaRecorder.stop()
+    }
 
-      // Stop all tracks
-      if (this.mediaRecorder.stream) {
-        this.mediaRecorder.stream.getTracks().forEach(track => track.stop())
-      }
+    // Stop media stream
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop())
+      this.stream = null
     }
 
     this.notifyListeners('status', { type: 'recording_stopped' })
@@ -410,10 +456,27 @@ class AudioTranscriptionService {
    * Cleanup resources
    */
   cleanup() {
-    if (this.isRecording) {
-      this.stopRecording()
+    if (this.recognition) {
+      try {
+        this.recognition.stop()
+      } catch (error) {
+        console.warn('Error stopping recognition:', error)
+      }
     }
-
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      try {
+        this.mediaRecorder.stop()
+      } catch (error) {
+        console.warn('Error stopping media recorder:', error)
+      }
+    }
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop())
+      this.stream = null
+    }
+    this.audioChunks = []
+    this.isRecording = false
+    this.autoReconnectAttempts = 0
     this.listeners.clear()
     this.whisperPipeline = null
     this.recognition = null

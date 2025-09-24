@@ -3,7 +3,7 @@ import { Mic, MicOff, Square, Play, Pause, Volume2, Settings } from 'lucide-reac
 import audioTranscriptionService from '../services/audioTranscriptionService'
 import { processWithClaude } from '../utils/ocrServiceNew'
 
-const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false }) => {
+const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -14,11 +14,13 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
   const [permissions, setPermissions] = useState('unknown')
   const [audioLevel, setAudioLevel] = useState(0)
   const [recordingDuration, setRecordingDuration] = useState(0)
+  const [wakeLock, setWakeLock] = useState(null)
 
   const timerRef = useRef(null)
   const audioContextRef = useRef(null)
   const analyserRef = useRef(null)
   const animationRef = useRef(null)
+  const lastSavedTranscriptRef = useRef('')
 
   // Initialize service on mount
   useEffect(() => {
@@ -73,6 +75,8 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
         case 'error':
           setError(data.message || data.error)
           setIsRecording(false)
+          // Auto-save on error
+          handleAutoSave('error')
           break
       }
     })
@@ -92,6 +96,42 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
       onTranscriptUpdate(fullTranscript.trim())
     }
   }, [transcript, interimText, onTranscriptUpdate])
+
+  // Auto-save functionality
+  const handleAutoSave = (reason = 'auto') => {
+    const currentTranscript = transcript + interimText
+    if (currentTranscript.trim() && currentTranscript !== lastSavedTranscriptRef.current) {
+      console.log(`🔄 Auto-saving transcript (${reason}): ${currentTranscript.substring(0, 50)}...`)
+      lastSavedTranscriptRef.current = currentTranscript
+      if (onAutoSave) {
+        onAutoSave(currentTranscript.trim(), reason)
+      }
+    }
+  }
+
+  // Handle page visibility changes (auto-save when app goes to background)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden && isRecording) {
+        console.log('📱 App went to background, auto-saving...')
+        handleAutoSave('background')
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [isRecording, transcript, interimText])
+
+  // Auto-save periodically during recording
+  useEffect(() => {
+    if (!isRecording) return
+
+    const autoSaveInterval = setInterval(() => {
+      handleAutoSave('periodic')
+    }, 30000) // Auto-save every 30 seconds
+
+    return () => clearInterval(autoSaveInterval)
+  }, [isRecording, transcript, interimText])
 
   // Check microphone permissions
   const checkPermissions = async () => {
@@ -136,6 +176,38 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
     }
   }
 
+  // Request wake lock to prevent screen from sleeping
+  const requestWakeLock = async () => {
+    if ('wakeLock' in navigator) {
+      try {
+        const lock = await navigator.wakeLock.request('screen')
+        setWakeLock(lock)
+        console.log('🔒 Wake lock acquired')
+
+        // Re-acquire wake lock if page becomes visible again
+        lock.addEventListener('release', () => {
+          console.log('🔓 Wake lock released')
+        })
+      } catch (error) {
+        console.warn('Failed to acquire wake lock:', error)
+      }
+    } else {
+      console.warn('Wake Lock API not supported')
+    }
+  }
+
+  // Release wake lock
+  const releaseWakeLock = async () => {
+    if (wakeLock) {
+      try {
+        await wakeLock.release()
+        setWakeLock(null)
+      } catch (error) {
+        console.warn('Failed to release wake lock:', error)
+      }
+    }
+  }
+
   // Start recording
   const startRecording = async () => {
     try {
@@ -143,8 +215,12 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
       setTranscript('')
       setInterimText('')
       setRecordingDuration(0)
+      lastSavedTranscriptRef.current = ''
 
       await checkPermissions()
+
+      // Request wake lock to prevent screen sleep on iOS
+      await requestWakeLock()
 
       const result = await audioTranscriptionService.startRecording({
         mode,
@@ -164,14 +240,22 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
     } catch (error) {
       console.error('Failed to start recording:', error)
       setError(error.message)
+      // Auto-save any partial transcript
+      handleAutoSave('start_error')
     }
   }
 
   // Stop recording
   const stopRecording = async () => {
     try {
+      // Auto-save before stopping
+      handleAutoSave('stop')
+
       await audioTranscriptionService.stopRecording()
       setIsRecording(false)
+
+      // Release wake lock
+      await releaseWakeLock()
 
       if (timerRef.current) {
         clearInterval(timerRef.current)
@@ -189,6 +273,8 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
     } catch (error) {
       console.error('Failed to stop recording:', error)
       setError(error.message)
+      // Auto-save on stop error
+      handleAutoSave('stop_error')
     }
   }
 
@@ -241,9 +327,14 @@ const AudioRecorder = ({ onTranscriptUpdate, className = '', disabled = false })
             <Volume2 className="w-5 h-5 text-gray-500" />
             <span className="text-sm font-medium text-gray-700">Audio Recording</span>
             {isRecording && (
-              <div className="flex items-center space-x-1">
-                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                <span className="text-xs text-red-600 font-medium">REC</span>
+              <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1">
+                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                  <span className="text-xs text-red-600 font-medium">REC</span>
+                </div>
+                {wakeLock && (
+                  <span className="text-xs text-green-600" title="Screen will stay awake">🔒</span>
+                )}
               </div>
             )}
           </div>

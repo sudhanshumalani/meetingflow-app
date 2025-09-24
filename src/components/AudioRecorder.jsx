@@ -212,10 +212,12 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const startRecording = async () => {
     try {
       setError(null)
-      setTranscript('')
+      // Don't clear transcript on restart - accumulate instead
+      // setTranscript('') // Removed
       setInterimText('')
       setRecordingDuration(0)
-      lastSavedTranscriptRef.current = ''
+      // Keep last saved reference to prevent duplicate saves
+      // lastSavedTranscriptRef.current = '' // Removed
 
       await checkPermissions()
 
@@ -292,6 +294,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const clearTranscript = () => {
     setTranscript('')
     setInterimText('')
+    lastSavedTranscriptRef.current = ''
     if (onTranscriptUpdate) {
       onTranscriptUpdate('')
     }
@@ -339,17 +342,30 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             )}
           </div>
 
-          {/* Mode Selector */}
-          <select
-            value={mode}
-            onChange={(e) => setMode(e.target.value)}
-            disabled={isRecording}
-            className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="hybrid">Hybrid (Best)</option>
-            <option value="realtime">Real-time</option>
-            <option value="whisper">High Accuracy</option>
-          </select>
+          <div className="flex items-center gap-2">
+            {/* Mode Selector */}
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value)}
+              disabled={isRecording}
+              className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="hybrid">Hybrid (Best)</option>
+              <option value="realtime">Real-time</option>
+              <option value="whisper">High Accuracy</option>
+            </select>
+
+            {/* Clear Transcript Button */}
+            {transcript && !isRecording && (
+              <button
+                onClick={clearTranscript}
+                className="text-xs px-2 py-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                title="Clear transcript and start fresh"
+              >
+                Clear
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Main Recording Button */}
@@ -403,17 +419,27 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
                  mode === 'realtime' ? 'Real-time Transcription' :
                  'AI Processing'}
               </p>
+              {transcript && (
+                <p className="text-xs text-blue-600">
+                  📝 Continuing previous transcript
+                </p>
+              )}
             </div>
           ) : (
             <div className="space-y-1">
               <p className="text-sm text-gray-600">
-                Tap to start recording
+                {transcript ? 'Tap to continue recording' : 'Tap to start recording'}
               </p>
               <p className="text-xs text-gray-500">
                 {permissions === 'granted' ? '✓ Microphone ready' :
                  permissions === 'denied' ? '✗ Microphone access denied' :
                  '? Microphone permission needed'}
               </p>
+              {transcript && (
+                <p className="text-xs text-green-600">
+                  ✓ {transcript.split(' ').length} words transcribed
+                </p>
+              )}
             </div>
           )}
         </div>

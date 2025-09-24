@@ -92,6 +92,21 @@ export function SyncProvider({ children }) {
         // AppContext to reload all data from localStorage automatically.
         // This ensures atomic updates and prevents race conditions.
 
+        // Debug: Check AppContext state after sync
+        setTimeout(() => {
+          console.log('🔍 POST-SYNC DEBUG: AppContext state after sync:', {
+            meetings: app.meetings?.length || 0,
+            stakeholders: app.stakeholders?.length || 0,
+            categories: app.stakeholderCategories?.length || 0,
+            isLoading: app.isLoading
+          })
+          console.log('🔍 POST-SYNC DEBUG: localStorage verification:', {
+            meetings: JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]').length,
+            stakeholders: JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]').length,
+            categories: JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]').length
+          })
+        }, 1000)
+
         return result
       }
 

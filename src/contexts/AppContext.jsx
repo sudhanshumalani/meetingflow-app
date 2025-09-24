@@ -561,8 +561,11 @@ export function AppProvider({ children }) {
           meetings: meetings.length,
           stakeholders: localStakeholders.length,
           categories: localCategories.length,
-          categoryNames: localCategories.map(c => c.name)
+          categoryNames: localCategories.map(c => c?.name || 'unnamed')
         })
+
+        console.log('🔍 DEBUG: Sample category structure:', localCategories[0])
+        console.log('🔍 DEBUG: Sample stakeholder structure:', localStakeholders[0])
 
         // Note: We removed the automatic background storage sync that was overriding
         // active sync operations. Storage consistency is now maintained by the save function

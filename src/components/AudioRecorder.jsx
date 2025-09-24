@@ -34,13 +34,14 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         const result = await audioTranscriptionService.initialize()
         setIsInitialized(true)
 
-        // Set mode based on capabilities
-        if (result.realtimeSupported && result.whisperSupported) {
-          setMode('hybrid')
+        // Prefer Whisper since real-time transcription isn't working reliably
+        if (result.whisperSupported) {
+          setMode('whisper')
+          console.log('🎤 Defaulting to Whisper-only mode for better accuracy')
         } else if (result.realtimeSupported) {
           setMode('realtime')
         } else {
-          setMode('whisper')
+          console.warn('⚠️ No transcription methods available')
         }
       } catch (error) {
         console.error('Failed to initialize transcription:', error)

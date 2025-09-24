@@ -128,22 +128,68 @@ class AudioTranscriptionService {
       this.notifyListeners('status', { type: 'whisper_loading' })
 
       // Configure transformers.js environment to use Hugging Face CDN
-      const { pipeline, env } = await import('@xenova/transformers')
+      const { pipeline, env, AutoModelForSpeechSeq2Seq, AutoProcessor } = await import('@xenova/transformers')
 
       // Force use of Hugging Face CDN and disable local file loading
       env.allowRemoteModels = true
       env.allowLocalModels = false
       env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@latest/dist/'
 
-      // Use the smallest model for mobile compatibility
-      this.whisperPipeline = await pipeline(
-        'automatic-speech-recognition',
-        'Xenova/whisper-tiny.en',
+      console.log('🔧 Loading Whisper with explicit model class...')
+
+      // Try multiple approaches to load Whisper successfully
+      const modelAttempts = [
         {
-          dtype: 'fp32', // Use fp32 for better mobile compatibility
-          device: 'cpu'   // Ensure CPU usage for compatibility
+          name: 'Explicit Whisper-tiny',
+          load: async () => {
+            // Load model and processor separately with explicit classes
+            const model = await AutoModelForSpeechSeq2Seq.from_pretrained('Xenova/whisper-tiny.en', {
+              dtype: 'fp32',
+              device: 'cpu'
+            })
+            const processor = await AutoProcessor.from_pretrained('Xenova/whisper-tiny.en')
+            return await pipeline('automatic-speech-recognition', model, {
+              tokenizer: processor,
+              feature_extractor: processor
+            })
+          }
+        },
+        {
+          name: 'Distil Whisper (smaller)',
+          load: async () => {
+            return await pipeline('automatic-speech-recognition', 'distil-whisper/distil-small.en', {
+              dtype: 'fp32',
+              device: 'cpu'
+            })
+          }
+        },
+        {
+          name: 'Alternative Xenova base',
+          load: async () => {
+            return await pipeline('automatic-speech-recognition', 'Xenova/whisper-base', {
+              dtype: 'fp32',
+              device: 'cpu'
+            })
+          }
         }
-      )
+      ]
+
+      let loadSuccess = false
+      for (const attempt of modelAttempts) {
+        try {
+          console.log(`🔄 Trying: ${attempt.name}`)
+          this.whisperPipeline = await attempt.load()
+          console.log(`✅ Success: ${attempt.name}`)
+          loadSuccess = true
+          break
+        } catch (error) {
+          console.warn(`❌ Failed: ${attempt.name} - ${error.message}`)
+        }
+      }
+
+      if (!loadSuccess) {
+        throw new Error('All Whisper model loading attempts failed')
+      }
 
       console.log('✅ Whisper model loaded')
       this.notifyListeners('status', { type: 'whisper_ready' })
@@ -261,7 +307,17 @@ class AudioTranscriptionService {
 
         this.mediaRecorder.onstop = async () => {
           console.log('🎤 Recording stopped, processing with Whisper...')
-          await this.processRecordingWithWhisper()
+          try {
+            await this.processRecordingWithWhisper()
+          } catch (error) {
+            console.error('Whisper processing failed:', error)
+            // Don't crash - just continue without Whisper output
+            this.notifyListeners('error', {
+              type: 'whisper_processing_failed',
+              message: 'Whisper processing failed but recording was saved',
+              error: error.message
+            })
+          }
         }
 
         this.mediaRecorder.onerror = (event) => {

@@ -98,7 +98,14 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   // Update parent component when transcript changes
   useEffect(() => {
     const fullTranscript = transcript + interimText
+    console.log('🎤 AudioRecorder: Transcript state changed:', {
+      transcript: transcript?.substring(0, 50) + '...',
+      interimText: interimText?.substring(0, 50) + '...',
+      fullLength: fullTranscript.length,
+      hasCallback: !!onTranscriptUpdate
+    })
     if (fullTranscript.trim() && onTranscriptUpdate) {
+      console.log('🎤 AudioRecorder: Updating parent with transcript:', fullTranscript.substring(0, 100) + '...')
       onTranscriptUpdate(fullTranscript.trim())
     }
   }, [transcript, interimText, onTranscriptUpdate])
@@ -570,41 +577,61 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         )}
       </div>
 
-      {/* Transcript Display */}
+      {/* Live Transcript Display */}
       {(transcript || interimText) && (
-        <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-gray-700">Live Transcript</h3>
+        <div className="bg-white rounded-lg border border-green-200 p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-green-800 flex items-center gap-2">
+              🎤 Live Transcript
+              <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                {(transcript + interimText).split(' ').filter(word => word.trim()).length} words
+              </span>
+            </h3>
             <button
               onClick={clearTranscript}
-              className="text-xs text-red-600 hover:text-red-700 font-medium"
+              className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded font-medium transition-colors"
             >
               Clear
             </button>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2 max-h-48 overflow-y-auto bg-gray-50 rounded p-3">
             {transcript && (
-              <p className="text-sm text-gray-900 leading-relaxed">
-                {transcript}
-              </p>
+              <div className="text-sm text-gray-900 leading-relaxed">
+                <strong className="text-green-700">Final:</strong> {transcript}
+              </div>
             )}
 
             {interimText && (
-              <p className="text-sm text-gray-500 italic leading-relaxed">
-                {interimText}
-              </p>
+              <div className="text-sm text-gray-600 italic leading-relaxed border-l-2 border-blue-200 pl-2">
+                <strong className="text-blue-600">Interim:</strong> {interimText}
+              </div>
             )}
           </div>
 
-          {isProcessing && (
-            <div className="mt-2 flex items-center space-x-2">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-              <span className="text-xs text-gray-500">
-                Processing audio...
-              </span>
-            </div>
-          )}
+          <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+            <span>
+              Total: {(transcript + interimText).length} characters
+            </span>
+            {isProcessing && (
+              <div className="flex items-center space-x-2">
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600"></div>
+                <span className="text-blue-600">Processing audio...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Transcript Status Indicator when no transcript */}
+      {!transcript && !interimText && isRecording && (
+        <div className="bg-blue-50 rounded-lg border border-blue-200 p-4 text-center">
+          <div className="text-blue-600 mb-1">
+            🎤 Listening...
+          </div>
+          <p className="text-xs text-blue-700">
+            Transcript will appear here as you speak
+          </p>
         </div>
       )}
 

@@ -111,6 +111,15 @@ export default function Meeting() {
   // Audio transcription state
   const [audioTranscript, setAudioTranscript] = useState('')
 
+  // Debug: Monitor audioTranscript state changes
+  useEffect(() => {
+    console.log('📝 Meeting: audioTranscript state changed:', {
+      length: audioTranscript?.length || 0,
+      preview: audioTranscript?.substring(0, 100) + '...',
+      hasContent: !!audioTranscript?.trim()
+    })
+  }, [audioTranscript])
+
   // AI processing state
   const [isSaving, setIsSaving] = useState(false)
   // Removed complex ID caching - will generate fresh IDs based on URL
@@ -1605,6 +1614,7 @@ Example notes you might paste:
 
                   <AudioRecorder
                     onTranscriptUpdate={(transcript) => {
+                      console.log('📝 Meeting: Received transcript update:', transcript?.substring(0, 100) + '...')
                       setAudioTranscript(transcript)
                       // Automatically populate digital notes when we have transcript
                       if (transcript && transcript.length > 50) {
@@ -1638,10 +1648,15 @@ Example notes you might paste:
                   />
 
                   {/* Transcript Display and Actions */}
-                  {audioTranscript && (
-                    <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                  {audioTranscript && audioTranscript.trim() && (
+                    <div className="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
                       <div className="flex items-center justify-between mb-3">
-                        <h3 className="font-medium text-gray-900">Meeting Transcript</h3>
+                        <h3 className="font-medium text-gray-900 flex items-center gap-2">
+                          📝 Meeting Transcript
+                          <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                            {audioTranscript.split(' ').filter(word => word.trim()).length} words
+                          </span>
+                        </h3>
                         <div className="flex gap-2">
                           <button
                             onClick={() => {
@@ -1670,17 +1685,46 @@ Example notes you might paste:
                             <FileText className="w-3 h-3" />
                             Use as Notes
                           </button>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(audioTranscript)
+                            }}
+                            className="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 flex items-center gap-1"
+                            title="Copy transcript to clipboard"
+                          >
+                            📋 Copy
+                          </button>
                         </div>
                       </div>
 
-                      <div className="max-h-60 overflow-y-auto text-sm text-gray-700 leading-relaxed">
-                        {audioTranscript}
+                      <div className="max-h-60 overflow-y-auto text-sm text-gray-700 leading-relaxed bg-white rounded p-3 border">
+                        <pre className="whitespace-pre-wrap font-sans">
+                          {audioTranscript}
+                        </pre>
                       </div>
 
-                      <div className="mt-3 text-xs text-gray-500">
-                        Word count: {audioTranscript.split(' ').length} |
-                        Characters: {audioTranscript.length}
+                      <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                        <span>
+                          Word count: {audioTranscript.split(' ').filter(word => word.trim()).length} |
+                          Characters: {audioTranscript.length}
+                        </span>
+                        <span>
+                          💡 Click "AI Analysis" to organize this transcript
+                        </span>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Transcript Placeholder - Show when no transcript available */}
+                  {(!audioTranscript || !audioTranscript.trim()) && (
+                    <div className="mt-6 p-6 bg-blue-50 rounded-lg border border-blue-200 text-center">
+                      <div className="text-blue-600 mb-2">
+                        🎤 No transcript available yet
+                      </div>
+                      <p className="text-sm text-blue-700">
+                        Start recording to generate a live transcript of your meeting.
+                        The transcript will appear here as you speak.
+                      </p>
                     </div>
                   )}
 

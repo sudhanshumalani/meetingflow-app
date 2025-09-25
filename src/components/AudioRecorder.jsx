@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Mic, MicOff, Square, Volume2 } from 'lucide-react'
+import { Mic, MicOff, Square, Volume2, Monitor, Settings, ChevronDown } from 'lucide-react'
 import audioTranscriptionService from '../services/audioTranscriptionService'
 
 const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
@@ -11,6 +11,12 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const [permissions, setPermissions] = useState('unknown')
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [wakeLock, setWakeLock] = useState(null)
+
+  // NEW: Audio source selection
+  const [availableAudioSources, setAvailableAudioSources] = useState([])
+  const [selectedAudioSource, setSelectedAudioSource] = useState('microphone')
+  const [showSourceSelector, setShowSourceSelector] = useState(false)
+  const [audioLevels, setAudioLevels] = useState({ microphone: 0, tabAudio: 0 })
 
   // NEW: Persistent transcript storage across sessions
   const [sessionTranscripts, setSessionTranscripts] = useState([])
@@ -36,7 +42,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       try {
         const result = await audioTranscriptionService.initialize()
         setIsInitialized(true)
-        console.log('🎤 Simple transcription service ready')
+
+        // Get available audio sources
+        const status = audioTranscriptionService.getStatus()
+        setAvailableAudioSources(status.availableSources || [])
+
+        console.log('🎤 Enhanced transcription service ready')
+        console.log('📊 Available audio sources:', status.availableSources)
       } catch (error) {
         console.error('Failed to initialize transcription:', error)
         setError('Failed to initialize audio transcription. Your browser may not support speech recognition.')
@@ -49,50 +61,67 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     const removeListener = audioTranscriptionService.addEventListener((event, data) => {
       switch (event) {
         case 'transcript':
-          if (data.type === 'realtime') {
-            if (data.final) {
-              // Accumulate final results in persistent storage
-              const finalText = data.final.trim()
-              if (finalText) {
-                persistentTranscriptRef.current += finalText + ' '
+          // Handle both realtime and tabAudio transcripts
+          const isRealtimeData = data.type === 'realtime' || !data.type
+          const isTabAudioData = data.type === 'tabAudio' || data.source === 'tabAudio'
 
-                // Update session transcript
-                if (currentSessionId) {
-                  setSessionTranscripts(prev => {
-                    const updated = [...prev]
-                    const sessionIndex = updated.findIndex(s => s.id === currentSessionId)
-                    if (sessionIndex >= 0) {
-                      updated[sessionIndex].text += finalText + ' '
-                    } else {
-                      updated.push({
-                        id: currentSessionId,
-                        text: finalText + ' ',
-                        startTime: new Date().toISOString()
-                      })
-                    }
-                    return updated
+          if (data.final && data.final.trim()) {
+            // Accumulate final results in persistent storage
+            const finalText = data.final.trim()
+            const sourcePrefix = isTabAudioData && !data.isPlaceholder ? '[Tab Audio] ' : ''
+
+            persistentTranscriptRef.current += sourcePrefix + finalText + ' '
+
+            // Update session transcript
+            if (currentSessionId) {
+              setSessionTranscripts(prev => {
+                const updated = [...prev]
+                const sessionIndex = updated.findIndex(s => s.id === currentSessionId)
+                if (sessionIndex >= 0) {
+                  updated[sessionIndex].text += sourcePrefix + finalText + ' '
+                } else {
+                  updated.push({
+                    id: currentSessionId,
+                    text: sourcePrefix + finalText + ' ',
+                    startTime: new Date().toISOString(),
+                    source: data.source || selectedAudioSource
                   })
                 }
-
-                // Update display transcript with full persistent content
-                setTranscript(persistentTranscriptRef.current)
-                console.log('📝 Accumulated transcript:', persistentTranscriptRef.current.substring(0, 100) + '...')
-              }
-              setInterimText('')
-            } else {
-              setInterimText(data.interim)
+                return updated
+              })
             }
+
+            // Update display transcript with full persistent content
+            setTranscript(persistentTranscriptRef.current)
+            console.log('📝 Accumulated transcript:', persistentTranscriptRef.current.substring(0, 100) + '...')
+            setInterimText('')
+          } else if (data.interim) {
+            const sourcePrefix = isTabAudioData && !data.isPlaceholder ? '[Tab Audio] ' : ''
+            setInterimText(sourcePrefix + data.interim)
           }
           break
 
+        case 'tabAudioChunk':
+          console.log('🖥️ Tab audio chunk received:', data.size, 'bytes')
+          // Handle tab audio chunk processing
+          break
+
+        case 'audioLevel':
+          // Update audio level indicators
+          setAudioLevels(prev => ({
+            ...prev,
+            [data.source]: data.level
+          }))
+          break
+
         case 'status':
-          console.log('🎤 Status:', data.type)
+          console.log('🎤 Status:', data.type, 'from source:', data.source)
 
           // Handle session restarts
-          if (data.type === 'realtime_started') {
+          if (data.type === 'recording_started' || data.type === 'realtime_started') {
             const sessionId = Date.now().toString()
             setCurrentSessionId(sessionId)
-            console.log('🆕 New transcription session started:', sessionId)
+            console.log('🆕 New transcription session started:', sessionId, 'with source:', data.source)
           }
           break
 
@@ -349,7 +378,8 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
       const result = await audioTranscriptionService.startRecording({
         continuous: true,
-        language: 'en-US'
+        language: 'en-US',
+        source: selectedAudioSource
       })
 
       if (result.success) {
@@ -477,6 +507,113 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             )}
           </div>
         </div>
+
+        {/* Audio Source Selection */}
+        {availableAudioSources.length > 1 && (
+          <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-gray-700">Audio Source</label>
+              <button
+                onClick={() => setShowSourceSelector(!showSourceSelector)}
+                className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+              >
+                <Settings size={12} />
+                {showSourceSelector ? 'Hide' : 'Configure'}
+              </button>
+            </div>
+
+            <div className="relative">
+              <button
+                onClick={() => setShowSourceSelector(!showSourceSelector)}
+                disabled={isRecording}
+                className="w-full flex items-center justify-between p-2 bg-white border border-gray-200 rounded-md hover:border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">
+                    {availableAudioSources.find(s => s.id === selectedAudioSource)?.icon || '🎤'}
+                  </span>
+                  <div className="text-left">
+                    <div className="text-sm font-medium text-gray-900">
+                      {availableAudioSources.find(s => s.id === selectedAudioSource)?.name || 'Unknown'}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {availableAudioSources.find(s => s.id === selectedAudioSource)?.description || ''}
+                    </div>
+                  </div>
+                </div>
+                <ChevronDown
+                  size={16}
+                  className={`text-gray-400 transition-transform ${showSourceSelector ? 'rotate-180' : ''}`}
+                />
+              </button>
+
+              {/* Audio Source Options */}
+              {showSourceSelector && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                  {availableAudioSources.map((source) => (
+                    <button
+                      key={source.id}
+                      onClick={() => {
+                        setSelectedAudioSource(source.id)
+                        setShowSourceSelector(false)
+                      }}
+                      disabled={isRecording || !source.supported}
+                      className={`w-full flex items-center gap-3 p-3 text-left hover:bg-gray-50 transition-colors first:rounded-t-md last:rounded-b-md disabled:opacity-50 disabled:cursor-not-allowed ${
+                        selectedAudioSource === source.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
+                      }`}
+                    >
+                      <span className="text-lg">{source.icon}</span>
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                          {source.name}
+                          {selectedAudioSource === source.id && (
+                            <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Selected</span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">{source.description}</div>
+                        {!source.supported && (
+                          <div className="text-xs text-red-500 mt-0.5">Not supported in this browser</div>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Audio Level Indicators */}
+            {selectedAudioSource === 'mixed' && (
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-600">🎤 Microphone</span>
+                  <div className="flex-1 mx-2 bg-gray-200 rounded-full h-1.5">
+                    <div
+                      className="bg-green-500 h-1.5 rounded-full transition-all duration-100"
+                      style={{ width: `${(audioLevels.microphone || 0) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-gray-500">{Math.round((audioLevels.microphone || 0) * 100)}%</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-600">🖥️ Tab Audio</span>
+                  <div className="flex-1 mx-2 bg-gray-200 rounded-full h-1.5">
+                    <div
+                      className="bg-blue-500 h-1.5 rounded-full transition-all duration-100"
+                      style={{ width: `${(audioLevels.tabAudio || 0) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-gray-500">{Math.round((audioLevels.tabAudio || 0) * 100)}%</span>
+                </div>
+              </div>
+            )}
+
+            {selectedAudioSource === 'tabAudio' && (
+              <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+                💡 <strong>Tab Audio:</strong> Click record, then select a browser tab or application window to capture audio from (e.g., YouTube, web meetings).
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Main Recording Button */}
         <div className="flex items-center justify-center mb-4">

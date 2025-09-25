@@ -12,8 +12,23 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [wakeLock, setWakeLock] = useState(null)
 
+  // NEW: Persistent transcript storage across sessions
+  const [sessionTranscripts, setSessionTranscripts] = useState([])
+  const [currentSessionId, setCurrentSessionId] = useState(null)
+
+  // NEW: Multiple wake lock strategies
+  const [audioContext, setAudioContext] = useState(null)
+  const [silentAudio, setSilentAudio] = useState(null)
+  const [wakeLockStrategies, setWakeLockStrategies] = useState({
+    wakeLock: false,
+    silentAudio: false,
+    videoWorkaround: false
+  })
+
   const timerRef = useRef(null)
   const lastSavedTranscriptRef = useRef('')
+  const persistentTranscriptRef = useRef('') // Stores accumulated transcript
+  const wakeLockVideoRef = useRef(null) // For video workaround
 
   // Initialize service on mount
   useEffect(() => {
@@ -36,7 +51,33 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         case 'transcript':
           if (data.type === 'realtime') {
             if (data.final) {
-              setTranscript(prev => prev + data.final + ' ')
+              // Accumulate final results in persistent storage
+              const finalText = data.final.trim()
+              if (finalText) {
+                persistentTranscriptRef.current += finalText + ' '
+
+                // Update session transcript
+                if (currentSessionId) {
+                  setSessionTranscripts(prev => {
+                    const updated = [...prev]
+                    const sessionIndex = updated.findIndex(s => s.id === currentSessionId)
+                    if (sessionIndex >= 0) {
+                      updated[sessionIndex].text += finalText + ' '
+                    } else {
+                      updated.push({
+                        id: currentSessionId,
+                        text: finalText + ' ',
+                        startTime: new Date().toISOString()
+                      })
+                    }
+                    return updated
+                  })
+                }
+
+                // Update display transcript with full persistent content
+                setTranscript(persistentTranscriptRef.current)
+                console.log('📝 Accumulated transcript:', persistentTranscriptRef.current.substring(0, 100) + '...')
+              }
               setInterimText('')
             } else {
               setInterimText(data.interim)
@@ -46,6 +87,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
         case 'status':
           console.log('🎤 Status:', data.type)
+
+          // Handle session restarts
+          if (data.type === 'realtime_started') {
+            const sessionId = Date.now().toString()
+            setCurrentSessionId(sessionId)
+            console.log('🆕 New transcription session started:', sessionId)
+          }
           break
 
         case 'error':
@@ -92,21 +140,53 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     }
   }
 
-  // Handle page visibility changes (auto-save when app goes to background, re-acquire wake lock when visible)
+  // Enhanced page visibility handling for mobile optimization
   useEffect(() => {
     const handleVisibilityChange = async () => {
       if (document.hidden && isRecording) {
         console.log('📱 App went to background, auto-saving...')
         handleAutoSave('background')
-      } else if (!document.hidden && isRecording && !wakeLock) {
-        console.log('📱 App came to foreground, re-acquiring wake lock...')
-        await requestWakeLock()
+
+        // Keep wake lock strategies active even in background
+        console.log('🔒 Maintaining wake lock strategies in background')
+      } else if (!document.hidden && isRecording) {
+        console.log('📱 App came to foreground')
+
+        // Check if wake lock strategies are still active, re-activate if needed
+        const activeStrategies = Object.values(wakeLockStrategies).filter(Boolean).length
+        if (activeStrategies === 0) {
+          console.log('🔒 Re-acquiring wake lock strategies after foreground...')
+          await requestWakeLock()
+        } else {
+          console.log(`🔒 ${activeStrategies} wake lock strategies still active`)
+        }
+      }
+    }
+
+    // Also handle focus events for additional mobile support
+    const handleFocus = () => {
+      if (isRecording) {
+        console.log('👀 Window focused - ensuring wake lock is active')
+      }
+    }
+
+    const handleBlur = () => {
+      if (isRecording) {
+        console.log('👀 Window blurred - maintaining wake lock')
+        handleAutoSave('blur')
       }
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [isRecording, transcript, interimText, wakeLock])
+    window.addEventListener('focus', handleFocus)
+    window.addEventListener('blur', handleBlur)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('blur', handleBlur)
+    }
+  }, [isRecording, transcript, interimText, wakeLock, wakeLockStrategies])
 
   // Auto-save periodically during recording
   useEffect(() => {
@@ -133,54 +213,138 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     }
   }
 
-  // Request wake lock to prevent screen from sleeping
+  // Multi-strategy wake lock implementation
   const requestWakeLock = async () => {
+    console.log('🔒 Requesting multi-strategy wake lock...')
+    const strategies = { wakeLock: false, silentAudio: false, videoWorkaround: false }
+
+    // Strategy 1: Official Wake Lock API
     if ('wakeLock' in navigator) {
       try {
         const lock = await navigator.wakeLock.request('screen')
         setWakeLock(lock)
-        console.log('🔒 Wake lock acquired - screen will stay awake during recording')
+        strategies.wakeLock = true
+        console.log('✅ Wake Lock API activated')
 
-        // Re-acquire wake lock if page becomes visible again
         lock.addEventListener('release', () => {
-          console.log('🔓 Wake lock released')
+          console.log('🔓 Wake Lock API released')
+          setWakeLockStrategies(prev => ({ ...prev, wakeLock: false }))
           setWakeLock(null)
         })
-
-        return lock
       } catch (error) {
-        console.warn('Failed to acquire wake lock:', error)
+        console.warn('⚠️ Wake Lock API failed:', error)
       }
-    } else {
-      console.warn('Wake Lock API not supported in this browser')
     }
-    return null
+
+    // Strategy 2: Silent Audio Loop (iOS Safari fallback)
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+
+      // Create a silent audio buffer
+      const buffer = audioCtx.createBuffer(1, 1, 22050)
+      const source = audioCtx.createBufferSource()
+      source.buffer = buffer
+      source.loop = true
+      source.connect(audioCtx.destination)
+      source.start()
+
+      setAudioContext(audioCtx)
+      setSilentAudio(source)
+      strategies.silentAudio = true
+      console.log('✅ Silent audio loop activated')
+    } catch (error) {
+      console.warn('⚠️ Silent audio failed:', error)
+    }
+
+    // Strategy 3: Hidden video workaround (Android fallback)
+    try {
+      const video = document.createElement('video')
+      video.src = 'data:video/mp4;base64,AAAAIGZ0eXBtcDQyAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAACKBtZGF0AAAC8wYF///v3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE0MiByMjQ3OSBkZDc5YTYxIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAxNCAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTEgZGVibG9jaz0xOi0zOi0zIGFuYWx5c2U9MHgzOjB4MHggbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MCBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xMSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodHA9MCBvcGVuX2dvcD0wIHdlaWdodGI9MCBieG1ldGhvZD0yIGNoZWNrPTAgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MCBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xMSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodHA9MCBvcGVuX2dvcD0wIHdlaWdodGI9MCBieG1ldGhvZD0yIGNoZWNrPTAgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MCBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xMSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodHA9MCBvcGVuX2dvcD0wIHdlaWdodGI9MCBieG1ldGhvZD0yIGNoZWNrPTAgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MCBtZV9yYW5nZT0xNi==''
+      video.setAttribute('playsinline', '')
+      video.setAttribute('muted', '')
+      video.style.position = 'absolute'
+      video.style.left = '-9999px'
+      video.style.width = '1px'
+      video.style.height = '1px'
+      video.loop = true
+
+      document.body.appendChild(video)
+      await video.play()
+
+      wakeLockVideoRef.current = video
+      strategies.videoWorkaround = true
+      console.log('✅ Hidden video workaround activated')
+    } catch (error) {
+      console.warn('⚠️ Video workaround failed:', error)
+    }
+
+    setWakeLockStrategies(strategies)
+
+    const activeStrategies = Object.entries(strategies).filter(([_, active]) => active).map(([name]) => name)
+    console.log('🔒 Active wake lock strategies:', activeStrategies)
+
+    return activeStrategies.length > 0
   }
 
-  // Release wake lock
+  // Release all wake lock strategies
   const releaseWakeLock = async () => {
+    console.log('🔓 Releasing all wake lock strategies...')
+
+    // Release Wake Lock API
     if (wakeLock) {
       try {
         await wakeLock.release()
         setWakeLock(null)
-        console.log('🔓 Wake lock released - screen can auto-lock again')
       } catch (error) {
-        console.warn('Failed to release wake lock:', error)
+        console.warn('Error releasing wake lock:', error)
       }
     }
+
+    // Stop silent audio
+    if (silentAudio) {
+      try {
+        silentAudio.stop()
+        setSilentAudio(null)
+      } catch (error) {
+        console.warn('Error stopping silent audio:', error)
+      }
+    }
+
+    if (audioContext) {
+      try {
+        await audioContext.close()
+        setAudioContext(null)
+      } catch (error) {
+        console.warn('Error closing audio context:', error)
+      }
+    }
+
+    // Remove hidden video
+    if (wakeLockVideoRef.current) {
+      try {
+        wakeLockVideoRef.current.pause()
+        document.body.removeChild(wakeLockVideoRef.current)
+        wakeLockVideoRef.current = null
+      } catch (error) {
+        console.warn('Error removing video workaround:', error)
+      }
+    }
+
+    setWakeLockStrategies({ wakeLock: false, silentAudio: false, videoWorkaround: false })
+    console.log('🔓 All wake lock strategies released')
   }
 
   // Start recording
   const startRecording = async () => {
     try {
       setError(null)
-      // DON'T clear transcript - keep appending to existing content
+      // Keep existing transcript in persistent storage
       setInterimText('')
       setRecordingDuration(0)
 
       await checkPermissions()
 
-      // Request wake lock to prevent screen sleep during recording
+      // Request multiple wake lock strategies
       await requestWakeLock()
 
       const result = await audioTranscriptionService.startRecording({
@@ -196,7 +360,8 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           setRecordingDuration(prev => prev + 1)
         }, 1000)
 
-        console.log('🎤 Recording started - transcript will append to existing content')
+        const existingLength = persistentTranscriptRef.current.length
+        console.log(`🎤 Recording started - will append to existing ${existingLength} characters of transcript`)
       }
     } catch (error) {
       console.error('Failed to start recording:', error)
@@ -248,9 +413,16 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
   // Clear transcript
   const clearTranscript = () => {
+    // Clear all transcript storage
     setTranscript('')
     setInterimText('')
+    persistentTranscriptRef.current = ''
+    setSessionTranscripts([])
+    setCurrentSessionId(null)
     lastSavedTranscriptRef.current = ''
+
+    console.log('🧹 All transcript storage cleared - starting fresh')
+
     if (onTranscriptUpdate) {
       onTranscriptUpdate('')
     }
@@ -280,8 +452,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
                   <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
                   <span className="text-xs text-red-600 font-medium">REC</span>
                 </div>
-                {wakeLock && (
-                  <span className="text-xs text-green-600" title="Screen will stay awake during recording">🔒</span>
+                {(wakeLock || wakeLockStrategies.silentAudio || wakeLockStrategies.videoWorkaround) && (
+                  <div className="flex items-center space-x-1">
+                    <span className="text-xs text-green-600 font-medium">🔒</span>
+                    <span className="text-xs text-green-600" title={`Active: ${Object.entries(wakeLockStrategies).filter(([_, active]) => active).map(([name]) => name).join(', ')}`}>
+                      {Object.values(wakeLockStrategies).filter(Boolean).length}
+                    </span>
+                  </div>
                 )}
               </div>
             )}
@@ -429,10 +606,10 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       {/* Enhanced Info */}
       <div className="text-center space-y-1">
         <p className="text-xs text-gray-500">
-          🎤 Real-time speech recognition • 🔒 Screen stays awake during recording
+          🎤 Persistent transcript accumulation • 🔒 Multi-strategy wake lock • 📱 Mobile optimized
         </p>
         <p className="text-xs text-gray-400">
-          New recordings append to existing transcript - use "Clear" to start fresh
+          Transcripts accumulate across sessions - works even with screen lock/unlock
         </p>
       </div>
     </div>

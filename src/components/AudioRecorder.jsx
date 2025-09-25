@@ -6,6 +6,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const [isInitialized, setIsInitialized] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
+  const [interimText, setInterimText] = useState('') // For processing states
   const [error, setError] = useState(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [processingProgress, setProcessingProgress] = useState(0)

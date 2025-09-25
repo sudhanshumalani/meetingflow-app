@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Mic, MicOff, Square, Volume2, Monitor, Settings, ChevronDown } from 'lucide-react'
+import { Mic, MicOff, Square, Volume2, Monitor, Settings, ChevronDown, Zap } from 'lucide-react'
 import audioTranscriptionService from '../services/audioTranscriptionService'
+import ModelDownloadModal from './whisper/ModelDownloadModal'
 
 const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
@@ -33,6 +34,11 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     videoWorkaround: false
   })
 
+  // NEW: Whisper integration
+  const [showModelDownloadModal, setShowModelDownloadModal] = useState(false)
+  const [whisperStatus, setWhisperStatus] = useState(null)
+  const [transcriptionMode, setTranscriptionMode] = useState('whisper') // 'whisper' or 'realtime'
+
   const timerRef = useRef(null)
   const lastSavedTranscriptRef = useRef('')
   const persistentTranscriptRef = useRef('') // Stores accumulated transcript
@@ -45,9 +51,16 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         const result = await audioTranscriptionService.initialize()
         setIsInitialized(true)
 
-        // Get available audio sources
+        // Get available audio sources and Whisper status
         const status = audioTranscriptionService.getStatus()
         setAvailableAudioSources(status.availableSources || [])
+        setWhisperStatus(status.whisper)
+
+        // Set transcription mode based on what's available
+        if (status.whisperSupported) {
+          audioTranscriptionService.setTranscriptionMode('whisper')
+          setTranscriptionMode('whisper')
+        }
 
         console.log('🎤 Enhanced transcription service ready')
         console.log('📊 Available audio sources:', status.availableSources)

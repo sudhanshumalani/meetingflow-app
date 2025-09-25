@@ -111,8 +111,9 @@ class WhisperService {
     if (this.whisperModule) return;
 
     return new Promise((resolve, reject) => {
-      // Create Web Worker for Whisper processing
-      this.whisperWorker = new Worker('/whisper-worker.js');
+      // Create Web Worker for Whisper processing - use correct base path for Vite
+      const basePath = import.meta.env.BASE_URL || '/';
+      this.whisperWorker = new Worker(basePath + 'whisper-worker.js');
 
       this.whisperWorker.onmessage = (e) => {
         const { type, success, error } = e.data;

@@ -3,11 +3,9 @@
  * This runs Whisper processing in a Web Worker to avoid blocking the main thread
  */
 
-// Import Whisper.js from CDN - using a more stable implementation
-importScripts('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.1/dist/transformers.min.js');
-
 let whisperInstance = null;
 let currentModel = null;
+let isTransformersLoaded = false;
 
 self.onmessage = async function(e) {
   const { type, data } = e.data;
@@ -36,24 +34,26 @@ self.onmessage = async function(e) {
 
 async function initializeWhisper(config) {
   try {
-    // Initialize Transformers.js
-    if (typeof Transformers !== 'undefined') {
-      // Set up the environment for transformers.js
-      Transformers.env.allowRemoteModels = true;
-      Transformers.env.allowLocalModels = true;
-
-      whisperInstance = {
-        ready: true,
-        pipeline: null
-      };
-
-      self.postMessage({
-        type: 'init-complete',
-        success: true
-      });
-    } else {
-      throw new Error('Transformers.js not loaded');
+    // Try to load Transformers.js dynamically
+    if (!isTransformersLoaded) {
+      try {
+        await loadTransformers();
+        isTransformersLoaded = true;
+      } catch (error) {
+        console.warn('Failed to load Transformers.js:', error);
+        throw new Error('Could not load Transformers.js library');
+      }
     }
+
+    whisperInstance = {
+      ready: true,
+      pipeline: null
+    };
+
+    self.postMessage({
+      type: 'init-complete',
+      success: true
+    });
   } catch (error) {
     self.postMessage({
       type: 'init-complete',
@@ -61,6 +61,34 @@ async function initializeWhisper(config) {
       error: error.message
     });
   }
+}
+
+// Load Transformers.js dynamically
+async function loadTransformers() {
+  return new Promise((resolve, reject) => {
+    try {
+      // Direct import with error handling
+      importScripts('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.1/dist/transformers.min.js');
+
+      // Wait a bit for the script to load
+      setTimeout(() => {
+        if (typeof Transformers !== 'undefined') {
+          // Configure Transformers.js
+          Transformers.env.allowRemoteModels = true;
+          Transformers.env.allowLocalModels = true;
+          Transformers.env.backends.onnx.wasm = {
+            numThreads: 1,
+          };
+          resolve();
+        } else {
+          reject(new Error('Transformers not available after loading'));
+        }
+      }, 500); // Give more time for CDN to load
+
+    } catch (error) {
+      reject(error);
+    }
+  });
 }
 
 async function loadModel(data) {

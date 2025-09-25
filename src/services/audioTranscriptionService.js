@@ -369,21 +369,23 @@ class AudioTranscriptionService {
 
   /**
    * Start transcription for tab audio
-   * Note: Web Speech API doesn't work directly with captured streams,
-   * so we'll emit raw audio events for external processing
+   * Note: Browser security limitations prevent direct transcription of captured audio
    */
   startTabAudioTranscription(stream, options = {}) {
     console.log('🔄 Setting up tab audio transcription...')
 
-    // Create MediaRecorder for audio processing
     try {
+      // Create MediaRecorder for audio processing
       this.mediaRecorder = new MediaRecorder(stream, {
         mimeType: 'audio/webm'
       })
 
+      let audioBlobs = []
       this.mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          // Emit audio chunk for external processing
+          audioBlobs.push(event.data)
+
+          // Emit audio chunk for monitoring
           this.notifyListeners('tabAudioChunk', {
             source: 'tabAudio',
             audioData: event.data,
@@ -391,43 +393,83 @@ class AudioTranscriptionService {
             size: event.data.size
           })
 
-          // For demo purposes, emit periodic transcript updates
-          // In production, you'd send this to a speech-to-text service
-          this.emitTabAudioTranscript()
+          // Show helpful guidance
+          this.emitTabAudioGuidance()
         }
       }
 
-      // Start recording in small chunks for real-time processing
-      this.mediaRecorder.start(1000)
+      this.mediaRecorder.onstop = () => {
+        // When recording stops, we have the complete audio
+        const audioBlob = new Blob(audioBlobs, { type: 'audio/webm' })
+        const audioUrl = URL.createObjectURL(audioBlob)
 
-      console.log('✅ Tab audio transcription started')
-      console.log('💡 Tab audio transcription requires external speech service for production use')
-    } catch (error) {
-      console.error('❌ Failed to start tab audio transcription:', error)
-      // Don't throw - continue with audio capture even if transcription fails
-    }
-  }
+        console.log('🎵 Tab audio recording complete, size:', audioBlob.size, 'bytes')
 
-  /**
-   * Emit placeholder transcript for tab audio (demo implementation)
-   */
-  emitTabAudioTranscript() {
-    // This is a placeholder - in production you'd get real transcripts from a service
-    const placeholderMessages = [
-      'Tab audio detected...',
-      'Processing audio from tab/screen...',
-      'Audio stream active...'
-    ]
+        // Emit final message with audio data
+        this.notifyListeners('transcript', {
+          type: 'tabAudio',
+          source: 'tabAudio',
+          final: `Tab audio captured successfully (${Math.round(audioBlob.size / 1024)}KB). Ready for external transcription service.`,
+          interim: '',
+          timestamp: new Date().toISOString(),
+          audioBlob: audioBlob,
+          audioUrl: audioUrl,
+          isComplete: true
+        })
 
-    // Emit a status message every few seconds
-    if (Math.random() < 0.3) { // 30% chance per chunk
+        audioBlobs = []
+      }
+
+      // Start recording in small chunks
+      this.mediaRecorder.start(2000) // 2-second chunks
+
+      console.log('✅ Tab audio capture started - audio will be available for external transcription')
+
+      // Show immediate guidance
       this.notifyListeners('transcript', {
         type: 'tabAudio',
         source: 'tabAudio',
         final: '',
-        interim: placeholderMessages[Math.floor(Math.random() * placeholderMessages.length)],
+        interim: '🎵 Capturing tab audio... For live transcription: ensure audio plays through speakers (not headphones) and enable microphone to pick up the sound.',
         timestamp: new Date().toISOString(),
-        isPlaceholder: true
+        isGuidance: true
+      })
+
+    } catch (error) {
+      console.error('❌ Failed to start tab audio transcription:', error)
+
+      // Show helpful message
+      this.notifyListeners('transcript', {
+        type: 'tabAudio',
+        source: 'tabAudio',
+        final: 'Tab audio capture failed. Please try again or check browser permissions.',
+        interim: '',
+        timestamp: new Date().toISOString(),
+        isError: true
+      })
+    }
+  }
+
+  /**
+   * Provide helpful guidance for tab audio transcription
+   */
+  emitTabAudioGuidance() {
+    const guidanceMessages = [
+      '🎵 Tab audio is being captured...',
+      '💡 For real-time transcription: play audio through speakers and enable microphone',
+      '🔊 Audio chunks are being saved for processing',
+      '⏺️ Recording tab audio for external transcription...'
+    ]
+
+    // Show guidance periodically
+    if (Math.random() < 0.1) { // 10% chance per chunk
+      this.notifyListeners('transcript', {
+        type: 'tabAudio',
+        source: 'tabAudio',
+        final: '',
+        interim: guidanceMessages[Math.floor(Math.random() * guidanceMessages.length)],
+        timestamp: new Date().toISOString(),
+        isGuidance: true
       })
     }
   }
@@ -482,6 +524,7 @@ class AudioTranscriptionService {
     if (this.recognition) {
       this.recognition.stop()
     }
+
 
     // Stop tab audio capture
     if (this.audioSources.tabAudio) {
@@ -583,6 +626,7 @@ class AudioTranscriptionService {
         console.warn('Error stopping recognition:', error)
       }
     }
+
 
     // Stop all audio sources
     Object.values(this.audioSources).forEach(source => {

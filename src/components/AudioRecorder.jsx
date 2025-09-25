@@ -608,8 +608,22 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             )}
 
             {selectedAudioSource === 'tabAudio' && (
-              <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
-                💡 <strong>Tab Audio:</strong> Click record, then select a browser tab or application window to capture audio from (e.g., YouTube, web meetings).
+              <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded text-xs">
+                <div className="text-blue-800 font-medium mb-2">📺 Tab Audio Capture</div>
+                <div className="text-blue-700 space-y-1">
+                  <div>• Click record, then select browser tab/window to capture</div>
+                  <div>• Works with YouTube, web meetings, any browser audio</div>
+                  <div>• Audio will be captured and saved for processing</div>
+                  <div className="mt-2 p-2 bg-blue-100 rounded text-blue-800">
+                    <strong>For live transcription:</strong> Play audio through speakers (not headphones) and enable microphone to pick up the sound.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {selectedAudioSource === 'mixed' && (
+              <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded text-xs text-purple-800">
+                🎙️ <strong>Mixed Mode:</strong> Captures both your microphone and tab audio simultaneously. Your voice will be transcribed live, tab audio will be captured for processing.
               </div>
             )}
           </div>

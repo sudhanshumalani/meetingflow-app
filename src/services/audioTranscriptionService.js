@@ -252,20 +252,90 @@ class AudioTranscriptionService {
   }
 
   /**
-   * Start microphone transcription
+   * Start microphone transcription (now uses Whisper mode by default)
    */
   async startMicrophoneTranscription(options = {}) {
-    if (!this.realtimeEnabled) {
-      throw new Error('Real-time transcription not supported')
+    if (this.transcriptionMode === 'whisper') {
+      // Use MediaRecorder for Whisper mode
+      await this.startRecordingForWhisper(options)
+    } else {
+      // Fallback to real-time Web Speech API
+      if (!this.realtimeEnabled) {
+        throw new Error('Real-time transcription not supported')
+      }
+
+      // Request microphone permission
+      await navigator.mediaDevices.getUserMedia({ audio: true })
+
+      // Configure and start recognition
+      this.recognition.continuous = options.continuous
+      this.recognition.lang = options.language
+      this.recognition.start()
     }
+  }
 
-    // Request microphone permission
-    await navigator.mediaDevices.getUserMedia({ audio: true })
+  /**
+   * Start recording for Whisper batch processing
+   */
+  async startRecordingForWhisper(options = {}) {
+    try {
+      console.log('🎯 Starting Whisper recording mode...')
 
-    // Configure and start recognition
-    this.recognition.continuous = options.continuous
-    this.recognition.lang = options.language
-    this.recognition.start()
+      // Request microphone permission
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        }
+      })
+
+      // Set up audio context for processing
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)()
+      const source = this.audioContext.createMediaStreamSource(stream)
+
+      // Create analyser for audio visualization
+      this.analyserNode = this.audioContext.createAnalyser()
+      this.analyserNode.fftSize = 256
+      source.connect(this.analyserNode)
+
+      // Set up MediaRecorder to capture audio for Whisper
+      this.mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm'
+      })
+
+      this.recordingBlobs = []
+
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          this.recordingBlobs.push(event.data)
+          console.log(`🎵 Audio chunk recorded: ${event.data.size} bytes`)
+        }
+      }
+
+      this.mediaRecorder.onstop = () => {
+        // When recording stops, create the complete audio blob
+        const audioBlob = new Blob(this.recordingBlobs, { type: 'audio/webm' })
+        console.log(`🎵 Recording complete: ${audioBlob.size} bytes total`)
+
+        // Process with Whisper
+        this._transcribeWithWhisper(audioBlob)
+      }
+
+      // Start recording
+      this.mediaRecorder.start(1000) // 1-second chunks
+      console.log('✅ Whisper recording started')
+
+      // Notify UI
+      this.notifyListeners('status', {
+        type: 'whisper_recording_started',
+        message: 'Recording audio for Whisper transcription...'
+      })
+
+    } catch (error) {
+      console.error('❌ Failed to start Whisper recording:', error)
+      throw error
+    }
   }
 
   /**
@@ -380,14 +450,23 @@ class AudioTranscriptionService {
     console.log('🛑 Stopping recording...')
     this.isRecording = false
 
-    // Stop recognition
-    if (this.recognition) {
-      this.recognition.stop()
-    }
+    if (this.transcriptionMode === 'whisper') {
+      // Stop MediaRecorder for Whisper mode
+      if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+        console.log('🛑 Stopping Whisper MediaRecorder...')
+        this.mediaRecorder.stop()
 
-    // Stop media recorder
-    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-      this.mediaRecorder.stop()
+        // The transcription will be handled in the onstop event
+        this.notifyListeners('status', {
+          type: 'processing_started',
+          message: 'Processing audio with Whisper AI...'
+        })
+      }
+    } else {
+      // Stop Web Speech recognition
+      if (this.recognition) {
+        this.recognition.stop()
+      }
     }
 
     // Clean up audio context

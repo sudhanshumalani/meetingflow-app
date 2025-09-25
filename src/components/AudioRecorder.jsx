@@ -221,14 +221,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             <Volume2 className="w-5 h-5 text-gray-500" />
             <span className="text-sm font-medium text-gray-700">Audio Recording</span>
             {isRecording && (
-              <div className="flex items-center space-x-2">
-                <div className="flex items-center space-x-1">
-                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                  <span className="text-xs text-red-600 font-medium">REC</span>
-                </div>
-                {wakeLock && (
-                  <span className="text-xs text-green-600" title="Screen will stay awake">🔒</span>
-                )}
+              <div className="flex items-center space-x-1">
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                <span className="text-xs text-red-600 font-medium">REC</span>
               </div>
             )}
           </div>

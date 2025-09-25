@@ -1300,19 +1300,27 @@ Example notes you might paste:
                         <button
                           onClick={() => handleAIAnalysis(manualText)}
                           disabled={!manualText.trim() || isAnalyzing}
-                          className="flex items-center gap-1 px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {isAnalyzing ? (
                             <>
                               <Loader2 size={14} className="animate-spin" />
-                              Analyzing...
+                              Processing...
                             </>
                           ) : (
                             <>
                               <Sparkles size={14} />
-                              Process with Claude
+                              AI Analysis
                             </>
                           )}
+                        </button>
+                        <button
+                          onClick={handleCopyToDigitalNotes}
+                          disabled={!manualText.trim()}
+                          className="flex items-center gap-1 px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Edit3 size={14} />
+                          Edit Notes
                         </button>
                       </div>
                     </div>
@@ -1351,6 +1359,88 @@ Example notes you might paste:
                   </div>
                 )}
 
+
+                {/* Digital Notes Editing Section */}
+                {(digitalNotes.summary || digitalNotes.keyDiscussionPoints || digitalNotes.actionItems) && (
+                  <div className="mb-6 p-6 bg-green-50 rounded-lg border border-green-200">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-medium text-green-900 flex items-center gap-2">
+                        ✏️ Edit Your Notes
+                      </h3>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            // Re-analyze with current digital notes content
+                            const currentContent = [digitalNotes.summary, digitalNotes.keyDiscussionPoints, digitalNotes.actionItems]
+                              .filter(content => content?.trim())
+                              .join('\n\n')
+                            if (currentContent.length > 50) {
+                              handleAIAnalysis(currentContent)
+                            }
+                          }}
+                          disabled={isAnalyzing}
+                          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          {isAnalyzing ? 'Processing...' : 'Re-analyze'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDigitalNotes({ summary: '', keyDiscussionPoints: '', actionItems: '' })
+                          }}
+                          className="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 flex items-center gap-1"
+                        >
+                          🗑️ Clear
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      {/* Summary Section */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          📝 Summary
+                        </label>
+                        <textarea
+                          value={digitalNotes.summary}
+                          onChange={(e) => handleSectionChange('summary', e.target.value)}
+                          placeholder="Meeting summary will appear here when you use 'Edit Notes' or AI analysis..."
+                          className="w-full h-24 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm resize-none"
+                        />
+                      </div>
+
+                      {/* Key Discussion Points */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          💬 Key Discussion Points
+                        </label>
+                        <textarea
+                          value={digitalNotes.keyDiscussionPoints}
+                          onChange={(e) => handleSectionChange('keyDiscussionPoints', e.target.value)}
+                          placeholder="Key points from the discussion..."
+                          className="w-full h-24 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm resize-none"
+                        />
+                      </div>
+
+                      {/* Action Items */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          📋 Action Items
+                        </label>
+                        <textarea
+                          value={digitalNotes.actionItems}
+                          onChange={(e) => handleSectionChange('actionItems', e.target.value)}
+                          placeholder="Action items and next steps..."
+                          className="w-full h-20 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm resize-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-3 text-xs text-green-600">
+                      💡 These notes are automatically saved. Click "Re-analyze" to update AI insights after editing.
+                    </div>
+                  </div>
+                )}
 
                 {/* Original Input Text Display */}
                 {manualText && (
@@ -1473,11 +1563,32 @@ Example notes you might paste:
                       </h3>
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={toggleTextEditing}
-                          className="flex items-center gap-1 px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                          onClick={() => {
+                            // Process OCR text with AI using standardized method
+                            const textToAnalyze = extractedText || ocrResult.text
+                            if (textToAnalyze && textToAnalyze.length > 100) {
+                              handleAIAnalysis(textToAnalyze)
+                            }
+                          }}
+                          disabled={isAnalyzing || (!extractedText && !ocrResult.text) || (extractedText || ocrResult.text || '').length < 100}
+                          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                        >
+                          <Sparkles size={14} />
+                          {isAnalyzing ? 'Processing...' : 'AI Analysis'}
+                        </button>
+                        <button
+                          onClick={handleCopyToDigitalNotes}
+                          className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-1"
                         >
                           <Edit3 size={14} />
-                          {isEditingExtractedText ? 'Save' : 'Edit'}
+                          Edit Notes
+                        </button>
+                        <button
+                          onClick={toggleTextEditing}
+                          className="flex items-center gap-1 px-3 py-1 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          <Edit3 size={12} />
+                          {isEditingExtractedText ? 'Save' : 'Edit Text'}
                         </button>
                       </div>
                     </div>
@@ -1709,17 +1820,8 @@ Example notes you might paste:
                             onClick={handleCopyToDigitalNotes}
                             className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-1"
                           >
-                            <FileText className="w-3 h-3" />
-                            Use as Notes
-                          </button>
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(audioTranscript)
-                            }}
-                            className="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 flex items-center gap-1"
-                            title="Copy transcript to clipboard"
-                          >
-                            📋 Copy
+                            <Edit3 className="w-3 h-3" />
+                            Edit Notes
                           </button>
                         </div>
                       </div>
@@ -1768,22 +1870,6 @@ Example notes you might paste:
                   </div>
                 </div>
 
-                {/* Quick Actions */}
-                <div className="bg-white rounded-lg shadow-md p-6">
-                  <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
-                  <div className="grid grid-cols-1 gap-3">
-                    <TouchButton
-                      onClick={handleCopyToDigitalNotes}
-                      variant="primary"
-                      size="medium"
-                      disabled={!audioTranscript && !extractedText && !manualText}
-                      className="justify-center"
-                    >
-                      <Edit3 size={16} />
-                      Edit Notes
-                    </TouchButton>
-                  </div>
-                </div>
               </div>
             )}
 

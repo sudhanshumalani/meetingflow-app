@@ -1361,24 +1361,21 @@ Example notes you might paste:
 
 
                 {/* Digital Notes Editing Section */}
-                {(digitalNotes.summary || digitalNotes.keyDiscussionPoints || digitalNotes.actionItems) && (
+                {digitalNotes.summary && (
                   <div className="mb-6 p-6 bg-green-50 rounded-lg border border-green-200">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="font-medium text-green-900 flex items-center gap-2">
-                        ✏️ Edit Your Notes
+                        📝 Meeting Notes
                       </h3>
                       <div className="flex gap-2">
                         <button
                           onClick={() => {
                             // Re-analyze with current digital notes content
-                            const currentContent = [digitalNotes.summary, digitalNotes.keyDiscussionPoints, digitalNotes.actionItems]
-                              .filter(content => content?.trim())
-                              .join('\n\n')
-                            if (currentContent.length > 50) {
-                              handleAIAnalysis(currentContent)
+                            if (digitalNotes.summary?.trim() && digitalNotes.summary.length > 50) {
+                              handleAIAnalysis(digitalNotes.summary)
                             }
                           }}
-                          disabled={isAnalyzing}
+                          disabled={isAnalyzing || !digitalNotes.summary?.trim()}
                           className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
                         >
                           <Sparkles className="w-3 h-3" />
@@ -1395,49 +1392,17 @@ Example notes you might paste:
                       </div>
                     </div>
 
-                    <div className="space-y-4">
-                      {/* Summary Section */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          📝 Summary
-                        </label>
-                        <textarea
-                          value={digitalNotes.summary}
-                          onChange={(e) => handleSectionChange('summary', e.target.value)}
-                          placeholder="Meeting summary will appear here when you use 'Edit Notes' or AI analysis..."
-                          className="w-full h-24 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm resize-none"
-                        />
-                      </div>
-
-                      {/* Key Discussion Points */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          💬 Key Discussion Points
-                        </label>
-                        <textarea
-                          value={digitalNotes.keyDiscussionPoints}
-                          onChange={(e) => handleSectionChange('keyDiscussionPoints', e.target.value)}
-                          placeholder="Key points from the discussion..."
-                          className="w-full h-24 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm resize-none"
-                        />
-                      </div>
-
-                      {/* Action Items */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          📋 Action Items
-                        </label>
-                        <textarea
-                          value={digitalNotes.actionItems}
-                          onChange={(e) => handleSectionChange('actionItems', e.target.value)}
-                          placeholder="Action items and next steps..."
-                          className="w-full h-20 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm resize-none"
-                        />
-                      </div>
+                    <div>
+                      <textarea
+                        value={digitalNotes.summary}
+                        onChange={(e) => handleSectionChange('summary', e.target.value)}
+                        placeholder="Your meeting notes will appear here when you use 'Edit Notes'. You can edit them directly and click 'Re-analyze' to update AI insights..."
+                        className="w-full h-40 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm resize-y"
+                      />
                     </div>
 
                     <div className="mt-3 text-xs text-green-600">
-                      💡 These notes are automatically saved. Click "Re-analyze" to update AI insights after editing.
+                      💡 Edit your notes above, then click "Re-analyze" to update AI insights. Changes are automatically saved.
                     </div>
                   </div>
                 )}

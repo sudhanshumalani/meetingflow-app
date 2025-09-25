@@ -1,24 +1,20 @@
 /**
- * Audio Transcription Service for MeetingFlow
- * Handles both real-time (Web Speech API) and high-accuracy (Whisper) transcription
+ * Simple Audio Transcription Service for MeetingFlow
+ * Uses only Web Speech API - no complex dependencies
  */
 
 class AudioTranscriptionService {
   constructor() {
     this.isInitialized = false
-    this.whisperPipeline = null
     this.recognition = null
     this.isRecording = false
-    this.mediaRecorder = null
-    this.audioChunks = []
     this.listeners = new Set()
 
-    // Transcription modes
-    this.mode = 'hybrid' // 'realtime', 'whisper', 'hybrid'
+    // Simple mode - only real-time transcription
+    this.mode = 'realtime'
     this.realtimeEnabled = this.checkWebSpeechSupport()
 
     // Error recovery
-    this.stream = null
     this.autoReconnectAttempts = 0
     this.maxReconnectAttempts = 3
   }
@@ -35,23 +31,22 @@ class AudioTranscriptionService {
    */
   async initialize() {
     try {
-      console.log('🎤 Initializing Audio Transcription Service...')
+      console.log('🎤 Initializing Simple Audio Transcription Service...')
 
-      // Initialize Web Speech API if supported
-      if (this.realtimeEnabled) {
-        await this.initializeWebSpeech()
+      if (!this.realtimeEnabled) {
+        throw new Error('Web Speech API is not supported in this browser')
       }
 
-      // Initialize Whisper (lazy loaded)
-      // We'll load this when first needed to avoid blocking the UI
+      // Initialize Web Speech API
+      await this.initializeWebSpeech()
 
       this.isInitialized = true
-      console.log('✅ Audio Transcription Service initialized')
+      console.log('✅ Simple Audio Transcription Service initialized')
 
       return {
         success: true,
         realtimeSupported: this.realtimeEnabled,
-        whisperSupported: true // We'll check this lazily when needed
+        whisperSupported: false // We don't use Whisper anymore
       }
     } catch (error) {
       console.error('❌ Failed to initialize transcription service:', error)
@@ -68,7 +63,7 @@ class AudioTranscriptionService {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     this.recognition = new SpeechRecognition()
 
-    // Configure recognition
+    // Configure recognition for best results
     this.recognition.continuous = true
     this.recognition.interimResults = true
     this.recognition.lang = 'en-US'
@@ -104,6 +99,20 @@ class AudioTranscriptionService {
 
     this.recognition.onerror = (event) => {
       console.error('🎤 Speech recognition error:', event.error)
+
+      // Handle network errors with auto-reconnect
+      if (event.error === 'network' && this.autoReconnectAttempts < this.maxReconnectAttempts) {
+        console.log(`🔄 Network error, attempting reconnect ${this.autoReconnectAttempts + 1}/${this.maxReconnectAttempts}`)
+        this.autoReconnectAttempts++
+
+        setTimeout(() => {
+          if (this.isRecording) {
+            this.recognition.start()
+          }
+        }, 1000)
+        return
+      }
+
       this.notifyListeners('error', {
         type: 'realtime_error',
         error: event.error,
@@ -114,84 +123,16 @@ class AudioTranscriptionService {
     this.recognition.onend = () => {
       console.log('🎤 Real-time transcription ended')
       this.notifyListeners('status', { type: 'realtime_ended' })
-    }
-  }
 
-  /**
-   * Initialize Whisper with modern Hugging Face Transformers (2024)
-   */
-  async initializeWhisper() {
-    if (this.whisperPipeline) return this.whisperPipeline
-
-    try {
-      console.log('🚀 Loading Whisper with modern Transformers.js...')
-      this.notifyListeners('status', { type: 'whisper_loading' })
-
-      // Import the modern Hugging Face Transformers.js
-      const { pipeline } = await import('@huggingface/transformers')
-
-      // Try WebGPU first, then fall back to WASM (not CPU)
-      try {
-        console.log('🎯 Attempting WebGPU acceleration...')
-        this.whisperPipeline = await pipeline(
-          'automatic-speech-recognition',
-          'onnx-community/whisper-tiny.en',
-          {
-            device: 'webgpu',
-            dtype: 'fp16'
+      // Auto-restart if we're still supposed to be recording
+      if (this.isRecording) {
+        console.log('🔄 Auto-restarting transcription')
+        setTimeout(() => {
+          if (this.isRecording) {
+            this.recognition.start()
           }
-        )
-        console.log('✅ Whisper WebGPU model loaded successfully')
-      } catch (webgpuError) {
-        console.warn('⚠️ WebGPU failed, falling back to WASM:', webgpuError.message)
-
-        // Fallback to WASM (not CPU - that's not supported)
-        try {
-          this.whisperPipeline = await pipeline(
-            'automatic-speech-recognition',
-            'Xenova/whisper-tiny.en',
-            {
-              device: 'wasm',
-              dtype: 'fp32'
-            }
-          )
-          console.log('✅ Whisper WASM fallback loaded successfully')
-        } catch (wasmError) {
-          console.error('❌ WASM fallback also failed:', wasmError.message)
-
-          // Final fallback - try without specifying device (let library choose)
-          try {
-            console.log('🔄 Trying default device configuration...')
-            this.whisperPipeline = await pipeline(
-              'automatic-speech-recognition',
-              'Xenova/whisper-tiny.en'
-              // No device specified - let the library choose the best available
-            )
-            console.log('✅ Whisper default configuration loaded successfully')
-          } catch (defaultError) {
-            console.error('❌ All Whisper fallbacks failed:', defaultError.message)
-            throw new Error(`Whisper initialization failed: WebGPU (${webgpuError.message}), WASM (${wasmError.message}), Default (${defaultError.message})`)
-          }
-        }
+        }, 100)
       }
-
-      this.notifyListeners('status', { type: 'whisper_ready' })
-      return this.whisperPipeline
-
-    } catch (error) {
-      console.error('❌ Failed to load Whisper:', error)
-
-      // Don't throw the error - gracefully continue with real-time only mode
-      console.warn('⚠️ Whisper unavailable, continuing with real-time transcription only')
-      this.whisperPipeline = null
-
-      this.notifyListeners('status', {
-        type: 'whisper_unavailable',
-        message: 'Whisper high-accuracy transcription is not available. Using real-time transcription only.'
-      })
-
-      // Return null to indicate Whisper is not available
-      return null
     }
   }
 
@@ -201,139 +142,35 @@ class AudioTranscriptionService {
   async startRecording(options = {}) {
     try {
       const {
-        mode = 'hybrid',
         continuous = true,
-        language = 'en-US',
-        deviceId = null
+        language = 'en-US'
       } = options
 
       if (this.isRecording) {
         throw new Error('Recording is already in progress')
       }
 
-      console.log(`🎤 Starting recording in ${mode} mode`)
-      this.mode = mode
+      if (!this.realtimeEnabled) {
+        throw new Error('Speech recognition is not supported in this browser')
+      }
+
+      console.log(`🎤 Starting simple recording in real-time mode`)
       this.isRecording = true
-      this.audioChunks = []
+      this.autoReconnectAttempts = 0
 
-      // Enhanced audio constraints for simultaneous speaker/mic usage
-      const audioConstraints = {
-        audio: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 16000, // Optimal for Whisper
-          // Advanced constraints for better speaker/mic coexistence
-          suppressLocalAudioPlayback: false, // Allow local audio playback
-          googEchoCancellation: true,
-          googAutoGainControl: true,
-          googNoiseSuppression: true,
-          googHighpassFilter: true,
-          googAudioMirroring: false,
-          // Prevent audio device conflicts
-          latency: 0.01, // Low latency for better real-time performance
-          channelCount: 1, // Mono to reduce processing load
-          volume: 1.0
-        }
-      }
+      // Configure language
+      this.recognition.lang = language
+      this.recognition.continuous = continuous
 
-      console.log('🎤 Requesting microphone with enhanced constraints for speaker coexistence', deviceId ? `(device: ${deviceId})` : '(default device)')
-
-      // Try enhanced constraints first, fallback to basic if not supported
-      let stream
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(audioConstraints)
-        console.log('✅ Enhanced audio constraints applied')
-      } catch (enhancedError) {
-        console.warn('⚠️ Enhanced constraints failed, trying basic constraints:', enhancedError)
-        // Fallback with device selection if specified
-        const fallbackConstraints = {
-          audio: {
-            deviceId: deviceId ? { exact: deviceId } : undefined,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: 16000
-          }
-        }
-        stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints)
-        console.log('✅ Basic audio constraints applied')
-      }
-
-      this.stream = stream
-
-      // Monitor stream health
-      stream.getTracks().forEach(track => {
-        track.addEventListener('ended', () => {
-          console.warn('⚠️ Audio track ended unexpectedly')
-          if (this.isRecording) {
-            this.notifyListeners('error', {
-              type: 'recording_disrupted',
-              reason: 'track_ended',
-              message: 'Recording was disrupted: microphone disconnected'
-            })
-          }
-        })
-      })
-
-      // Start real-time transcription if enabled
-      if ((mode === 'realtime' || mode === 'hybrid') && this.realtimeEnabled) {
-        this.recognition.lang = language
-        this.recognition.start()
-      }
-
-      // Set up audio recording for Whisper processing
-      if (mode === 'whisper' || mode === 'hybrid') {
-        this.mediaRecorder = new MediaRecorder(stream, {
-          mimeType: 'audio/webm;codecs=opus'
-        })
-
-        this.mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            this.audioChunks.push(event.data)
-          }
-        }
-
-        this.mediaRecorder.onstop = async () => {
-          console.log('🎤 Recording stopped, processing with Whisper...')
-          try {
-            const result = await this.processRecordingWithWhisper()
-            if (!result) {
-              console.log('⚠️ Whisper processing skipped - using real-time transcript only')
-            }
-          } catch (error) {
-            console.error('Whisper processing failed:', error)
-            // Don't crash - just continue without Whisper output
-            this.notifyListeners('status', {
-              type: 'whisper_processing_failed',
-              message: 'High-accuracy processing unavailable. Real-time transcript saved.',
-              error: error.message
-            })
-          }
-        }
-
-        this.mediaRecorder.onerror = (event) => {
-          console.error('MediaRecorder error:', event.error)
-          if (this.isRecording) {
-            this.notifyListeners('error', {
-              type: 'recording_disrupted',
-              reason: 'recorder_error',
-              message: `Recording error: ${event.error}`
-            })
-          }
-        }
-
-        // Record in chunks for processing
-        this.mediaRecorder.start(5000) // 5-second chunks
-      }
+      // Start recognition
+      this.recognition.start()
 
       this.notifyListeners('status', {
         type: 'recording_started',
-        mode: this.mode
+        mode: 'realtime'
       })
 
-      return { success: true, mode: this.mode }
+      return { success: true, mode: 'realtime' }
     } catch (error) {
       console.error('❌ Failed to start recording:', error)
       this.isRecording = false
@@ -359,169 +196,13 @@ class AudioTranscriptionService {
     this.isRecording = false
 
     // Stop real-time transcription
-    if (this.recognition && this.realtimeEnabled) {
+    if (this.recognition) {
       this.recognition.stop()
-    }
-
-    // Stop audio recording
-    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-      this.mediaRecorder.stop()
-    }
-
-    // Stop media stream
-    if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop())
-      this.stream = null
     }
 
     this.notifyListeners('status', { type: 'recording_stopped' })
 
     return { success: true }
-  }
-
-  /**
-   * Process recorded audio with modern Transformers.js
-   */
-  async processRecordingWithWhisper() {
-    if (this.audioChunks.length === 0) return null
-
-    try {
-      console.log('🤖 Processing audio with modern Transformers.js...')
-      console.log(`📊 Audio chunks: ${this.audioChunks.length} chunks`)
-      this.notifyListeners('status', { type: 'whisper_processing' })
-
-      // Initialize Whisper if not already done
-      const pipeline = await this.initializeWhisper()
-      if (!pipeline) {
-        console.log('⚠️ Whisper not available, skipping processing')
-        return null
-      }
-      console.log('✅ Pipeline ready, processing audio...')
-
-      // Convert audio chunks to blob
-      const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' })
-      console.log(`📦 Audio blob size: ${audioBlob.size} bytes, type: ${audioBlob.type}`)
-
-      // Convert to audio buffer for Transformers.js
-      console.log('🔄 Converting audio blob to Float32Array...')
-      const audioBuffer = await this.convertBlobToAudioBuffer(audioBlob)
-      console.log(`🎵 Audio buffer length: ${audioBuffer.length} samples, sample rate: 16kHz`)
-
-      // Transcribe with modern Transformers.js pipeline API
-      console.log('🚀 Starting transcription...')
-      const result = await pipeline(audioBuffer, {
-        return_timestamps: 'word',
-        chunk_length_s: 30,
-        stride_length_s: 5
-      })
-
-      console.log('✅ Modern Transformers.js transcription complete:', result)
-
-      this.notifyListeners('transcript', {
-        type: 'whisper',
-        text: result.text,
-        chunks: result.chunks || [],
-        timestamp: new Date().toISOString()
-      })
-
-      // Clear chunks for next recording
-      this.audioChunks = []
-
-      return result
-    } catch (error) {
-      console.error('❌ Modern Transformers.js processing failed:', error)
-      console.error('❌ Error details:', {
-        message: error.message,
-        stack: error.stack,
-        audioChunks: this.audioChunks.length,
-        pipelineStatus: !!this.whisperPipeline
-      })
-      this.notifyListeners('error', {
-        type: 'whisper_processing_error',
-        error: error.message
-      })
-      throw error
-    }
-  }
-
-  /**
-   * Convert blob to audio buffer for Whisper (optimized for Transformers.js)
-   */
-  async convertBlobToAudioBuffer(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-
-      reader.onload = async () => {
-        try {
-          console.log('📥 Reading audio blob as ArrayBuffer...')
-          const arrayBuffer = reader.result
-          console.log(`📊 ArrayBuffer size: ${arrayBuffer.byteLength} bytes`)
-
-          // Create AudioContext optimized for Whisper
-          const audioContext = new (window.AudioContext || window.webkitAudioContext)({
-            sampleRate: 16000 // Try to match target sample rate
-          })
-          console.log(`🎛️ AudioContext created with sample rate: ${audioContext.sampleRate}`)
-
-          // Decode the audio data
-          console.log('🔄 Decoding audio data...')
-          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
-          console.log(`🎵 Decoded audio: ${audioBuffer.duration}s, ${audioBuffer.sampleRate}Hz, ${audioBuffer.numberOfChannels} channels`)
-
-          // Get the first channel and convert to Float32Array
-          const channelData = audioBuffer.getChannelData(0)
-          console.log(`📊 Channel data length: ${channelData.length} samples`)
-
-          let samples
-          if (audioBuffer.sampleRate === 16000) {
-            // Already at target sample rate, just use the data
-            console.log('✅ Audio already at 16kHz, using directly')
-            samples = channelData.slice()
-          } else {
-            // Resample to 16kHz for Whisper
-            console.log(`🔄 Resampling from ${audioBuffer.sampleRate}Hz to 16000Hz`)
-            const sampleRate = 16000
-            const resampledLength = Math.floor(channelData.length * sampleRate / audioBuffer.sampleRate)
-            samples = new Float32Array(resampledLength)
-
-            // Simple linear interpolation for resampling
-            const ratio = channelData.length / samples.length
-            for (let i = 0; i < samples.length; i++) {
-              const index = i * ratio
-              const lower = Math.floor(index)
-              const upper = Math.ceil(index)
-              const weight = index - lower
-
-              if (upper < channelData.length) {
-                samples[i] = channelData[lower] * (1 - weight) + channelData[upper] * weight
-              } else {
-                samples[i] = channelData[lower]
-              }
-            }
-          }
-
-          console.log(`✅ Audio conversion complete: ${samples.length} samples at 16kHz`)
-
-          // Validate the audio data
-          if (samples.length === 0) {
-            throw new Error('Audio conversion resulted in empty buffer')
-          }
-
-          resolve(samples)
-        } catch (error) {
-          console.error('❌ Audio conversion failed:', error)
-          reject(new Error(`Audio conversion failed: ${error.message}`))
-        }
-      }
-
-      reader.onerror = () => {
-        console.error('❌ FileReader failed')
-        reject(new Error('Failed to read audio blob'))
-      }
-
-      console.log('📖 Starting to read audio blob...')
-      reader.readAsArrayBuffer(blob)
-    })
   }
 
   /**
@@ -550,12 +231,13 @@ class AudioTranscriptionService {
    */
   getErrorMessage(error) {
     const errorMessages = {
-      'no-speech': 'No speech was detected. Please try speaking louder.',
+      'no-speech': 'No speech was detected. Please try speaking louder and clearer.',
       'audio-capture': 'Microphone access was denied. Please allow microphone permissions.',
       'not-allowed': 'Microphone access is not allowed. Please check your browser settings.',
       'network': 'Network error occurred. Please check your internet connection.',
       'aborted': 'Speech recognition was aborted.',
-      'language-not-supported': 'The selected language is not supported.'
+      'language-not-supported': 'The selected language is not supported.',
+      'service-not-allowed': 'Speech recognition service is not allowed.'
     }
 
     return errorMessages[error] || `Speech recognition error: ${error}`
@@ -569,7 +251,7 @@ class AudioTranscriptionService {
       isInitialized: this.isInitialized,
       isRecording: this.isRecording,
       realtimeSupported: this.realtimeEnabled,
-      whisperLoaded: !!this.whisperPipeline,
+      whisperLoaded: false, // No Whisper anymore
       mode: this.mode
     }
   }
@@ -585,22 +267,9 @@ class AudioTranscriptionService {
         console.warn('Error stopping recognition:', error)
       }
     }
-    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-      try {
-        this.mediaRecorder.stop()
-      } catch (error) {
-        console.warn('Error stopping media recorder:', error)
-      }
-    }
-    if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop())
-      this.stream = null
-    }
-    this.audioChunks = []
     this.isRecording = false
     this.autoReconnectAttempts = 0
     this.listeners.clear()
-    this.whisperPipeline = null
     this.recognition = null
   }
 }

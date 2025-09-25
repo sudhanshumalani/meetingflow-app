@@ -10,6 +10,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const [error, setError] = useState(null)
   const [permissions, setPermissions] = useState('unknown')
   const [recordingDuration, setRecordingDuration] = useState(0)
+  const [wakeLock, setWakeLock] = useState(null)
 
   const timerRef = useRef(null)
   const lastSavedTranscriptRef = useRef('')
@@ -91,18 +92,21 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     }
   }
 
-  // Handle page visibility changes (auto-save when app goes to background)
+  // Handle page visibility changes (auto-save when app goes to background, re-acquire wake lock when visible)
   useEffect(() => {
-    const handleVisibilityChange = () => {
+    const handleVisibilityChange = async () => {
       if (document.hidden && isRecording) {
         console.log('📱 App went to background, auto-saving...')
         handleAutoSave('background')
+      } else if (!document.hidden && isRecording && !wakeLock) {
+        console.log('📱 App came to foreground, re-acquiring wake lock...')
+        await requestWakeLock()
       }
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [isRecording, transcript, interimText])
+  }, [isRecording, transcript, interimText, wakeLock])
 
   // Auto-save periodically during recording
   useEffect(() => {
@@ -129,16 +133,55 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     }
   }
 
+  // Request wake lock to prevent screen from sleeping
+  const requestWakeLock = async () => {
+    if ('wakeLock' in navigator) {
+      try {
+        const lock = await navigator.wakeLock.request('screen')
+        setWakeLock(lock)
+        console.log('🔒 Wake lock acquired - screen will stay awake during recording')
+
+        // Re-acquire wake lock if page becomes visible again
+        lock.addEventListener('release', () => {
+          console.log('🔓 Wake lock released')
+          setWakeLock(null)
+        })
+
+        return lock
+      } catch (error) {
+        console.warn('Failed to acquire wake lock:', error)
+      }
+    } else {
+      console.warn('Wake Lock API not supported in this browser')
+    }
+    return null
+  }
+
+  // Release wake lock
+  const releaseWakeLock = async () => {
+    if (wakeLock) {
+      try {
+        await wakeLock.release()
+        setWakeLock(null)
+        console.log('🔓 Wake lock released - screen can auto-lock again')
+      } catch (error) {
+        console.warn('Failed to release wake lock:', error)
+      }
+    }
+  }
+
   // Start recording
   const startRecording = async () => {
     try {
       setError(null)
-      setTranscript('')
+      // DON'T clear transcript - keep appending to existing content
       setInterimText('')
       setRecordingDuration(0)
-      lastSavedTranscriptRef.current = ''
 
       await checkPermissions()
+
+      // Request wake lock to prevent screen sleep during recording
+      await requestWakeLock()
 
       const result = await audioTranscriptionService.startRecording({
         continuous: true,
@@ -152,12 +195,16 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         timerRef.current = setInterval(() => {
           setRecordingDuration(prev => prev + 1)
         }, 1000)
+
+        console.log('🎤 Recording started - transcript will append to existing content')
       }
     } catch (error) {
       console.error('Failed to start recording:', error)
       setError(error.message)
       // Auto-save any partial transcript
       handleAutoSave('start_error')
+      // Release wake lock if recording failed
+      await releaseWakeLock()
     }
   }
 
@@ -170,15 +217,22 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       await audioTranscriptionService.stopRecording()
       setIsRecording(false)
 
+      // Release wake lock when recording stops
+      await releaseWakeLock()
+
       if (timerRef.current) {
         clearInterval(timerRef.current)
         timerRef.current = null
       }
+
+      console.log('🛑 Recording stopped - transcript preserved for next session')
     } catch (error) {
       console.error('Failed to stop recording:', error)
       setError(error.message)
       // Auto-save on stop error
       handleAutoSave('stop_error')
+      // Still release wake lock on error
+      await releaseWakeLock()
     }
   }
 
@@ -221,9 +275,14 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             <Volume2 className="w-5 h-5 text-gray-500" />
             <span className="text-sm font-medium text-gray-700">Audio Recording</span>
             {isRecording && (
-              <div className="flex items-center space-x-1">
-                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                <span className="text-xs text-red-600 font-medium">REC</span>
+              <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1">
+                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                  <span className="text-xs text-red-600 font-medium">REC</span>
+                </div>
+                {wakeLock && (
+                  <span className="text-xs text-green-600" title="Screen will stay awake during recording">🔒</span>
+                )}
               </div>
             )}
           </div>
@@ -282,7 +341,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           ) : (
             <div className="space-y-1">
               <p className="text-sm text-gray-600">
-                {transcript ? 'Tap to continue recording' : 'Tap to start recording'}
+                {transcript ? 'Tap to continue recording (will append to existing transcript)' : 'Tap to start recording'}
               </p>
               <p className="text-xs text-gray-500">
                 {permissions === 'granted' ? '✓ Microphone ready' :
@@ -291,7 +350,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
               </p>
               {transcript && (
                 <p className="text-xs text-green-600">
-                  ✓ {transcript.split(' ').length} words transcribed
+                  ✓ {transcript.split(' ').filter(word => word.trim()).length} words transcribed • Will continue adding
                 </p>
               )}
             </div>
@@ -367,10 +426,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         </div>
       )}
 
-      {/* Simple Info */}
-      <div className="text-center">
+      {/* Enhanced Info */}
+      <div className="text-center space-y-1">
         <p className="text-xs text-gray-500">
-          🎤 Simple real-time speech recognition using your browser's built-in capabilities
+          🎤 Real-time speech recognition • 🔒 Screen stays awake during recording
+        </p>
+        <p className="text-xs text-gray-400">
+          New recordings append to existing transcript - use "Clear" to start fresh
         </p>
       </div>
     </div>

@@ -1,7 +1,9 @@
 /**
  * Enhanced Audio Transcription Service for MeetingFlow
- * Supports microphone + tab audio capture for live transcription
+ * Supports microphone + tab audio capture with Whisper batch processing
  */
+
+import transcriptionService from './transcription/TranscriptionService.js'
 
 class AudioTranscriptionService {
   constructor() {
@@ -23,10 +25,15 @@ class AudioTranscriptionService {
     this.mediaRecorder = null
     this.analyserNode = null
 
-    // Simple mode - real-time transcription
-    this.mode = 'realtime'
-    this.realtimeEnabled = this.checkWebSpeechSupport()
+    // Whisper batch processing mode
+    this.mode = 'whisper'
+    this.realtimeEnabled = false // Disabled for Whisper mode
     this.tabAudioEnabled = this.checkTabAudioSupport()
+    this.whisperEnabled = true
+
+    // Audio recording for batch processing
+    this.recordedChunks = []
+    this.finalAudioBlob = null
 
     // Error recovery
     this.autoReconnectAttempts = 0
@@ -236,10 +243,10 @@ class AudioTranscriptionService {
       this.notifyListeners('status', {
         type: 'recording_started',
         source,
-        mode: 'realtime'
+        mode: 'whisper'
       })
 
-      return { success: true, source, mode: 'realtime' }
+      return { success: true, source, mode: 'whisper' }
     } catch (error) {
       console.error('❌ Failed to start recording:', error)
       this.isRecording = false
@@ -255,19 +262,32 @@ class AudioTranscriptionService {
   }
 
   /**
-   * Start microphone recording (existing functionality)
+   * Start microphone recording for Whisper batch processing
    */
   async startMicrophoneRecording(options = {}) {
-    if (!this.realtimeEnabled) {
-      throw new Error('Speech recognition is not supported in this browser')
+    console.log('🎤 Starting microphone recording for Whisper...')
+
+    try {
+      // Get microphone stream
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 44100,
+          channelCount: 1
+        }
+      })
+
+      this.audioSources.microphone = stream
+      await this.setupMediaRecorder(stream, 'microphone')
+
+    } catch (error) {
+      console.error('❌ Microphone access failed:', error)
+      if (error.name === 'NotAllowedError') {
+        throw new Error('Microphone access denied. Please allow microphone permissions.')
+      }
+      throw new Error(`Microphone capture failed: ${error.message}`)
     }
-
-    console.log('🎤 Starting microphone recording...')
-
-    // Configure and start speech recognition
-    this.recognition.lang = options.language || 'en-US'
-    this.recognition.continuous = options.continuous !== false
-    this.recognition.start()
   }
 
   /**
@@ -294,8 +314,8 @@ class AudioTranscriptionService {
       console.log('✅ Tab audio stream acquired')
       this.audioSources.tabAudio = stream
 
-      // Set up Web Audio API for processing
-      await this.setupTabAudioProcessing(stream, options)
+      // Set up MediaRecorder for batch processing
+      await this.setupMediaRecorder(stream, 'tabAudio')
 
       // Hide the video track (we only want audio)
       const videoTrack = stream.getVideoTracks()[0]
@@ -510,6 +530,70 @@ class AudioTranscriptionService {
   }
 
   /**
+   * Set up MediaRecorder for audio capture
+   */
+  async setupMediaRecorder(stream, sourceType) {
+    try {
+      console.log(`🎙️ Setting up MediaRecorder for ${sourceType}`)
+
+      // Reset recorded chunks
+      this.recordedChunks = []
+
+      // Set up MediaRecorder with appropriate MIME type
+      const options = {
+        mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm'
+      }
+
+      this.mediaRecorder = new MediaRecorder(stream, options)
+
+      // Handle data available events
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          this.recordedChunks.push(event.data)
+          console.log(`📦 Audio chunk captured: ${event.data.size} bytes`)
+
+          // Notify UI of recording progress
+          this.notifyListeners('status', {
+            type: 'recording_chunk',
+            source: sourceType,
+            chunkSize: event.data.size,
+            totalChunks: this.recordedChunks.length
+          })
+        }
+      }
+
+      // Handle recording stop
+      this.mediaRecorder.onstop = () => {
+        // Create final audio blob
+        this.finalAudioBlob = new Blob(this.recordedChunks, {
+          type: options.mimeType
+        })
+
+        console.log(`🎵 Recording stopped, final size: ${this.finalAudioBlob.size} bytes`)
+      }
+
+      // Handle errors
+      this.mediaRecorder.onerror = (event) => {
+        console.error('❌ MediaRecorder error:', event.error)
+        this.notifyListeners('error', {
+          type: 'recording_error',
+          error: event.error.message
+        })
+      }
+
+      // Start recording
+      this.mediaRecorder.start(1000) // Collect data every 1 second
+      console.log(`✅ MediaRecorder started for ${sourceType}`)
+
+    } catch (error) {
+      console.error('❌ Failed to setup MediaRecorder:', error)
+      throw new Error(`MediaRecorder setup failed: ${error.message}`)
+    }
+  }
+
+  /**
    * Stop recording and transcription
    */
   async stopRecording() {
@@ -517,41 +601,117 @@ class AudioTranscriptionService {
       throw new Error('No recording in progress')
     }
 
-    console.log('🛑 Stopping recording')
+    console.log('🛑 Stopping recording and starting Whisper transcription...')
     this.isRecording = false
 
-    // Stop microphone transcription
-    if (this.recognition) {
-      this.recognition.stop()
-    }
+    return new Promise((resolve, reject) => {
+      // Set up one-time handler for when recording stops
+      const handleRecordingStop = async () => {
+        try {
+          if (this.finalAudioBlob) {
+            console.log('🎯 Processing audio with Whisper...')
 
+            // Notify UI that processing started
+            this.notifyListeners('status', {
+              type: 'processing_started',
+              stage: 'initializing'
+            })
 
-    // Stop tab audio capture
-    if (this.audioSources.tabAudio) {
-      this.audioSources.tabAudio.getTracks().forEach(track => track.stop())
-      this.audioSources.tabAudio = null
-    }
+            // Initialize transcription service if needed
+            if (!transcriptionService.getStatus().isInitialized) {
+              await transcriptionService.initialize((progress) => {
+                this.notifyListeners('status', {
+                  type: 'processing_progress',
+                  stage: progress.stage,
+                  progress: progress.progress,
+                  method: progress.method,
+                  description: progress.description
+                })
+              })
+            }
 
-    // Stop media recorder
-    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-      this.mediaRecorder.stop()
-      this.mediaRecorder = null
+            // Transcribe the audio
+            const result = await transcriptionService.transcribe(this.finalAudioBlob, {
+              progressCallback: (progress) => {
+                this.notifyListeners('status', {
+                  type: 'processing_progress',
+                  stage: progress.stage,
+                  progress: progress.progress
+                })
+              }
+            })
+
+            if (result.success) {
+              // Send final transcript
+              this.notifyListeners('transcript', {
+                type: 'whisper',
+                final: result.text,
+                interim: '',
+                source: this.activeSource
+              })
+
+              console.log('✅ Whisper transcription completed:', result.text.substring(0, 100) + '...')
+            } else {
+              throw new Error(result.error || 'Transcription failed')
+            }
+
+            resolve({ success: true, text: result.text })
+          } else {
+            resolve({ success: true, text: '' })
+          }
+        } catch (error) {
+          console.error('❌ Whisper processing failed:', error)
+          this.notifyListeners('error', {
+            type: 'processing_error',
+            error: error.message
+          })
+          reject(error)
+        } finally {
+          // Clean up
+          this.cleanup()
+        }
+      }
+
+      // Stop media recorder if active
+      if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+        this.mediaRecorder.addEventListener('stop', handleRecordingStop, { once: true })
+        this.mediaRecorder.stop()
+      } else {
+        // No recording to stop, resolve immediately
+        this.cleanup()
+        resolve({ success: true, text: '' })
+      }
+    })
+  }
+
+  /**
+   * Clean up audio resources
+   */
+  cleanup() {
+    // Stop all audio tracks
+    Object.values(this.audioSources).forEach(stream => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop())
+      }
+    })
+
+    // Reset audio sources
+    this.audioSources = {
+      microphone: null,
+      tabAudio: null,
+      mixed: null
     }
 
     // Close audio context
     if (this.audioContext && this.audioContext.state !== 'closed') {
-      await this.audioContext.close()
+      this.audioContext.close().catch(console.warn)
       this.audioContext = null
     }
 
-    this.analyserNode = null
-
-    this.notifyListeners('status', {
-      type: 'recording_stopped',
-      source: this.activeSource
-    })
-
-    return { success: true }
+    // Reset recording state
+    this.mediaRecorder = null
+    this.recordedChunks = []
+    this.finalAudioBlob = null
   }
 
   /**

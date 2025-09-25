@@ -6,8 +6,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const [isInitialized, setIsInitialized] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
-  const [interimText, setInterimText] = useState('')
   const [error, setError] = useState(null)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [processingProgress, setProcessingProgress] = useState(0)
   const [permissions, setPermissions] = useState('unknown')
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [wakeLock, setWakeLock] = useState(null)
@@ -61,14 +62,11 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     const removeListener = audioTranscriptionService.addEventListener((event, data) => {
       switch (event) {
         case 'transcript':
-          // Handle both realtime and tabAudio transcripts
-          const isRealtimeData = data.type === 'realtime' || !data.type
-          const isTabAudioData = data.type === 'tabAudio' || data.source === 'tabAudio'
-
-          if (data.final && data.final.trim()) {
-            // Accumulate final results in persistent storage
+          // Handle Whisper transcription results
+          if (data.type === 'whisper' && data.final && data.final.trim()) {
+            // Accumulate Whisper results in persistent storage
             const finalText = data.final.trim()
-            const sourcePrefix = isTabAudioData && !data.isPlaceholder ? '[Tab Audio] ' : ''
+            const sourcePrefix = data.source === 'tabAudio' ? '[Tab Audio] ' : ''
 
             persistentTranscriptRef.current += sourcePrefix + finalText + ' '
 
@@ -93,11 +91,11 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
             // Update display transcript with full persistent content
             setTranscript(persistentTranscriptRef.current)
-            console.log('📝 Accumulated transcript:', persistentTranscriptRef.current.substring(0, 100) + '...')
-            setInterimText('')
-          } else if (data.interim) {
-            const sourcePrefix = isTabAudioData && !data.isPlaceholder ? '[Tab Audio] ' : ''
-            setInterimText(sourcePrefix + data.interim)
+            console.log('📝 Whisper transcript accumulated:', persistentTranscriptRef.current.substring(0, 100) + '...')
+
+            // Stop processing state
+            setIsProcessing(false)
+            setProcessingProgress(0)
           }
           break
 
@@ -117,11 +115,36 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         case 'status':
           console.log('🎤 Status:', data.type, 'from source:', data.source)
 
-          // Handle session restarts
-          if (data.type === 'recording_started' || data.type === 'realtime_started') {
+          // Handle session starts
+          if (data.type === 'recording_started') {
             const sessionId = Date.now().toString()
             setCurrentSessionId(sessionId)
-            console.log('🆕 New transcription session started:', sessionId, 'with source:', data.source)
+            console.log('🆕 New recording session started:', sessionId, 'with source:', data.source)
+          }
+
+          // Handle processing states
+          if (data.type === 'processing_started') {
+            setIsProcessing(true)
+            setProcessingProgress(10)
+            console.log('🎯 Transcription processing started')
+          }
+
+          if (data.type === 'processing_progress') {
+            setIsProcessing(true)
+            setProcessingProgress(data.progress || 0)
+            const method = data.method ? ` (${data.method})` : ''
+            console.log(`🎯 Processing: ${data.stage} (${data.progress}%)${method}`)
+
+            // Show method selection in UI
+            if (data.method && data.description) {
+              console.log(`📱 Using transcription method: ${data.description}`)
+            }
+          }
+
+          if (data.type === 'processing_error') {
+            setIsProcessing(false)
+            setProcessingProgress(0)
+            setError(`Transcription processing failed: ${data.error}`)
           }
           break
 
@@ -144,27 +167,24 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
   // Update parent component when transcript changes
   useEffect(() => {
-    const fullTranscript = transcript + interimText
     console.log('🎤 AudioRecorder: Transcript state changed:', {
       transcript: transcript?.substring(0, 50) + '...',
-      interimText: interimText?.substring(0, 50) + '...',
-      fullLength: fullTranscript.length,
+      hasTranscript: !!transcript.trim(),
       hasCallback: !!onTranscriptUpdate
     })
-    if (fullTranscript.trim() && onTranscriptUpdate) {
-      console.log('🎤 AudioRecorder: Updating parent with transcript:', fullTranscript.substring(0, 100) + '...')
-      onTranscriptUpdate(fullTranscript.trim())
+    if (transcript.trim() && onTranscriptUpdate) {
+      console.log('🎤 AudioRecorder: Updating parent with transcript:', transcript.substring(0, 100) + '...')
+      onTranscriptUpdate(transcript.trim())
     }
-  }, [transcript, interimText, onTranscriptUpdate])
+  }, [transcript, onTranscriptUpdate])
 
-  // Auto-save functionality
+  // Auto-save functionality for processed audio
   const handleAutoSave = (reason = 'auto') => {
-    const currentTranscript = transcript + interimText
-    if (currentTranscript.trim() && currentTranscript !== lastSavedTranscriptRef.current) {
-      console.log(`🔄 Auto-saving transcript (${reason}): ${currentTranscript.substring(0, 50)}...`)
-      lastSavedTranscriptRef.current = currentTranscript
+    if (transcript.trim() && transcript !== lastSavedTranscriptRef.current) {
+      console.log(`🔄 Auto-saving processed transcript (${reason}): ${transcript.substring(0, 50)}...`)
+      lastSavedTranscriptRef.current = transcript
       if (onAutoSave) {
-        onAutoSave(currentTranscript.trim(), reason)
+        onAutoSave(transcript.trim(), reason)
       }
     }
   }
@@ -687,14 +707,14 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
       </div>
 
-      {/* Live Transcript Display */}
-      {(transcript || interimText) && (
-        <div className="bg-white rounded-lg border border-green-200 p-4 shadow-sm">
+      {/* Whisper Transcription Display */}
+      {transcript && (
+        <div className="bg-white rounded-lg border border-purple-200 p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-green-800 flex items-center gap-2">
-              🎤 Live Transcript
-              <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
-                {(transcript + interimText).split(' ').filter(word => word.trim()).length} words
+            <h3 className="text-sm font-medium text-purple-800 flex items-center gap-2">
+              🎯 AI Transcription
+              <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
+                {transcript.split(' ').filter(word => word.trim()).length} words
               </span>
             </h3>
             <button
@@ -706,35 +726,48 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           </div>
 
           <div className="space-y-2 max-h-48 overflow-y-auto bg-gray-50 rounded p-3">
-            {transcript && (
-              <div className="text-sm text-gray-900 leading-relaxed">
-                <strong className="text-green-700">Final:</strong> {transcript}
-              </div>
-            )}
-
-            {interimText && (
-              <div className="text-sm text-gray-600 italic leading-relaxed border-l-2 border-blue-200 pl-2">
-                <strong className="text-blue-600">Interim:</strong> {interimText}
-              </div>
-            )}
+            <div className="text-sm text-gray-900 leading-relaxed">
+              {transcript}
+            </div>
           </div>
 
           <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
             <span>
-              Total: {(transcript + interimText).length} characters
+              Total: {transcript.length} characters
             </span>
           </div>
         </div>
       )}
 
-      {/* Transcript Status Indicator when no transcript */}
-      {!transcript && !interimText && isRecording && (
+      {/* Processing Status Indicator */}
+      {isProcessing && (
+        <div className="bg-purple-50 rounded-lg border border-purple-200 p-4">
+          <div className="flex items-center gap-2 text-purple-700 mb-2">
+            <div className="animate-spin w-4 h-4 border-2 border-purple-300 border-t-purple-600 rounded-full"></div>
+            <span className="text-sm font-medium">Processing with AI...</span>
+          </div>
+          {processingProgress > 0 && (
+            <div className="w-full bg-purple-200 rounded-full h-2">
+              <div
+                className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${processingProgress}%` }}
+              ></div>
+            </div>
+          )}
+          <p className="text-xs text-purple-600 mt-2">
+            Audio is being processed using AI transcription
+          </p>
+        </div>
+      )}
+
+      {/* Recording Status when no transcript and not processing */}
+      {!transcript && !isProcessing && isRecording && (
         <div className="bg-blue-50 rounded-lg border border-blue-200 p-4 text-center">
           <div className="text-blue-600 mb-1">
-            🎤 Listening...
+            🎤 Recording Audio...
           </div>
           <p className="text-xs text-blue-700">
-            Transcript will appear here as you speak
+            Audio will be processed with AI when you stop recording
           </p>
         </div>
       )}

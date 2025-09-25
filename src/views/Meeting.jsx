@@ -1744,7 +1744,7 @@ Example notes you might paste:
                 {/* Quick Actions */}
                 <div className="bg-white rounded-lg shadow-md p-6">
                   <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 gap-3">
                     <TouchButton
                       onClick={() => {
                         if (audioTranscript) {
@@ -1755,28 +1755,13 @@ Example notes you might paste:
                           setActiveMode('digital')
                         }
                       }}
-                      variant="secondary"
+                      variant="primary"
                       size="medium"
                       disabled={!audioTranscript}
                       className="justify-center"
                     >
-                      <Grid3X3 size={16} />
+                      <Edit3 size={16} />
                       Edit Notes
-                    </TouchButton>
-
-                    <TouchButton
-                      onClick={() => {
-                        if (audioTranscript && audioTranscript.length > 100) {
-                          handleAIAnalysis(audioTranscript)
-                        }
-                      }}
-                      variant="secondary"
-                      size="medium"
-                      disabled={!audioTranscript || audioTranscript.length < 100 || isAnalyzing}
-                      className="justify-center"
-                    >
-                      <Sparkles size={16} />
-                      {isAnalyzing ? 'Processing...' : 'AI Insights'}
                     </TouchButton>
                   </div>
                 </div>

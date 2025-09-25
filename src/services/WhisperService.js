@@ -12,7 +12,7 @@ class WhisperService {
     this.isLoading = false
     this.isInitialized = false
     this.modelId = null // Will be determined based on device
-    this.wasmPath = '/meetingflow-app/models/whisper.wasm'
+    this.wasmPath = '/models/whisper.wasm'
     this.context = null
   }
 
@@ -35,7 +35,7 @@ class WhisperService {
 
       // Load the whisper.js binding (which loads the WASM)
       const whisperModuleScript = document.createElement('script')
-      whisperModuleScript.src = '/meetingflow-app/models/whisper.js'
+      whisperModuleScript.src = '/models/whisper.js'
 
       await new Promise((resolve, reject) => {
         whisperModuleScript.onload = resolve

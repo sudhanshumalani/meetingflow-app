@@ -96,26 +96,35 @@ class AudioTranscriptionService {
   /**
    * Initialize the transcription service
    */
-  async initialize() {
+  async initialize(progressCallback = null) {
     try {
-      console.log('🎤 Initializing Simple Audio Transcription Service...')
+      console.log('🎤 Initializing Audio Transcription Service with Whisper...')
 
-      if (!this.realtimeEnabled) {
-        throw new Error('Web Speech API is not supported in this browser')
+      // Initialize the TranscriptionService factory for Whisper
+      if (!transcriptionService.getStatus().isInitialized) {
+        await transcriptionService.initialize((progress) => {
+          if (progressCallback) {
+            progressCallback({
+              type: 'initialization_progress',
+              stage: progress.stage,
+              progress: progress.progress,
+              method: progress.method,
+              description: progress.description
+            })
+          }
+        })
       }
 
-      // Initialize Web Speech API
-      await this.initializeWebSpeech()
-
       this.isInitialized = true
-      console.log('✅ Simple Audio Transcription Service initialized')
+      console.log('✅ Audio Transcription Service with Whisper initialized')
 
       return {
         success: true,
-        realtimeSupported: this.realtimeEnabled,
+        realtimeSupported: false, // Whisper mode - no real-time
         tabAudioSupported: this.tabAudioEnabled,
         availableSources: this.getAvailableAudioSources(),
-        whisperSupported: false // We don't use Whisper anymore
+        whisperSupported: true,
+        transcriptionMethod: transcriptionService.getStatus().activeMethod
       }
     } catch (error) {
       console.error('❌ Failed to initialize transcription service:', error)
@@ -125,6 +134,7 @@ class AudioTranscriptionService {
 
   /**
    * Initialize Web Speech API for real-time transcription
+   * NOTE: Not used in Whisper mode, kept for potential future fallback
    */
   async initializeWebSpeech() {
     if (!this.realtimeEnabled) return

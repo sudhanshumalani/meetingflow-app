@@ -1,15 +1,17 @@
 /**
  * Whisper.cpp Service for Audio Transcription
- * Uses official whisper.cpp WASM binaries (NOT Hugging Face)
+ * Uses official whisper.cpp WASM binaries with quantized models for mobile efficiency
  */
+
+import modelManager from '../utils/modelManager.js'
+import { getDeviceCapabilities } from '../utils/deviceDetection.js'
 
 class WhisperService {
   constructor() {
     this.whisperModule = null
     this.isLoading = false
     this.isInitialized = false
-    this.modelPath = '/meetingflow-app/models/ggml-base.en.bin'
-    this.modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin'
+    this.modelId = null // Will be determined based on device
     this.wasmPath = '/meetingflow-app/models/whisper.wasm'
     this.context = null
   }
@@ -60,41 +62,40 @@ class WhisperService {
         progressCallback({ stage: 'loading_model', progress: 50 })
       }
 
-      console.log('✅ Whisper WASM loaded, loading model...')
+      console.log('✅ Whisper WASM loaded, determining optimal model...')
 
-      // Try to load model from local path first, then download if needed
-      let modelBuffer
-      try {
-        const localResponse = await fetch(this.modelPath)
-        if (localResponse.ok) {
-          modelBuffer = await localResponse.arrayBuffer()
-          console.log('✅ Model loaded from local cache')
-        } else {
-          throw new Error('Model not cached locally')
-        }
-      } catch (error) {
-        console.log('📥 Downloading Whisper model (142MB) - this may take a moment...')
-
-        if (progressCallback) {
-          progressCallback({ stage: 'downloading_model', progress: 50 })
-        }
-
-        const downloadResponse = await fetch(this.modelUrl)
-        if (!downloadResponse.ok) {
-          throw new Error(`Failed to download model: ${downloadResponse.statusText}`)
-        }
-
-        modelBuffer = await downloadResponse.arrayBuffer()
-        console.log('✅ Model downloaded successfully')
-
-        // Cache the model in IndexedDB for next time
-        try {
-          await this.cacheModel(modelBuffer)
-          console.log('✅ Model cached for offline use')
-        } catch (cacheError) {
-          console.warn('⚠️ Failed to cache model:', cacheError)
-        }
+      if (progressCallback) {
+        progressCallback({ stage: 'selecting_model', progress: 50 })
       }
+
+      // Determine optimal model based on device capabilities
+      const deviceCapabilities = getDeviceCapabilities()
+      this.modelId = modelManager.getOptimalModelForDevice(deviceCapabilities)
+
+      if (!this.modelId) {
+        throw new Error('No suitable Whisper model for this device')
+      }
+
+      console.log(`📱 Selected model: ${this.modelId} for ${deviceCapabilities.device.type}`)
+
+      // Check storage availability
+      const hasStorage = await modelManager.checkStorageAvailable(this.modelId)
+      if (!hasStorage) {
+        // Fallback to smaller model
+        this.modelId = deviceCapabilities.device.type === 'desktop' ? 'base' : 'tiny-q8'
+        console.log(`⚠️ Limited storage, using smaller model: ${this.modelId}`)
+      }
+
+      // Download/load model via model manager
+      const modelBuffer = await modelManager.downloadModel(this.modelId, (progress) => {
+        if (progressCallback) {
+          progressCallback({
+            stage: progress.stage,
+            progress: 50 + (progress.progress * 0.3), // Scale to 50-80% range
+            ...progress
+          })
+        }
+      })
 
       if (progressCallback) {
         progressCallback({ stage: 'initializing_context', progress: 80 })

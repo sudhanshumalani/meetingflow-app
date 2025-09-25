@@ -99,7 +99,29 @@ export function supportsMediaRecorder() {
 }
 
 /**
- * Check Web Speech API support
+ * Check iOS native Whisper bridge support
+ */
+export function supportsiOSWhisperBridge() {
+  return (
+    window.webkit &&
+    window.webkit.messageHandlers &&
+    window.webkit.messageHandlers.whisperBridge
+  )
+}
+
+/**
+ * Check Android native Whisper bridge support
+ */
+export function supportsAndroidWhisperBridge() {
+  return (
+    typeof Android !== 'undefined' &&
+    Android.whisperBridge &&
+    typeof Android.whisperBridge.processMessage === 'function'
+  )
+}
+
+/**
+ * Check Web Speech API support (fallback only)
  */
 export function supportsWebSpeech() {
   return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window
@@ -120,13 +142,29 @@ export function getOptimalTranscriptionMethod() {
     }
   }
 
-  // iOS - Try native Whisper or fallback to Web Speech
+  // iOS - Use native Whisper.cpp with Core ML or WASM fallback
   if (isiOS()) {
-    if (supportsWebSpeech()) {
+    if (supportsiOSWhisperBridge()) {
+      return {
+        method: 'whisper-ios-native',
+        priority: 1,
+        description: 'Whisper.cpp Core ML (iOS Native)',
+        requirements: ['ios-bridge', 'webaudio', 'mediarecorder'],
+        modelSize: 'base-coreml-q8'
+      }
+    } else if (supportsWebAssembly() && canLoadWhisperModel('base')) {
+      return {
+        method: 'whisper-wasm-ios',
+        priority: 2,
+        description: 'Whisper.cpp WASM (iOS Safari)',
+        requirements: ['webassembly', 'webaudio', 'mediarecorder'],
+        modelSize: 'base-q8'
+      }
+    } else if (supportsWebSpeech()) {
       return {
         method: 'web-speech-ios',
-        priority: 2,
-        description: 'Web Speech API (iOS Safari)',
+        priority: 3,
+        description: 'Web Speech API (iOS fallback)',
         requirements: ['webspeech', 'webaudio'],
         fallback: true
       }
@@ -141,21 +179,29 @@ export function getOptimalTranscriptionMethod() {
     }
   }
 
-  // Android - Try WASM (if powerful enough) or Web Speech
+  // Android - Use native JNI Whisper.cpp or optimized WASM
   if (isAndroid()) {
-    if (supportsWebAssembly() && canLoadWhisperModel('base') && getDeviceMemory() >= 2) {
+    if (supportsAndroidWhisperBridge()) {
+      return {
+        method: 'whisper-android-native',
+        priority: 1,
+        description: 'Whisper.cpp JNI (Android Native)',
+        requirements: ['android-bridge', 'webaudio', 'mediarecorder'],
+        modelSize: 'base-q8'
+      }
+    } else if (supportsWebAssembly() && canLoadWhisperModel('base') && getDeviceMemory() >= 2) {
       return {
         method: 'whisper-wasm-android',
         priority: 2,
         description: 'Whisper.cpp WASM (Android)',
         requirements: ['webassembly', 'webaudio', 'mediarecorder'],
-        modelSize: 'base'
+        modelSize: 'base-q8'
       }
     } else if (supportsWebSpeech()) {
       return {
         method: 'web-speech-android',
         priority: 3,
-        description: 'Web Speech API (Android Chrome)',
+        description: 'Web Speech API (Android fallback)',
         requirements: ['webspeech', 'webaudio'],
         fallback: true
       }
@@ -200,7 +246,9 @@ export function checkRequirements(requirements) {
     webaudio: supportsWebAudio(),
     mediarecorder: supportsMediaRecorder(),
     webspeech: supportsWebSpeech(),
-    sharedarraybuffer: supportsSharedArrayBuffer()
+    sharedarraybuffer: supportsSharedArrayBuffer(),
+    'ios-bridge': supportsiOSWhisperBridge(),
+    'android-bridge': supportsAndroidWhisperBridge()
   }
 
   return requirements.every(req => checks[req] === true)

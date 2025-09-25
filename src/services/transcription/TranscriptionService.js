@@ -5,6 +5,8 @@
 
 import { getOptimalTranscriptionMethod, getDeviceCapabilities, checkRequirements } from '../../utils/deviceDetection.js'
 import whisperService from '../WhisperService.js'
+import iosWhisperBridge from '../../bridges/iOSWhisperBridge.js'
+import androidWhisperBridge from '../../bridges/AndroidWhisperBridge.js'
 
 /**
  * Abstract base class for transcription services
@@ -33,7 +35,76 @@ class BaseTranscriptionService {
 }
 
 /**
- * Whisper.cpp WASM Implementation (Desktop & powerful Android)
+ * iOS Native Whisper Implementation (Core ML optimized)
+ */
+class WhisperIOSNativeService extends BaseTranscriptionService {
+  constructor() {
+    super()
+    this.bridge = iosWhisperBridge
+  }
+
+  async initialize(progressCallback) {
+    return await this.bridge.initialize(progressCallback)
+  }
+
+  async transcribe(audioData, options) {
+    return await this.bridge.transcribe(audioData, {
+      ...options,
+      enableBatteryOptimization: true
+    })
+  }
+
+  getStatus() {
+    const status = this.bridge.getStatus()
+    return {
+      ...status,
+      method: 'whisper-ios-native',
+      engine: 'whisper.cpp-ios-coreml'
+    }
+  }
+
+  destroy() {
+    this.bridge.destroy()
+  }
+}
+
+/**
+ * Android Native Whisper Implementation (JNI bridge)
+ */
+class WhisperAndroidNativeService extends BaseTranscriptionService {
+  constructor() {
+    super()
+    this.bridge = androidWhisperBridge
+  }
+
+  async initialize(progressCallback) {
+    return await this.bridge.initialize(progressCallback)
+  }
+
+  async transcribe(audioData, options) {
+    return await this.bridge.transcribe(audioData, {
+      ...options,
+      enableBatteryOptimization: true,
+      useAudioChunking: true
+    })
+  }
+
+  getStatus() {
+    const status = this.bridge.getStatus()
+    return {
+      ...status,
+      method: 'whisper-android-native',
+      engine: 'whisper.cpp-android-jni'
+    }
+  }
+
+  destroy() {
+    this.bridge.destroy()
+  }
+}
+
+/**
+ * Whisper.cpp WASM Implementation (Desktop & powerful mobile)
  */
 class WhisperWASMService extends BaseTranscriptionService {
   constructor() {
@@ -278,7 +349,18 @@ class TranscriptionServiceFactory {
       switch (optimal.method) {
         case 'whisper-wasm':
         case 'whisper-wasm-android':
+        case 'whisper-wasm-ios':
           this.currentService = new WhisperWASMService()
+          this.method = optimal.method
+          break
+
+        case 'whisper-ios-native':
+          this.currentService = new WhisperIOSNativeService()
+          this.method = optimal.method
+          break
+
+        case 'whisper-android-native':
+          this.currentService = new WhisperAndroidNativeService()
           this.method = optimal.method
           break
 
@@ -316,6 +398,7 @@ class TranscriptionServiceFactory {
    */
   async initializeFallback(progressCallback) {
     const fallbackOrder = [
+      { method: 'whisper-wasm-fallback', service: WhisperWASMService },
       { method: 'web-speech-fallback', service: WebSpeechService },
       { method: 'manual-input', service: ManualInputService }
     ]

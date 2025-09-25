@@ -742,6 +742,40 @@ export default function Meeting() {
   // Export functionality now handled via n8n integration
   // See ExportOptionsButton component for export options
 
+  // Enhanced function to copy content to digital notes
+  const handleCopyToDigitalNotes = () => {
+    let contentToCopy = ''
+    let sourceType = ''
+
+    // Priority: Manual text > OCR extracted text > Audio transcript
+    if (manualText && manualText.trim()) {
+      contentToCopy = manualText
+      sourceType = 'manual text'
+    } else if (extractedText && extractedText.trim()) {
+      contentToCopy = extractedText
+      sourceType = 'OCR extracted text'
+    } else if (audioTranscript && audioTranscript.trim()) {
+      contentToCopy = audioTranscript
+      sourceType = 'audio transcript'
+    }
+
+    if (contentToCopy) {
+      console.log(`📝 Copying ${sourceType} to digital notes:`, contentToCopy.substring(0, 100) + '...')
+
+      setDigitalNotes(prev => ({
+        ...prev,
+        summary: contentToCopy
+      }))
+
+      setActiveMode('digital')
+
+      // Show a brief confirmation
+      console.log(`✅ Copied ${sourceType} to digital notes and switched to edit mode`)
+    } else {
+      console.log('⚠️ No content available to copy to digital notes')
+    }
+  }
+
   // Mobile swipe handling
   const [touchStart, setTouchStart] = useState(null)
   const [touchEnd, setTouchEnd] = useState(null)
@@ -1672,14 +1706,7 @@ Example notes you might paste:
                             {isAnalyzing ? 'Processing...' : 'AI Analysis'}
                           </button>
                           <button
-                            onClick={() => {
-                              // Copy transcript to summary section
-                              setDigitalNotes(prev => ({
-                                ...prev,
-                                summary: audioTranscript
-                              }))
-                              setActiveMode('digital')
-                            }}
+                            onClick={handleCopyToDigitalNotes}
                             className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-1"
                           >
                             <FileText className="w-3 h-3" />
@@ -1746,18 +1773,10 @@ Example notes you might paste:
                   <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
                   <div className="grid grid-cols-1 gap-3">
                     <TouchButton
-                      onClick={() => {
-                        if (audioTranscript) {
-                          setDigitalNotes(prev => ({
-                            ...prev,
-                            summary: audioTranscript
-                          }))
-                          setActiveMode('digital')
-                        }
-                      }}
+                      onClick={handleCopyToDigitalNotes}
                       variant="primary"
                       size="medium"
-                      disabled={!audioTranscript}
+                      disabled={!audioTranscript && !extractedText && !manualText}
                       className="justify-center"
                     >
                       <Edit3 size={16} />

@@ -496,10 +496,10 @@ class HybridWhisperService {
       this.debug('🎯 Quality mode with downloads allowed: preferring Whisper AI');
       selectedTier = this.availableTiers.find(t => t.id === 'tier3') || this.availableTiers[0];
     } else {
-      // Balanced: Try Whisper first, fall back to Web Speech
-      this.debug('⚖️ Balanced mode: trying Whisper first, fallback to Web Speech');
-      selectedTier = this.availableTiers.find(t => t.id === 'tier3') ||
-                    this.availableTiers.find(t => t.id === 'tier2') ||
+      // Balanced: Use Web Speech for actual transcription, keep service worker ready
+      this.debug('⚖️ Balanced mode: using Web Speech for real transcription, service worker ready');
+      selectedTier = this.availableTiers.find(t => t.id === 'tier2') ||
+                    this.availableTiers.find(t => t.id === 'tier3') ||
                     this.availableTiers[0];
     }
 

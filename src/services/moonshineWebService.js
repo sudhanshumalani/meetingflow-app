@@ -91,16 +91,20 @@ class WhisperWebService {
       const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
       const hasHighMemory = this.capabilities.memory < 200 // Use tiny if already using >200MB
 
-      // iOS Memory Optimization Strategy
+      // iOS Memory Optimization Strategy with alternative model testing
       if (isIOS) {
         // Research-backed iOS model selection for memory constraints
         this.modelName = 'Xenova/whisper-tiny.en' // 39M parameters - most iOS-compatible
+        this.fallbackModel = 'Xenova/whisper-tiny' // Alternative if .en fails
         this.iosOptimized = true
         console.log('🍎 iOS detected - using memory-optimized Whisper-tiny with quantization')
+        console.log('🔄 Fallback model prepared:', this.fallbackModel)
       } else if (isMobile || hasHighMemory) {
         this.modelName = 'Xenova/whisper-tiny.en' // ~39M parameters, Transformers.js optimized
+        this.fallbackModel = 'Xenova/whisper-tiny'
       } else {
         this.modelName = 'Xenova/whisper-base.en' // ~74M parameters, better accuracy
+        this.fallbackModel = 'Xenova/whisper-tiny.en'
       }
 
       console.log('🎵 Device capabilities:', {
@@ -257,8 +261,10 @@ class WhisperWebService {
 
       // Progressive fallback to smaller model
       if (this.modelName !== this.fallbackModel) {
-        console.log('🔄 Falling back to tiny model...')
+        console.log(`🔄 Falling back from ${this.modelName} to ${this.fallbackModel}...`)
+        console.warn('🔄 Primary model failed, trying fallback model for iOS compatibility')
         this.modelName = this.fallbackModel
+        this.modelFallbackUsed = true // Track that fallback was used
         return this._doInitialize()
       }
 
@@ -445,6 +451,8 @@ class WhisperWebService {
         debugCallback(`🔍 STEP 4: Audio is Float32Array: ${processedAudio instanceof Float32Array}`, 'info')
         debugCallback(`🔍 STEP 5: Model name: ${this.modelName}`, 'info')
         debugCallback(`🔍 STEP 6: iOS optimized: ${this.iosOptimized}`, 'info')
+        debugCallback(`🔍 STEP 7: Fallback used: ${this.modelFallbackUsed || false}`, 'info')
+        debugCallback(`🔍 STEP 8: Available fallback: ${this.fallbackModel}`, 'info')
       }
 
       // iOS Safari specific pipeline configuration based on research
@@ -456,8 +464,8 @@ class WhisperWebService {
       }
 
       if (debugCallback) {
-        debugCallback(`🔍 STEP 7: Pipeline options: ${JSON.stringify(pipelineOptions)}`, 'info')
-        debugCallback(`🔍 STEP 8: About to call this.pipeline()...`, 'info')
+        debugCallback(`🔍 STEP 9: Pipeline options: ${JSON.stringify(pipelineOptions)}`, 'info')
+        debugCallback(`🔍 STEP 10: About to call this.pipeline()...`, 'info')
       }
 
       console.log('🎵 Using simplified pipeline configuration for maximum compatibility')
@@ -471,11 +479,11 @@ class WhisperWebService {
 
       let result
       try {
-        if (debugCallback) debugCallback(`🔍 STEP 9: Calling pipeline now...`, 'info')
+        if (debugCallback) debugCallback(`🔍 STEP 11: Calling pipeline now...`, 'info')
         result = await this.pipeline(processedAudio, pipelineOptions)
-        if (debugCallback) debugCallback(`🔍 STEP 10: Pipeline call completed`, 'info')
+        if (debugCallback) debugCallback(`🔍 STEP 12: Pipeline call completed`, 'info')
       } catch (pipelineError) {
-        if (debugCallback) debugCallback(`🔍 STEP 10: Pipeline ERROR: ${pipelineError.message}`, 'error')
+        if (debugCallback) debugCallback(`🔍 STEP 12: Pipeline ERROR: ${pipelineError.message}`, 'error')
         throw pipelineError
       }
 

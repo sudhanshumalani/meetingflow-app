@@ -256,7 +256,10 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         })
       }
 
-      await audioTranscriptionService.startLiveTranscription({
+      // Only start Web Speech API for microphone source
+      // For tab audio and hybrid, rely on Whisper AI only
+      if (selectedAudioSource === 'microphone') {
+        await audioTranscriptionService.startLiveTranscription({
         onTranscript: (result) => {
           // Append to persistent transcript for text persistence
           const newText = result.text
@@ -282,6 +285,11 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           setIsRecording(false)
         }
       })
+      } else {
+        // For tab audio and hybrid mode, show placeholder message
+        console.log(`🖥️ Tab/Hybrid audio mode: Recording ${selectedAudioSource} for Whisper AI processing`)
+        setTranscript(persistentTranscriptRef.current || 'Recording tab audio... Processing will happen after you stop recording.')
+      }
 
       setIsRecording(true)
 
@@ -306,10 +314,14 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     try {
       handleAutoSave('stop')
 
-      const finalTranscript = audioTranscriptionService.stopLiveTranscription()
-      if (finalTranscript && finalTranscript.trim()) {
-        persistentTranscriptRef.current += finalTranscript + ' '
+      // Only stop Web Speech API if we're using microphone
+      if (selectedAudioSource === 'microphone') {
+        const finalTranscript = audioTranscriptionService.stopLiveTranscription()
+        if (finalTranscript && finalTranscript.trim()) {
+          persistentTranscriptRef.current += finalTranscript + ' '
+        }
       }
+
       setTranscript(persistentTranscriptRef.current || transcript)
       setIsRecording(false)
 

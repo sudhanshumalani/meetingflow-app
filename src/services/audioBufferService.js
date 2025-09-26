@@ -9,6 +9,8 @@ class AudioBufferService {
     this.isRecording = false
     this.mediaRecorder = null
     this.audioStream = null
+    this.originalTabStream = null
+    this.micStreamForMixed = null
     this.recordedChunks = []
     this.audioContext = null
     this.analyser = null
@@ -119,9 +121,11 @@ class AudioBufferService {
    * Get audio stream based on selected source
    */
   async getAudioStream(source) {
+    console.log(`🎵 Requesting audio stream for source: ${source}`)
+
     switch (source) {
       case 'microphone':
-        return navigator.mediaDevices.getUserMedia({
+        const micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
@@ -129,18 +133,52 @@ class AudioBufferService {
             sampleRate: 16000 // Optimal for Moonshine
           }
         })
+        console.log('🎤 Microphone stream obtained:', {
+          audioTracks: micStream.getAudioTracks().length,
+          trackSettings: micStream.getAudioTracks()[0]?.getSettings()
+        })
+        return micStream
 
       case 'tabAudio':
-        // For tab audio, we need getDisplayMedia with audio
-        return navigator.mediaDevices.getDisplayMedia({
-          video: false,
+        // For tab audio, we need getDisplayMedia with video enabled (required for audio capture)
+        const tabStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            mediaSource: 'tab', // Prefer tab sharing
+            width: { ideal: 1 },  // Minimal video to reduce overhead
+            height: { ideal: 1 },
+            frameRate: { ideal: 1 }
+          },
           audio: {
             echoCancellation: false,
             noiseSuppression: false,
             autoGainControl: false,
-            sampleRate: 16000
+            sampleRate: 16000,
+            channelCount: 2, // Stereo capture
+            suppressLocalAudioPlayback: false // Don't suppress local audio
           }
         })
+        console.log('🖥️ Tab audio stream obtained:', {
+          audioTracks: tabStream.getAudioTracks().length,
+          videoTracks: tabStream.getVideoTracks().length,
+          audioTrackSettings: tabStream.getAudioTracks()[0]?.getSettings(),
+          videoTrackSettings: tabStream.getVideoTracks()[0]?.getSettings()
+        })
+
+        // Create audio-only stream for MediaRecorder compatibility
+        const audioTracks = tabStream.getAudioTracks()
+        if (audioTracks.length === 0) {
+          throw new Error('No audio tracks found in tab stream')
+        }
+
+        const audioOnlyStream = new MediaStream(audioTracks)
+        console.log('🎵 Created audio-only stream from tab:', {
+          audioTracks: audioOnlyStream.getAudioTracks().length,
+          trackSettings: audioOnlyStream.getAudioTracks()[0]?.getSettings()
+        })
+
+        // Store the original stream for cleanup
+        this.originalTabStream = tabStream
+        return audioOnlyStream
 
       case 'mixed':
         // For mixed mode, we'll combine microphone + tab audio
@@ -167,12 +205,19 @@ class AudioBufferService {
       })
 
       const tabStream = await navigator.mediaDevices.getDisplayMedia({
-        video: false,
+        video: {
+          mediaSource: 'tab', // Prefer tab sharing
+          width: { ideal: 1 },  // Minimal video to reduce overhead
+          height: { ideal: 1 },
+          frameRate: { ideal: 1 }
+        },
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
-          sampleRate: 16000
+          sampleRate: 16000,
+          channelCount: 2, // Stereo capture
+          suppressLocalAudioPlayback: false // Don't suppress local audio
         }
       })
 
@@ -187,7 +232,18 @@ class AudioBufferService {
       micSource.connect(destination)
       tabSource.connect(destination)
 
-      console.log('🎵 Mixed audio stream created (microphone + tab audio)')
+      // Store original tab stream for cleanup (has both audio and video)
+      this.originalTabStream = tabStream
+
+      // Store microphone stream separately for cleanup
+      this.micStreamForMixed = micStream
+
+      console.log('🎵 Mixed audio stream created:', {
+        micAudioTracks: micStream.getAudioTracks().length,
+        tabAudioTracks: tabStream.getAudioTracks().length,
+        tabVideoTracks: tabStream.getVideoTracks().length,
+        mixedAudioTracks: destination.stream.getAudioTracks().length
+      })
       return destination.stream
 
     } catch (error) {
@@ -321,6 +377,20 @@ class AudioBufferService {
     if (this.audioStream) {
       this.audioStream.getTracks().forEach(track => track.stop())
       this.audioStream = null
+    }
+
+    // Clean up original tab stream (contains both audio and video tracks)
+    if (this.originalTabStream) {
+      this.originalTabStream.getTracks().forEach(track => track.stop())
+      this.originalTabStream = null
+      console.log('🎵 Original tab stream cleaned up')
+    }
+
+    // Clean up microphone stream used in mixed mode
+    if (this.micStreamForMixed) {
+      this.micStreamForMixed.getTracks().forEach(track => track.stop())
+      this.micStreamForMixed = null
+      console.log('🎵 Mixed mode microphone stream cleaned up')
     }
 
     if (this.audioContext && this.audioContext.state !== 'closed') {

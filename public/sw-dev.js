@@ -22,7 +22,7 @@ const clientPorts = new Set()
 console.log('🔧 Enhanced Service Worker (PWA + Whisper) installed - DEV MODE')
 
 /**
- * Load Transformers.js library dynamically (Development Mode)
+ * Load Transformers.js library for Service Worker environment (Development Mode)
  */
 async function loadTransformers() {
   if (transformersLoaded) {
@@ -30,20 +30,62 @@ async function loadTransformers() {
   }
 
   try {
-    console.log('📦 Loading Transformers.js library (DEV)...')
+    console.log('📦 Loading Transformers.js library for Service Worker (DEV)...')
 
-    // Use dynamic import in development
-    const transformersLib = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.1.0/dist/transformers.min.js')
-    const { pipeline, env } = transformersLib
+    // Service Worker compatible import using importScripts
+    try {
+      // Import the UMD build which is more compatible with Service Workers
+      importScripts('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.1.0/dist/transformers.min.js')
 
-    // Configure for CDN loading
-    env.allowLocalModels = false
-    env.allowRemoteModels = true
+      // Access the global Transformers object
+      const { pipeline, env } = self.Transformers || globalThis.Transformers
 
-    console.log('✅ Transformers.js library loaded (DEV)')
-    transformersLoaded = true
+      if (!pipeline) {
+        throw new Error('Transformers pipeline not found in global scope')
+      }
 
-    return pipeline
+      // Configure environment for Service Worker
+      env.allowLocalModels = false
+      env.allowRemoteModels = true
+      env.useBrowserCache = false  // Important for Service Workers
+      env.backends.onnx.wasm.numThreads = 1  // Single thread for SW
+
+      console.log('✅ Transformers.js library loaded via importScripts (DEV)')
+      transformersLoaded = true
+
+      return pipeline
+
+    } catch (importError) {
+      console.log('📦 importScripts failed, trying dynamic import with polyfill (DEV)...')
+
+      // Fallback: Create window polyfill for Service Worker
+      if (typeof window === 'undefined') {
+        self.window = self
+        self.document = {
+          createElement: () => ({}),
+          createElementNS: () => ({}),
+          getElementsByTagName: () => []
+        }
+        self.navigator = self.navigator || {
+          userAgent: 'ServiceWorker'
+        }
+      }
+
+      // Try dynamic import with polyfill
+      const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.1.0/dist/transformers.min.js')
+
+      // Configure environment for Service Worker
+      env.allowLocalModels = false
+      env.allowRemoteModels = true
+      env.useBrowserCache = false
+      env.backends.onnx.wasm.numThreads = 1
+
+      console.log('✅ Transformers.js library loaded with polyfill (DEV)')
+      transformersLoaded = true
+
+      return pipeline
+    }
+
   } catch (error) {
     console.error('❌ Failed to load Transformers.js (DEV):', error)
     throw new Error(`Failed to load Transformers.js: ${error.message}`)
@@ -70,13 +112,21 @@ async function initializeWhisperPipeline(modelId) {
 
     console.log(`🤖 Initializing Whisper pipeline (DEV) with model: ${hfModelId}`)
 
-    // Create the pipeline
+    // Create the pipeline with Service Worker specific configuration
     WhisperPipeline = await pipeline('automatic-speech-recognition', hfModelId, {
-      device: 'wasm',
+      device: 'wasm', // Use WASM backend for Service Worker compatibility
       dtype: {
         encoder_model: 'fp32',
-        decoder_model_merged: 'q4',
+        decoder_model_merged: 'q4', // Quantized for better performance
       },
+      // Service Worker specific options
+      progress_callback: (data) => {
+        console.log('📥 Model loading progress (DEV):', data)
+      },
+      // Ensure WASM runs single-threaded in Service Worker
+      processors: {
+        device: 'wasm'
+      }
     })
 
     console.log(`✅ Whisper pipeline initialized (DEV) with ${hfModelId}`)

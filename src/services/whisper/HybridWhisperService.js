@@ -299,11 +299,11 @@ class HybridWhisperService {
 
     const startTime = Date.now();
 
-    // Add overall timeout to prevent infinite hanging
+    // Add overall timeout to prevent infinite hanging (longer for model downloads)
     const initTimeout = new Promise((_, reject) => {
       setTimeout(() => {
-        reject(new Error('HybridWhisperService initialization timeout after 15 seconds'));
-      }, 15000);
+        reject(new Error('HybridWhisperService initialization timeout after 6 minutes'));
+      }, 360000);
     });
 
     const initPromise = this._doInitialize(options, startTime);

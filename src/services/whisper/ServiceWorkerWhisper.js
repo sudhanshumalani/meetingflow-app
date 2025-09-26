@@ -209,11 +209,18 @@ class ServiceWorkerWhisper {
 
       const messageId = `download_${Date.now()}`;
 
+      // Add timeout for download operation (5 minutes)
+      const downloadTimeout = setTimeout(() => {
+        this.messageChannel.port1.removeEventListener('message', handleResponse);
+        reject(new Error(`Model download timeout after 5 minutes for ${modelId}`));
+      }, 300000);
+
       const handleResponse = (event) => {
         if (event.data.messageId === messageId) {
           if (event.data.type === 'DOWNLOAD_PROGRESS' && progressCallback) {
             progressCallback(event.data.progress);
           } else if (event.data.type === 'DOWNLOAD_COMPLETE') {
+            clearTimeout(downloadTimeout);
             this.messageChannel.port1.removeEventListener('message', handleResponse);
             if (event.data.success) {
               resolve();

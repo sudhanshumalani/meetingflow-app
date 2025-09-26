@@ -389,27 +389,68 @@ class WhisperWebService {
       // Log the full result structure for debugging
       console.log('🔍 Complete Whisper result object:', result)
 
+      // ENHANCED iOS DEBUG: Log every property to mobile debug panel
+      if (debugCallback && isIOS) {
+        debugCallback(`🔍 Whisper result type: ${typeof result}`, 'info')
+        debugCallback(`🔍 Result keys: ${result ? Object.keys(result).join(', ') : 'null'}`, 'info')
+        debugCallback(`🔍 Has text property: ${!!result?.text}`, 'info')
+        debugCallback(`🔍 Text content: "${result?.text || 'EMPTY'}"`, 'info')
+        debugCallback(`🔍 Has chunks: ${!!result?.chunks}`, 'info')
+        debugCallback(`🔍 Chunks length: ${result?.chunks?.length || 0}`, 'info')
+        if (result?.chunks?.length > 0) {
+          debugCallback(`🔍 First chunk: ${JSON.stringify(result.chunks[0])}`, 'info')
+        }
+      }
+
       // Cache model usage stats for future optimization
       this.updateUsageStats(duration, processedAudio.length)
 
-      // Extract text with multiple fallback strategies
+      // Extract text with multiple fallback strategies - enhanced for iOS Safari
       let extractedText = ''
 
       // Strategy 1: Direct text property
       if (result?.text && typeof result.text === 'string' && result.text.trim()) {
         extractedText = result.text.trim()
+        if (debugCallback && isIOS) debugCallback(`✅ Strategy 1 success: "${extractedText}"`, 'info')
       }
       // Strategy 2: First chunk text
       else if (result?.chunks && result.chunks.length > 0 && result.chunks[0]?.text) {
         extractedText = result.chunks.map(chunk => chunk.text).join(' ').trim()
+        if (debugCallback && isIOS) debugCallback(`✅ Strategy 2 success: "${extractedText}"`, 'info')
       }
       // Strategy 3: Array of results (some models return array)
       else if (Array.isArray(result) && result.length > 0 && result[0]?.text) {
         extractedText = result.map(r => r.text).join(' ').trim()
+        if (debugCallback && isIOS) debugCallback(`✅ Strategy 3 success: "${extractedText}"`, 'info')
       }
       // Strategy 4: Check if result itself is a string
       else if (typeof result === 'string' && result.trim()) {
         extractedText = result.trim()
+        if (debugCallback && isIOS) debugCallback(`✅ Strategy 4 success: "${extractedText}"`, 'info')
+      }
+      // Strategy 5: iOS Safari specific - check for output property
+      else if (result?.output && typeof result.output === 'string' && result.output.trim()) {
+        extractedText = result.output.trim()
+        if (debugCallback && isIOS) debugCallback(`✅ Strategy 5 (iOS output) success: "${extractedText}"`, 'info')
+      }
+      // Strategy 6: iOS Safari specific - check for transcription property
+      else if (result?.transcription && typeof result.transcription === 'string' && result.transcription.trim()) {
+        extractedText = result.transcription.trim()
+        if (debugCallback && isIOS) debugCallback(`✅ Strategy 6 (iOS transcription) success: "${extractedText}"`, 'info')
+      }
+      // Strategy 7: iOS Safari specific - check nested text in first level properties
+      else if (result && typeof result === 'object') {
+        for (const [key, value] of Object.entries(result)) {
+          if (typeof value === 'string' && value.trim().length > 0) {
+            extractedText = value.trim()
+            if (debugCallback && isIOS) debugCallback(`✅ Strategy 7 (${key}) success: "${extractedText}"`, 'info')
+            break
+          } else if (value && typeof value === 'object' && value.text && typeof value.text === 'string' && value.text.trim()) {
+            extractedText = value.text.trim()
+            if (debugCallback && isIOS) debugCallback(`✅ Strategy 7 (${key}.text) success: "${extractedText}"`, 'info')
+            break
+          }
+        }
       }
 
       console.log('🔍 Text extraction strategies:', {
@@ -465,15 +506,20 @@ class WhisperWebService {
       // Enhanced iOS Safari empty output debugging
       if (!extractedText || extractedText.length === 0) {
         if (debugCallback) {
-          debugCallback('❌ Empty Whisper output detected', 'error')
+          debugCallback('❌ ALL extraction strategies failed', 'error')
           debugCallback(`Result type: ${typeof result}`, 'error')
           debugCallback(`Audio duration: ${(processedAudio.length / 16000).toFixed(2)}s`, 'error')
           debugCallback(`Max amplitude: ${maxAmplitude.toFixed(4)}`, 'error')
+          debugCallback(`Processing took ${duration.toFixed(1)}s`, 'error')
 
           if (isIOS) {
-            debugCallback('📱 iOS Safari empty output - trying fixes...', 'warning')
+            debugCallback('📱 iOS Safari - all extraction failed', 'error')
+            debugCallback(`🔍 Full result JSON: ${JSON.stringify(result, null, 2)}`, 'error')
           }
         }
+
+        console.error('🚨 CRITICAL: All text extraction strategies failed for result:', result)
+        console.error('🚨 This suggests either Whisper is producing an unexpected format or the audio is truly empty/silent')
       }
 
       // Format result

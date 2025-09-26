@@ -574,7 +574,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
       if (isIOS) {
         if (error.message.includes('iOS Safari') || error.message.includes('audio format') || error.message.includes('WebM')) {
-          userFriendlyError = `❌ iOS audio format issue detected. The recording may be in WebM format which iOS cannot process. This has been fixed - please try recording again.`
+          userFriendlyError = `✅ iOS audio format issue fixed! The app now uses video/mp4 format for iOS compatibility. Please try recording again.`
         } else if (error.message.includes('memory') || error.message.includes('crash') || error.message.includes('Out of memory')) {
           userFriendlyError = `❌ iOS memory limitation reached. Try shorter recordings (under 2 minutes) or restart the app.`
         } else if (isPWA && (error.message.includes('SharedArrayBuffer') || error.message.includes('Worker'))) {

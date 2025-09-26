@@ -318,25 +318,28 @@ class AudioBufferService {
    */
   getSupportedMimeType() {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
-
-    // Enhanced iOS-compatible formats based on comprehensive research
-    // CRITICAL: iOS Safari requires video/mp4 even for audio-only recording
-    const possibleTypes = isIOS ? [
-      'video/mp4',           // REQUIRED for iOS Safari (works for audio-only) - TOP PRIORITY
-      'audio/mp4',           // Secondary option but often doesn't work
-      'audio/wav',           // Fallback for iOS - larger files but compatible
-      'audio/webm;codecs=opus', // Legacy fallback - iOS Safari doesn't support this
-      'audio/webm'          // Legacy fallback - iOS Safari doesn't support this
-    ] : [
-      'audio/webm;codecs=opus', // Best quality for other browsers
-      'audio/webm',
-      'audio/mp4',
-      'video/mp4',           // Also works for other browsers
-      'audio/wav'
-    ]
-
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
     const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
-    console.log(`🎵 Testing audio formats for ${isIOS ? 'iOS' : 'other'} platform (PWA: ${isPWA}):`)
+
+    console.log(`🎵 Testing audio formats for ${isIOS ? 'iOS' : 'other'} platform (PWA: ${isPWA}, Safari: ${isSafari}):`)
+
+    // CRITICAL iOS Safari Fix: Force video/mp4 for iOS regardless of isTypeSupported()
+    // Research shows iOS Safari MediaRecorder.isTypeSupported() can be unreliable
+    // but video/mp4 actually works for audio recording on iOS Safari
+    if (isIOS || isSafari) {
+      console.log('🍎 iOS/Safari detected - forcing video/mp4 format for maximum compatibility')
+      console.log(`🎵 Selected audio format: video/mp4 (iOS/Safari forced)`)
+      return 'video/mp4'
+    }
+
+    // Enhanced format list for other browsers
+    const possibleTypes = [
+      'audio/webm;codecs=opus', // Best quality for Chrome/Firefox
+      'audio/webm',            // Fallback for Chrome/Firefox
+      'audio/mp4',             // Cross-browser compatibility
+      'video/mp4',             // Also works for other browsers
+      'audio/wav'              // Universal fallback
+    ]
 
     for (const type of possibleTypes) {
       const isSupported = MediaRecorder.isTypeSupported(type)
@@ -348,7 +351,7 @@ class AudioBufferService {
     }
 
     // Last resort fallback
-    const fallback = isIOS ? 'video/mp4' : 'audio/webm'
+    const fallback = 'audio/webm'
     console.warn(`⚠️ No supported format found, using fallback: ${fallback}`)
     return fallback
   }

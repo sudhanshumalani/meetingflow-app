@@ -20,14 +20,101 @@ class HybridWhisperService {
       errorCounts: { tier1: 0, tier2: 0, tier3: 0 }
     };
 
-    // Initialize tier availability check
-    this.checkTierAvailability();
+    // Debug system
+    this.debugEnabled = this.userPreferences.debugMode || false;
+    this.debugLog = [];
+    this.initializationSteps = [];
+
+    this.debug('🎯 HybridWhisperService constructor called');
+    this.debug('📊 Initial state:', {
+      debugEnabled: this.debugEnabled,
+      userPreferences: this.userPreferences
+    });
+
+    // Note: Tier availability will be checked during initialization
+  }
+
+  /**
+   * Debug logging system
+   */
+  debug(message, data = null) {
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+      timestamp,
+      message,
+      data,
+      stack: new Error().stack
+    };
+
+    this.debugLog.push(logEntry);
+
+    // Keep only last 100 debug entries
+    if (this.debugLog.length > 100) {
+      this.debugLog = this.debugLog.slice(-100);
+    }
+
+    if (this.debugEnabled) {
+      console.log(`[HybridWhisperService Debug] ${message}`, data || '');
+    }
+  }
+
+  /**
+   * Add initialization step for tracking
+   */
+  addInitStep(step, status = 'started', data = null) {
+    const stepEntry = {
+      step,
+      status,
+      timestamp: Date.now(),
+      data
+    };
+
+    this.initializationSteps.push(stepEntry);
+    this.debug(`🔧 Init Step: ${step} - ${status}`, data);
+
+    return stepEntry;
+  }
+
+  /**
+   * Update initialization step status
+   */
+  updateInitStep(step, status, data = null) {
+    const existing = this.initializationSteps.find(s => s.step === step);
+    if (existing) {
+      existing.status = status;
+      existing.endTime = Date.now();
+      existing.duration = existing.endTime - existing.timestamp;
+      if (data) existing.data = { ...existing.data, ...data };
+
+      this.debug(`🔧 Init Step Updated: ${step} - ${status} (${existing.duration}ms)`, data);
+    }
+  }
+
+  /**
+   * Get debug information
+   */
+  getDebugInfo() {
+    return {
+      debugEnabled: this.debugEnabled,
+      initializationSteps: this.initializationSteps,
+      recentLogs: this.debugLog.slice(-20), // Last 20 logs
+      currentState: {
+        isInitialized: this.isInitialized,
+        isLoading: this.isLoading,
+        currentTier: this.currentTier,
+        availableTiers: this.availableTiers.map(t => ({ id: t.id, name: t.name, available: t.available })),
+        currentModelId: this.currentModelId
+      },
+      performanceMetrics: this.performanceMetrics
+    };
   }
 
   /**
    * Load user preferences from localStorage
    */
   loadUserPreferences() {
+    this.debug('📂 Loading user preferences from localStorage');
+
     try {
       const stored = localStorage.getItem('whisper-preferences');
       const defaults = {
@@ -40,8 +127,12 @@ class HybridWhisperService {
         debugMode: false
       };
 
-      return stored ? { ...defaults, ...JSON.parse(stored) } : defaults;
+      const preferences = stored ? { ...defaults, ...JSON.parse(stored) } : defaults;
+      this.debug('✅ User preferences loaded:', preferences);
+
+      return preferences;
     } catch (error) {
+      this.debug('❌ Failed to load user preferences:', error);
       console.warn('Failed to load user preferences:', error);
       return {
         preferredModel: 'auto',
@@ -70,9 +161,14 @@ class HybridWhisperService {
    * Check which tiers are available
    */
   async checkTierAvailability() {
+    this.addInitStep('tier_availability_check');
+    this.debug('🔍 Checking tier availability');
+
     const tiers = [];
+    const checks = {};
 
     // Tier 1: Always available (fallback/simulation)
+    this.debug('✅ Tier 1 (Fallback): Always available');
     tiers.push({
       id: 'tier1',
       name: 'Fallback Mode',
@@ -81,9 +177,16 @@ class HybridWhisperService {
       speed: 'instant',
       quality: 'basic'
     });
+    checks.tier1 = true;
 
     // Tier 2: Web Speech API
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    const hasWebSpeech = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+    this.debug(`🎤 Tier 2 (Web Speech): ${hasWebSpeech ? 'Available' : 'Not available'}`, {
+      webkitSpeechRecognition: 'webkitSpeechRecognition' in window,
+      SpeechRecognition: 'SpeechRecognition' in window
+    });
+
+    if (hasWebSpeech) {
       tiers.push({
         id: 'tier2',
         name: 'Browser Speech Recognition',
@@ -92,12 +195,21 @@ class HybridWhisperService {
         speed: 'fast',
         quality: 'good'
       });
+      checks.tier2 = true;
+    } else {
+      checks.tier2 = false;
     }
 
     // Tier 3: Service Worker + Whisper.cpp WASM
-    if ('serviceWorker' in navigator) {
+    const hasServiceWorker = 'serviceWorker' in navigator;
+    this.debug(`🔧 Service Worker support: ${hasServiceWorker}`);
+
+    if (hasServiceWorker) {
       try {
+        this.debug('⏳ Waiting for Service Worker ready...');
         await navigator.serviceWorker.ready;
+        this.debug('✅ Service Worker ready');
+
         tiers.push({
           id: 'tier3',
           name: 'AI Whisper Model',
@@ -106,12 +218,28 @@ class HybridWhisperService {
           speed: 'medium',
           quality: 'excellent'
         });
+        checks.tier3 = true;
       } catch (error) {
+        this.debug('❌ Service Worker not available:', error);
         console.warn('Service Worker not available:', error);
+        checks.tier3 = false;
       }
+    } else {
+      checks.tier3 = false;
     }
 
     this.availableTiers = tiers;
+    this.updateInitStep('tier_availability_check', 'completed', {
+      tierCount: tiers.length,
+      checks,
+      tiers: tiers.map(t => ({ id: t.id, name: t.name, available: t.available }))
+    });
+
+    this.debug('📊 Tier availability check completed:', {
+      total: tiers.length,
+      tiers: tiers.map(t => `${t.id}: ${t.name} (${t.available ? 'available' : 'unavailable'})`)
+    });
+
     console.log('📊 Available tiers:', tiers.map(t => t.name));
   }
 
@@ -119,23 +247,36 @@ class HybridWhisperService {
    * Initialize with intelligent tier selection
    */
   async initialize(options = {}) {
+    this.addInitStep('initialize_start');
+    this.debug('🚀 Initialize called with options:', options);
+
     if (this.isInitialized && !options.forceReload) {
+      this.debug('⚡ Already initialized, returning existing tier:', this.currentTier);
       return { success: true, tier: this.currentTier };
     }
 
     if (this.isLoading) {
-      throw new Error('HybridWhisperService is already being initialized');
+      const error = new Error('HybridWhisperService is already being initialized');
+      this.debug('❌ Already loading, throwing error:', error);
+      throw error;
     }
 
     const startTime = Date.now();
 
     try {
       this.isLoading = true;
+      this.addInitStep('set_loading_state', 'completed', { isLoading: true });
 
       const {
         progressCallback = null,
         preferredTier = this.userPreferences.preferredTier
       } = options;
+
+      this.debug('📋 Initialization parameters:', {
+        hasProgressCallback: !!progressCallback,
+        preferredTier,
+        userPreferences: this.userPreferences
+      });
 
       if (this.userPreferences.debugMode) {
         console.log('🐛 Debug: Initializing HybridWhisperService with options:', options);
@@ -149,8 +290,33 @@ class HybridWhisperService {
         });
       }
 
+      // Ensure tier availability is checked
+      this.addInitStep('ensure_tier_availability');
+      if (this.availableTiers.length === 0) {
+        this.debug('🔍 No available tiers cached, checking availability...');
+        await this.checkTierAvailability();
+      } else {
+        this.debug('✅ Available tiers already cached:', this.availableTiers.length);
+      }
+      this.updateInitStep('ensure_tier_availability', 'completed', {
+        availableTiers: this.availableTiers.length
+      });
+
       // Select the best available tier
+      this.addInitStep('select_optimal_tier');
       const selectedTier = await this.selectOptimalTier(preferredTier);
+      this.debug('🎯 Tier selection result:', selectedTier);
+
+      if (!selectedTier) {
+        const error = new Error('No suitable tier available for initialization');
+        this.debug('❌ No suitable tier found');
+        this.updateInitStep('select_optimal_tier', 'failed', { error: error.message });
+        throw error;
+      }
+
+      this.updateInitStep('select_optimal_tier', 'completed', {
+        selectedTier: { id: selectedTier.id, name: selectedTier.name }
+      });
 
       if (progressCallback) {
         progressCallback({
@@ -161,7 +327,10 @@ class HybridWhisperService {
       }
 
       // Initialize the selected tier
+      this.addInitStep('initialize_tier');
+      this.debug(`🔧 Initializing tier: ${selectedTier.id} (${selectedTier.name})`);
       const initResult = await this.initializeTier(selectedTier, progressCallback);
+      this.updateInitStep('initialize_tier', 'completed', { initResult });
 
       this.currentTier = selectedTier;
       this.isInitialized = true;
@@ -171,6 +340,13 @@ class HybridWhisperService {
       const initTime = Date.now() - startTime;
       this.performanceMetrics.initTimes.push(initTime);
 
+      this.addInitStep('finalize_initialization', 'completed', {
+        currentTier: { id: selectedTier.id, name: selectedTier.name },
+        initTime,
+        isInitialized: true,
+        isLoading: false
+      });
+
       if (progressCallback) {
         progressCallback({
           stage: 'ready',
@@ -178,6 +354,12 @@ class HybridWhisperService {
           message: `Ready with ${selectedTier.name}!`
         });
       }
+
+      this.debug(`✅ HybridWhisperService initialized successfully`, {
+        tier: selectedTier.name,
+        initTime,
+        fallbacksAvailable: this.availableTiers.length - 1
+      });
 
       console.log(`✅ HybridWhisperService initialized with ${selectedTier.name} (${initTime}ms)`);
 
@@ -189,12 +371,21 @@ class HybridWhisperService {
       };
 
     } catch (error) {
+      this.debug('❌ Primary initialization failed:', error);
       this.isLoading = false;
       this.isInitialized = false;
+      this.addInitStep('primary_init_failed', 'completed', {
+        error: error.message,
+        stack: error.stack
+      });
 
       // Try fallback initialization
       console.warn('Primary initialization failed, trying fallback:', error);
-      return await this.initializeFallback(progressCallback);
+      this.addInitStep('fallback_initialization');
+      const fallbackResult = await this.initializeFallback(progressCallback || (() => {}));
+      this.updateInitStep('fallback_initialization', 'completed', { fallbackResult });
+
+      return fallbackResult;
     }
   }
 
@@ -202,29 +393,63 @@ class HybridWhisperService {
    * Select optimal tier based on preferences and capabilities
    */
   async selectOptimalTier(preferredTier) {
+    this.debug('🎯 Selecting optimal tier', {
+      preferredTier,
+      availableTiers: this.availableTiers.length,
+      tiers: this.availableTiers.map(t => ({ id: t.id, name: t.name, available: t.available }))
+    });
+
+    // Safety check
+    if (!this.availableTiers || this.availableTiers.length === 0) {
+      this.debug('❌ No available tiers to select from');
+      return null;
+    }
+
     // If user specified a tier, try to use it
     if (preferredTier !== 'auto') {
+      this.debug(`🎮 User preferred specific tier: ${preferredTier}`);
       const requestedTier = this.availableTiers.find(t => t.id === preferredTier);
+
       if (requestedTier && requestedTier.available) {
+        this.debug(`✅ Using requested tier: ${requestedTier.name}`);
         return requestedTier;
+      } else {
+        this.debug(`⚠️ Requested tier ${preferredTier} not available, falling back to auto-selection`);
       }
     }
 
     // Auto-select based on performance mode and capabilities
     const { performanceMode, allowModelDownload, offlineMode } = this.userPreferences;
+    this.debug('🔧 Auto-selecting based on preferences:', {
+      performanceMode,
+      allowModelDownload,
+      offlineMode
+    });
+
+    let selectedTier = null;
 
     if (performanceMode === 'fast' || offlineMode) {
       // Prefer Web Speech API for speed
-      return this.availableTiers.find(t => t.id === 'tier2') || this.availableTiers[0];
+      this.debug('⚡ Fast/offline mode: preferring Web Speech API');
+      selectedTier = this.availableTiers.find(t => t.id === 'tier2') || this.availableTiers[0];
     } else if (performanceMode === 'quality' && allowModelDownload) {
       // Prefer Whisper AI for quality
-      return this.availableTiers.find(t => t.id === 'tier3') || this.availableTiers[0];
+      this.debug('🎯 Quality mode with downloads allowed: preferring Whisper AI');
+      selectedTier = this.availableTiers.find(t => t.id === 'tier3') || this.availableTiers[0];
     } else {
       // Balanced: Try Whisper first, fall back to Web Speech
-      return this.availableTiers.find(t => t.id === 'tier3') ||
-             this.availableTiers.find(t => t.id === 'tier2') ||
-             this.availableTiers[0];
+      this.debug('⚖️ Balanced mode: trying Whisper first, fallback to Web Speech');
+      selectedTier = this.availableTiers.find(t => t.id === 'tier3') ||
+                    this.availableTiers.find(t => t.id === 'tier2') ||
+                    this.availableTiers[0];
     }
+
+    this.debug('🎯 Tier selection completed:', {
+      selectedTier: selectedTier ? { id: selectedTier.id, name: selectedTier.name } : null,
+      rationale: `${performanceMode} mode with ${allowModelDownload ? 'downloads allowed' : 'downloads disabled'}`
+    });
+
+    return selectedTier;
   }
 
   /**
@@ -303,29 +528,85 @@ class HybridWhisperService {
    * Initialize fallback when primary fails
    */
   async initializeFallback(progressCallback = null) {
+    this.addInitStep('fallback_initialization_start');
+    this.debug('🔄 Starting fallback initialization');
     console.log('🔄 Initializing fallback mode...');
 
     try {
+      // Ensure tiers are available
+      this.addInitStep('fallback_check_tiers');
+      if (this.availableTiers.length === 0) {
+        this.debug('🔍 No tiers available, checking availability for fallback...');
+        await this.checkTierAvailability();
+      }
+      this.updateInitStep('fallback_check_tiers', 'completed', {
+        availableTiers: this.availableTiers.length
+      });
+
+      // Select fallback tier (prefer tier2, fallback to tier1)
+      this.addInitStep('select_fallback_tier');
       const fallbackTier = this.availableTiers.find(t => t.id === 'tier2') || this.availableTiers[0];
+
+      if (!fallbackTier) {
+        this.debug('❌ No fallback tiers available');
+        throw new Error('No fallback tiers available');
+      }
+
+      this.debug('📋 Selected fallback tier:', { id: fallbackTier.id, name: fallbackTier.name });
+      this.updateInitStep('select_fallback_tier', 'completed', {
+        fallbackTier: { id: fallbackTier.id, name: fallbackTier.name }
+      });
+
+      // Initialize the fallback tier
+      this.addInitStep('initialize_fallback_tier');
+      this.debug(`🔧 Initializing fallback tier: ${fallbackTier.name}`);
       await this.initializeTier(fallbackTier, progressCallback);
+      this.updateInitStep('initialize_fallback_tier', 'completed');
 
       this.currentTier = fallbackTier;
       this.isInitialized = true;
       this.isLoading = false;
+
+      this.addInitStep('fallback_finalize', 'completed', {
+        success: true,
+        currentTier: { id: fallbackTier.id, name: fallbackTier.name },
+        fallbackMode: true
+      });
+
+      this.debug('✅ Fallback initialization completed successfully', {
+        tier: fallbackTier.name
+      });
 
       return {
         success: true,
         tier: fallbackTier,
         fallbackMode: true
       };
+
     } catch (error) {
+      this.debug('❌ Even fallback failed, using emergency fallback:', error);
       console.error('Even fallback failed:', error);
 
       // Ultimate fallback - tier 1 always works
-      const ultimateFallback = this.availableTiers[0];
+      this.addInitStep('emergency_fallback');
+      const ultimateFallback = this.availableTiers[0] || {
+        id: 'tier1',
+        name: 'Emergency Fallback',
+        description: 'Emergency fallback mode',
+        available: true,
+        speed: 'instant',
+        quality: 'basic'
+      };
+
+      this.debug('🚨 Using emergency fallback:', ultimateFallback);
+
       this.currentTier = ultimateFallback;
       this.isInitialized = true;
       this.isLoading = false;
+
+      this.updateInitStep('emergency_fallback', 'completed', {
+        ultimateFallback: { id: ultimateFallback.id, name: ultimateFallback.name }
+      });
 
       return {
         success: true,
@@ -367,22 +648,45 @@ class HybridWhisperService {
    * Transcribe with automatic tier fallback
    */
   async transcribe(audioData, options = {}) {
+    this.debug('🎯 Starting transcription', {
+      isInitialized: this.isInitialized,
+      currentTier: this.currentTier ? { id: this.currentTier.id, name: this.currentTier.name } : null,
+      audioDataLength: audioData ? audioData.length : 0,
+      options
+    });
+
     if (!this.isInitialized) {
-      throw new Error('HybridWhisperService not initialized. Call initialize() first.');
+      const error = new Error('HybridWhisperService not initialized. Call initialize() first.');
+      this.debug('❌ Transcription failed - not initialized:', error);
+      throw error;
+    }
+
+    if (!this.currentTier) {
+      const error = new Error('No current tier available for transcription');
+      this.debug('❌ Transcription failed - no current tier:', error);
+      throw error;
     }
 
     const startTime = Date.now();
 
     try {
+      this.debug(`🎤 Attempting transcription with ${this.currentTier.name}`);
       const result = await this.transcribeWithTier(this.currentTier, audioData, options);
 
       // Record performance metrics
       const transcriptionTime = Date.now() - startTime;
       this.performanceMetrics.transcriptionTimes.push(transcriptionTime);
 
+      this.debug('✅ Transcription completed successfully', {
+        tier: this.currentTier.name,
+        transcriptionTime,
+        textLength: result.text ? result.text.length : 0
+      });
+
       return result;
 
     } catch (error) {
+      this.debug(`❌ Transcription failed with ${this.currentTier.name}, trying fallback:`, error);
       console.warn(`Transcription failed with ${this.currentTier.name}, trying fallback:`, error);
 
       // Record error
@@ -490,7 +794,7 @@ class HybridWhisperService {
    * Get current status and capabilities
    */
   getStatus() {
-    return {
+    const status = {
       isInitialized: this.isInitialized,
       isLoading: this.isLoading,
       currentTier: this.currentTier,
@@ -506,8 +810,19 @@ class HybridWhisperService {
           : 0,
         errorCounts: this.performanceMetrics.errorCounts
       },
-      ready: this.isInitialized && !this.isLoading
+      ready: this.isInitialized && !this.isLoading,
+      debug: this.getDebugInfo()
     };
+
+    this.debug('📊 Status requested:', {
+      isInitialized: status.isInitialized,
+      isLoading: status.isLoading,
+      ready: status.ready,
+      currentTier: status.currentTier ? status.currentTier.name : null,
+      availableTiers: status.availableTiers.length
+    });
+
+    return status;
   }
 
   /**

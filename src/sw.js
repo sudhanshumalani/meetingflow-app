@@ -5,9 +5,7 @@
 
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching'
 
-// Web Worker for Whisper processing (instead of loading Transformers.js in SW)
-let whisperWorker = null
-let whisperWorkerReady = false
+// Web Worker is created by main thread, Service Worker communicates through main thread
 
 // Clean up outdated caches first
 cleanupOutdatedCaches()
@@ -26,117 +24,9 @@ const clientPorts = new Set()
 
 console.log('🔧 Enhanced Service Worker (PWA + Whisper) installed')
 
-/**
- * Initialize Web Worker for Whisper processing
- */
-async function initializeWhisperWorker() {
-  if (whisperWorker && whisperWorkerReady) {
-    return whisperWorker
-  }
+// All Web Worker communication now handled by main thread
 
-  try {
-    console.log('🔧 Initializing Whisper Web Worker...')
-
-    // Create Web Worker from separate file
-    whisperWorker = new Worker('/meetingflow-app/src/whisperWorker.js', { type: 'module' })
-
-    // Set up message handling
-    whisperWorker.addEventListener('message', (event) => {
-      const { type, messageId, ...data } = event.data
-
-      // Handle Web Worker responses
-      if (type === 'LOADING_PROGRESS') {
-        console.log('📥 Web Worker loading progress:', data)
-      }
-
-      // Forward responses to the appropriate message handler
-      if (messageId && whisperWorkerCallbacks.has(messageId)) {
-        const callback = whisperWorkerCallbacks.get(messageId)
-        callback(event.data)
-        whisperWorkerCallbacks.delete(messageId)
-      }
-    })
-
-    whisperWorker.addEventListener('error', (error) => {
-      console.error('❌ Web Worker error:', error)
-      whisperWorkerReady = false
-    })
-
-    whisperWorkerReady = true
-    console.log('✅ Whisper Web Worker initialized')
-
-    return whisperWorker
-
-  } catch (error) {
-    console.error('❌ Failed to initialize Web Worker:', error)
-    throw new Error(`Failed to initialize Web Worker: ${error.message}`)
-  }
-}
-
-// Map to track Web Worker message callbacks
-const whisperWorkerCallbacks = new Map()
-
-/**
- * Send message to Web Worker and wait for response
- */
-function sendWorkerMessage(type, data = {}) {
-  return new Promise((resolve, reject) => {
-    if (!whisperWorker || !whisperWorkerReady) {
-      reject(new Error('Web Worker not ready'))
-      return
-    }
-
-    const messageId = `${type}_${Date.now()}_${Math.random()}`
-
-    // Store callback for response
-    whisperWorkerCallbacks.set(messageId, (response) => {
-      if (response.success) {
-        resolve(response)
-      } else {
-        reject(new Error(response.error))
-      }
-    })
-
-    // Send message to worker
-    whisperWorker.postMessage({
-      type,
-      messageId,
-      ...data
-    })
-
-    // Set timeout for message
-    setTimeout(() => {
-      if (whisperWorkerCallbacks.has(messageId)) {
-        whisperWorkerCallbacks.delete(messageId)
-        reject(new Error(`Web Worker ${type} timeout`))
-      }
-    }, 300000) // 5 minute timeout
-  })
-}
-
-/**
- * Initialize Whisper pipeline using Web Worker
- */
-async function initializeWhisperPipeline(modelId) {
-  try {
-    console.log(`🤖 Service Worker: Initializing Whisper pipeline with ${modelId} via Web Worker`)
-
-    // Initialize Web Worker if not already done
-    await initializeWhisperWorker()
-
-    // Send initialization message to Web Worker
-    const result = await sendWorkerMessage('INITIALIZE', {
-      modelId: modelId
-    })
-
-    console.log(`✅ Service Worker: Whisper pipeline initialized via Web Worker`)
-    return result
-
-  } catch (error) {
-    console.error('❌ Service Worker: Failed to initialize Whisper pipeline:', error)
-    throw error
-  }
-}
+// Whisper pipeline initialization now handled by main thread
 
 /**
  * Service Worker Installation
@@ -205,7 +95,7 @@ self.addEventListener('message', async (event) => {
 })
 
 /**
- * Handle Whisper-specific messages - delegate to Web Worker
+ * Handle Whisper-specific messages - inform main thread to handle
  */
 async function handleWhisperMessage(message, port) {
   const { type, messageId } = message
@@ -213,11 +103,6 @@ async function handleWhisperMessage(message, port) {
   console.log('🎯 Service Worker handling Whisper message:', type, 'messageId:', messageId)
 
   try {
-    // Initialize Web Worker if needed
-    if (!whisperWorker || !whisperWorkerReady) {
-      await initializeWhisperWorker()
-    }
-
     switch (type) {
       case 'CHECK_MODEL_CACHE':
         // This can stay in Service Worker as it's just cache checking
@@ -230,67 +115,30 @@ async function handleWhisperMessage(message, port) {
         break
 
       case 'DOWNLOAD_MODEL':
-        // For now, let's send a success message - Web Worker will download on-demand
+        // Respond that main thread should handle this
         port.postMessage({
-          type: 'MODEL_DOWNLOADED',
+          type: 'DELEGATE_TO_MAIN_THREAD',
           messageId,
-          success: true
+          originalMessage: message
         })
         break
 
       case 'INIT_WHISPER_WASM':
-        // Delegate to Web Worker
-        try {
-          console.log('🔄 Service Worker delegating INIT_WHISPER_WASM to Web Worker')
-          const result = await sendWorkerMessage('INITIALIZE', {
-            modelId: message.modelId || 'base'
-          })
-
-          port.postMessage({
-            type: 'WHISPER_INITIALIZED',
-            messageId,
-            success: result.success,
-            modelId: result.modelId
-          })
-        } catch (error) {
-          console.error('❌ Service Worker: Web Worker initialization failed:', error)
-          port.postMessage({
-            type: 'WHISPER_INITIALIZED',
-            messageId,
-            success: false,
-            error: error.message
-          })
-        }
+        // Respond that main thread should handle this
+        port.postMessage({
+          type: 'DELEGATE_TO_MAIN_THREAD',
+          messageId,
+          originalMessage: message
+        })
         break
 
       case 'TRANSCRIBE_AUDIO':
-        // Delegate transcription to Web Worker
-        try {
-          console.log('🔄 Service Worker delegating transcription to Web Worker')
-          const result = await sendWorkerMessage('TRANSCRIBE', {
-            audioData: message.audioData,
-            options: message.options || {}
-          })
-
-          port.postMessage({
-            type: 'TRANSCRIPTION_RESULT',
-            messageId,
-            success: result.success,
-            text: result.text,
-            segments: result.segments,
-            duration: result.duration,
-            language: result.language,
-            model: result.model
-          })
-        } catch (error) {
-          console.error('❌ Service Worker: Web Worker transcription failed:', error)
-          port.postMessage({
-            type: 'TRANSCRIPTION_RESULT',
-            messageId,
-            success: false,
-            error: error.message
-          })
-        }
+        // Respond that main thread should handle this
+        port.postMessage({
+          type: 'DELEGATE_TO_MAIN_THREAD',
+          messageId,
+          originalMessage: message
+        })
         break
 
       default:

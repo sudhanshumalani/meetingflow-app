@@ -10,6 +10,11 @@ class ServiceWorkerWhisper {
     this.currentModelId = null;
     this.serviceWorkerReady = false;
     this.messageChannel = null;
+
+    // Web Worker for main thread Whisper processing
+    this.whisperWorker = null;
+    this.whisperWorkerReady = false;
+    this.pendingMessages = new Map();
   }
 
   /**
@@ -151,8 +156,184 @@ class ServiceWorkerWhisper {
   /**
    * Handle messages from Service Worker
    */
-  handleServiceWorkerMessage(message) {
+  async handleServiceWorkerMessage(message) {
     console.log('📨 Received from Service Worker:', message);
+
+    // Handle delegation to main thread
+    if (message.type === 'DELEGATE_TO_MAIN_THREAD') {
+      console.log('🔄 Service Worker delegated task to main thread:', message.originalMessage.type);
+
+      // Initialize Web Worker if not already done
+      if (!this.whisperWorker || !this.whisperWorkerReady) {
+        await this.initializeWhisperWorker();
+      }
+
+      // Handle the original message using Web Worker
+      await this.handleWebWorkerMessage(message.originalMessage, message.messageId);
+    }
+  }
+
+  /**
+   * Initialize Web Worker in main thread
+   */
+  async initializeWhisperWorker() {
+    if (this.whisperWorker && this.whisperWorkerReady) {
+      return this.whisperWorker;
+    }
+
+    try {
+      console.log('🔧 Initializing Whisper Web Worker in main thread...');
+
+      // Create Web Worker from separate file
+      this.whisperWorker = new Worker('./src/whisperWorker.js', { type: 'module' });
+
+      // Set up message handling
+      this.whisperWorker.addEventListener('message', (event) => {
+        const { type, messageId, ...data } = event.data;
+
+        console.log('📨 Received from Web Worker:', type, messageId);
+
+        // Handle Web Worker responses
+        if (type === 'LOADING_PROGRESS') {
+          console.log('📥 Web Worker loading progress:', data);
+        }
+
+        // Forward responses to pending message handlers
+        if (messageId && this.pendingMessages.has(messageId)) {
+          const callback = this.pendingMessages.get(messageId);
+          callback(event.data);
+          this.pendingMessages.delete(messageId);
+        }
+      });
+
+      this.whisperWorker.addEventListener('error', (error) => {
+        console.error('❌ Web Worker error:', error);
+        this.whisperWorkerReady = false;
+      });
+
+      this.whisperWorkerReady = true;
+      console.log('✅ Whisper Web Worker initialized in main thread');
+
+      return this.whisperWorker;
+
+    } catch (error) {
+      console.error('❌ Failed to initialize Web Worker in main thread:', error);
+      throw new Error(`Failed to initialize Web Worker: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle messages using Web Worker
+   */
+  async handleWebWorkerMessage(originalMessage, serviceWorkerMessageId) {
+    const { type } = originalMessage;
+
+    try {
+      switch (type) {
+        case 'DOWNLOAD_MODEL':
+          // Web Worker handles model downloading automatically during initialization
+          // Send success response back through Service Worker communication
+          if (this.messageChannel && this.messageChannel.port1) {
+            this.messageChannel.port1.postMessage({
+              type: 'MODEL_DOWNLOADED',
+              messageId: serviceWorkerMessageId,
+              success: true
+            });
+          }
+          break;
+
+        case 'INIT_WHISPER_WASM':
+          // Initialize Web Worker with specified model
+          const initResult = await this.sendWorkerMessage('INITIALIZE', {
+            modelId: originalMessage.modelId || 'base'
+          });
+
+          // Send response back through Service Worker communication
+          if (this.messageChannel && this.messageChannel.port1) {
+            this.messageChannel.port1.postMessage({
+              type: 'WHISPER_INITIALIZED',
+              messageId: serviceWorkerMessageId,
+              success: initResult.success,
+              modelId: initResult.modelId
+            });
+          }
+          break;
+
+        case 'TRANSCRIBE_AUDIO':
+          // Perform transcription using Web Worker
+          const transcribeResult = await this.sendWorkerMessage('TRANSCRIBE', {
+            audioData: originalMessage.audioData,
+            options: originalMessage.options || {}
+          });
+
+          // Send response back through Service Worker communication
+          if (this.messageChannel && this.messageChannel.port1) {
+            this.messageChannel.port1.postMessage({
+              type: 'TRANSCRIPTION_RESULT',
+              messageId: serviceWorkerMessageId,
+              success: transcribeResult.success,
+              text: transcribeResult.text,
+              segments: transcribeResult.segments,
+              duration: transcribeResult.duration,
+              language: transcribeResult.language,
+              model: transcribeResult.model
+            });
+          }
+          break;
+
+        default:
+          console.warn('Unknown delegated message type:', type);
+      }
+    } catch (error) {
+      console.error('Error handling Web Worker message:', error);
+
+      // Send error response back through Service Worker communication
+      if (this.messageChannel && this.messageChannel.port1) {
+        this.messageChannel.port1.postMessage({
+          type: 'ERROR',
+          messageId: serviceWorkerMessageId,
+          error: error.message
+        });
+      }
+    }
+  }
+
+  /**
+   * Send message to Web Worker and wait for response
+   */
+  sendWorkerMessage(type, data = {}) {
+    return new Promise((resolve, reject) => {
+      if (!this.whisperWorker || !this.whisperWorkerReady) {
+        reject(new Error('Web Worker not ready'));
+        return;
+      }
+
+      const messageId = `${type}_${Date.now()}_${Math.random()}`;
+
+      // Store callback for response
+      this.pendingMessages.set(messageId, (response) => {
+        if (response.success) {
+          resolve(response);
+        } else {
+          reject(new Error(response.error || 'Unknown Web Worker error'));
+        }
+      });
+
+      // Send message to worker
+      this.whisperWorker.postMessage({
+        type,
+        messageId,
+        ...data
+      });
+
+      // Set timeout for message
+      setTimeout(() => {
+        if (this.pendingMessages.has(messageId)) {
+          this.pendingMessages.delete(messageId);
+          reject(new Error(`Web Worker ${type} timeout`));
+        }
+      }, 300000); // 5 minute timeout
+    });
   }
 
   /**

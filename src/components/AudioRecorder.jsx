@@ -1,30 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Mic, MicOff, Square, Volume2, Monitor, Settings, ChevronDown, Zap } from 'lucide-react'
+import { Mic, MicOff, Square, Volume2, Monitor, Settings, ChevronDown } from 'lucide-react'
 import audioTranscriptionService from '../services/audioTranscriptionService'
 
 const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
-  const [interimText, setInterimText] = useState('') // For processing states
+  const [interimText, setInterimText] = useState('')
   const [error, setError] = useState(null)
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [processingProgress, setProcessingProgress] = useState(0)
   const [permissions, setPermissions] = useState('unknown')
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [wakeLock, setWakeLock] = useState(null)
 
-  // NEW: Audio source selection
-  const [availableAudioSources, setAvailableAudioSources] = useState([])
+  // Audio source selection for tab/hybrid recording
+  const [availableAudioSources, setAvailableAudioSources] = useState([
+    { id: 'microphone', name: 'Microphone Only', description: 'Record your voice', icon: '🎤', supported: true },
+    { id: 'tabAudio', name: 'Tab Audio Capture', description: 'Record browser tab audio (YouTube, Zoom, etc.)', icon: '🖥️', supported: true },
+    { id: 'mixed', name: 'Hybrid Mode', description: 'Your voice + tab audio simultaneously', icon: '🎙️', supported: true }
+  ])
   const [selectedAudioSource, setSelectedAudioSource] = useState('microphone')
   const [showSourceSelector, setShowSourceSelector] = useState(false)
   const [audioLevels, setAudioLevels] = useState({ microphone: 0, tabAudio: 0 })
 
-  // NEW: Persistent transcript storage across sessions
-  const [sessionTranscripts, setSessionTranscripts] = useState([])
-  const [currentSessionId, setCurrentSessionId] = useState(null)
-
-  // NEW: Multiple wake lock strategies
+  // Multi-strategy wake lock
   const [audioContext, setAudioContext] = useState(null)
   const [silentAudio, setSilentAudio] = useState(null)
   const [wakeLockStrategies, setWakeLockStrategies] = useState({
@@ -33,12 +31,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     videoWorkaround: false
   })
 
-  // Web Speech API mode only
-  const [transcriptionMode, setTranscriptionMode] = useState('realtime')
-
   const timerRef = useRef(null)
   const lastSavedTranscriptRef = useRef('')
-  const persistentTranscriptRef = useRef('') // Stores accumulated transcript
+  const persistentTranscriptRef = useRef('') // Stores accumulated transcript across sessions
   const wakeLockVideoRef = useRef(null) // For video workaround
 
   // Initialize service on mount
@@ -47,20 +42,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       try {
         const result = await audioTranscriptionService.initialize()
         setIsInitialized(true)
-
-        // Get available audio sources and Whisper status
-        const status = audioTranscriptionService.getStatus()
-        setAvailableAudioSources(status.availableSources || [])
-        setWhisperStatus(status.whisper)
-
-        // Set transcription mode based on what's available
-        if (status.whisperSupported) {
-          audioTranscriptionService.setTranscriptionMode('whisper')
-          setTranscriptionMode('whisper')
-        }
-
-        console.log('🎤 Enhanced transcription service ready')
-        console.log('📊 Available audio sources:', status.availableSources)
+        console.log('🎤 Web Speech API transcription service ready')
       } catch (error) {
         console.error('Failed to initialize transcription:', error)
         setError('Failed to initialize audio transcription. Your browser may not support speech recognition.')
@@ -69,112 +51,10 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
     initService()
 
-    // Set up event listeners
-    const removeListener = audioTranscriptionService.addEventListener((event, data) => {
-      switch (event) {
-        case 'transcript':
-          // Handle Whisper transcription results
-          if (data.type === 'whisper' && data.final && data.final.trim()) {
-            // Accumulate Whisper results in persistent storage
-            const finalText = data.final.trim()
-            const sourcePrefix = data.source === 'tabAudio' ? '[Tab Audio] ' : ''
-
-            persistentTranscriptRef.current += sourcePrefix + finalText + ' '
-
-            // Update session transcript
-            if (currentSessionId) {
-              setSessionTranscripts(prev => {
-                const updated = [...prev]
-                const sessionIndex = updated.findIndex(s => s.id === currentSessionId)
-                if (sessionIndex >= 0) {
-                  updated[sessionIndex].text += sourcePrefix + finalText + ' '
-                } else {
-                  updated.push({
-                    id: currentSessionId,
-                    text: sourcePrefix + finalText + ' ',
-                    startTime: new Date().toISOString(),
-                    source: data.source || selectedAudioSource
-                  })
-                }
-                return updated
-              })
-            }
-
-            // Update display transcript with full persistent content
-            setTranscript(persistentTranscriptRef.current)
-            console.log('📝 Whisper transcript accumulated:', persistentTranscriptRef.current.substring(0, 100) + '...')
-
-            // Stop processing state
-            setIsProcessing(false)
-            setProcessingProgress(0)
-          }
-          break
-
-        case 'tabAudioChunk':
-          console.log('🖥️ Tab audio chunk received:', data.size, 'bytes')
-          // Handle tab audio chunk processing
-          break
-
-        case 'audioLevel':
-          // Update audio level indicators
-          setAudioLevels(prev => ({
-            ...prev,
-            [data.source]: data.level
-          }))
-          break
-
-        case 'status':
-          console.log('🎤 Status:', data.type, 'from source:', data.source)
-
-          // Handle session starts
-          if (data.type === 'recording_started') {
-            const sessionId = Date.now().toString()
-            setCurrentSessionId(sessionId)
-            console.log('🆕 New recording session started:', sessionId, 'with source:', data.source)
-          }
-
-          // Handle processing states
-          if (data.type === 'processing_started') {
-            setIsProcessing(true)
-            setProcessingProgress(10)
-            console.log('🎯 Transcription processing started')
-          }
-
-          if (data.type === 'processing_progress') {
-            setIsProcessing(true)
-            setProcessingProgress(data.progress || 0)
-            const method = data.method ? ` (${data.method})` : ''
-            console.log(`🎯 Processing: ${data.stage} (${data.progress}%)${method}`)
-
-            // Show method selection in UI
-            if (data.method && data.description) {
-              console.log(`📱 Using transcription method: ${data.description}`)
-            }
-          }
-
-          if (data.type === 'processing_error') {
-            setIsProcessing(false)
-            setProcessingProgress(0)
-            setError(`Transcription processing failed: ${data.error}`)
-          }
-          break
-
-        case 'error':
-          setError(data.message || data.error)
-          setIsRecording(false)
-          // Auto-save on error
-          handleAutoSave('error')
-          break
-      }
-    })
-
     return () => {
-      removeListener()
       if (timerRef.current) clearInterval(timerRef.current)
-      audioTranscriptionService.cleanup()
     }
   }, [])
-
 
   // Track the last transcript sent to parent to prevent loops
   const lastSentTranscriptRef = useRef('')
@@ -201,7 +81,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   // Auto-save functionality for processed audio
   const handleAutoSave = (reason = 'auto') => {
     if (transcript.trim() && transcript !== lastSavedTranscriptRef.current) {
-      console.log(`🔄 Auto-saving processed transcript (${reason}): ${transcript.substring(0, 50)}...`)
+      console.log(`🔄 Auto-saving transcript (${reason}): ${transcript.substring(0, 50)}...`)
       lastSavedTranscriptRef.current = transcript
       if (onAutoSave) {
         onAutoSave(transcript.trim(), reason)
@@ -255,7 +135,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       window.removeEventListener('focus', handleFocus)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [isRecording, transcript, interimText, wakeLock, wakeLockStrategies])
+  }, [isRecording, transcript, wakeLock, wakeLockStrategies])
 
   // Auto-save periodically during recording
   useEffect(() => {
@@ -266,7 +146,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     }, 30000) // Auto-save every 30 seconds
 
     return () => clearInterval(autoSaveInterval)
-  }, [isRecording, transcript, interimText])
+  }, [isRecording, transcript])
 
   // Check microphone permissions
   const checkPermissions = async () => {
@@ -280,6 +160,100 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     } catch (error) {
       console.warn('Permissions API not supported')
     }
+  }
+
+  // Start recording
+  const startRecording = async () => {
+    try {
+      setError(null)
+      setInterimText('')
+      setRecordingDuration(0)
+
+      await checkPermissions()
+
+      // Request multiple wake lock strategies
+      await requestWakeLock()
+
+      await audioTranscriptionService.startLiveTranscription({
+        onTranscript: (result) => {
+          // Append to persistent transcript for text persistence
+          const newText = result.text
+          if (result.isFinal && newText.trim()) {
+            persistentTranscriptRef.current += newText + ' '
+            setTranscript(persistentTranscriptRef.current)
+          } else {
+            // Show interim text alongside persistent content
+            setInterimText(newText)
+            setTranscript(persistentTranscriptRef.current)
+          }
+        },
+        onEnd: (result) => {
+          if (result.text && result.text.trim()) {
+            persistentTranscriptRef.current += result.text + ' '
+          }
+          setTranscript(persistentTranscriptRef.current)
+          setIsRecording(false)
+          handleAutoSave('recording_ended')
+        },
+        onError: (error) => {
+          setError(error.message)
+          setIsRecording(false)
+        }
+      })
+
+      setIsRecording(true)
+
+      // Start timer
+      timerRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1)
+      }, 1000)
+
+      const existingLength = persistentTranscriptRef.current.length
+      console.log(`🎤 Recording started - will append to existing ${existingLength} characters of transcript`)
+    } catch (error) {
+      console.error('Failed to start recording:', error)
+      setError(error.message)
+      handleAutoSave('start_error')
+      // Release wake lock if recording failed
+      await releaseWakeLock()
+    }
+  }
+
+  // Stop recording
+  const stopRecording = async () => {
+    try {
+      handleAutoSave('stop')
+
+      const finalTranscript = audioTranscriptionService.stopLiveTranscription()
+      if (finalTranscript && finalTranscript.trim()) {
+        persistentTranscriptRef.current += finalTranscript + ' '
+      }
+      setTranscript(persistentTranscriptRef.current || transcript)
+      setIsRecording(false)
+
+      // Release wake lock when recording stops
+      await releaseWakeLock()
+
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+
+      console.log('🛑 Recording stopped - transcript preserved for next session')
+    } catch (error) {
+      console.error('Failed to stop recording:', error)
+      setError(error.message)
+      handleAutoSave('stop_error')
+      // Still release wake lock on error
+      await releaseWakeLock()
+    }
+  }
+
+  // Format duration
+  const formatDuration = (seconds) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
   // Multi-strategy wake lock implementation
@@ -308,8 +282,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     // Strategy 2: Silent Audio Loop (iOS Safari fallback)
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
-
-      // Create a silent audio buffer
       const buffer = audioCtx.createBuffer(1, 1, 22050)
       const source = audioCtx.createBufferSource()
       source.buffer = buffer
@@ -328,7 +300,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     // Strategy 3: Hidden video workaround (Android fallback)
     try {
       const video = document.createElement('video')
-      video.src = 'data:video/mp4;base64,AAAAIGZ0eXBtcDQyAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAACKBtZGF0AAAC8wYF///v3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE0MiByMjQ3OSBkZDc5YTYxIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAxNCAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTEgZGVibG9jaz0xOi0zOi0zIGFuYWx5c2U9MHgzOjB4MHggbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MCBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xMSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodHA9MCBvcGVuX2dvcD0wIHdlaWdodGI9MCBieG1ldGhvZD0yIGNoZWNrPTAgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MCBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xMSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodHA9MCBvcGVuX2dvcD0wIHdlaWdodGI9MCBieG1ldGhvZD0yIGNoZWNrPTAgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MCBtZV9yYW5nZT0xNi=='
+      video.src = 'data:video/mp4;base64,AAAAIGZ0eXBtcDQyAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAACKBtZGF0AAAC8wYF///v3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE0MiByMjQ3OSBkZDc5YTYxIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAxNCAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTEgZGVibG9jaz0xOi0zOi0zIGFuYWx5c2U9MHgzOjB4MHggbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MCBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xMSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodHA9MCBvcGVuX2dvcD0wIHdlaWdodGI9MCBieG1ldGhvZD0yIGNoZWNrPTAgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MCBtZV9yYW5nZT0xNi=='
       video.setAttribute('playsinline', '')
       video.setAttribute('muted', '')
       video.style.position = 'absolute'
@@ -348,10 +320,8 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     }
 
     setWakeLockStrategies(strategies)
-
     const activeStrategies = Object.entries(strategies).filter(([_, active]) => active).map(([name]) => name)
     console.log('🔒 Active wake lock strategies:', activeStrategies)
-
     return activeStrategies.length > 0
   }
 
@@ -359,7 +329,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const releaseWakeLock = async () => {
     console.log('🔓 Releasing all wake lock strategies...')
 
-    // Release Wake Lock API
     if (wakeLock) {
       try {
         await wakeLock.release()
@@ -369,7 +338,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       }
     }
 
-    // Stop silent audio
     if (silentAudio) {
       try {
         silentAudio.stop()
@@ -388,7 +356,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       }
     }
 
-    // Remove hidden video
     if (wakeLockVideoRef.current) {
       try {
         wakeLockVideoRef.current.pause()
@@ -403,93 +370,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     console.log('🔓 All wake lock strategies released')
   }
 
-  // Start recording
-  const startRecording = async () => {
-    try {
-      setError(null)
-      // Keep existing transcript in persistent storage
-      setInterimText('')
-      setRecordingDuration(0)
-
-      await checkPermissions()
-
-      // Request multiple wake lock strategies
-      await requestWakeLock()
-
-      const result = await audioTranscriptionService.startRecording({
-        continuous: true,
-        language: 'en-US',
-        source: selectedAudioSource
-      })
-
-      if (result.success) {
-        setIsRecording(true)
-
-        // Start timer
-        timerRef.current = setInterval(() => {
-          setRecordingDuration(prev => prev + 1)
-        }, 1000)
-
-        const existingLength = persistentTranscriptRef.current.length
-        console.log(`🎤 Recording started - will append to existing ${existingLength} characters of transcript`)
-      }
-    } catch (error) {
-      console.error('Failed to start recording:', error)
-      setError(error.message)
-      // Auto-save any partial transcript
-      handleAutoSave('start_error')
-      // Release wake lock if recording failed
-      await releaseWakeLock()
-    }
-  }
-
-  // Stop recording
-  const stopRecording = async () => {
-    try {
-      // Auto-save before stopping
-      handleAutoSave('stop')
-
-      await audioTranscriptionService.stopRecording()
-      setIsRecording(false)
-
-      // Release wake lock when recording stops
-      await releaseWakeLock()
-
-      if (timerRef.current) {
-        clearInterval(timerRef.current)
-        timerRef.current = null
-      }
-
-      console.log('🛑 Recording stopped - transcript preserved for next session')
-    } catch (error) {
-      console.error('Failed to stop recording:', error)
-      setError(error.message)
-      // Auto-save on stop error
-      handleAutoSave('stop_error')
-      // Still release wake lock on error
-      await releaseWakeLock()
-    }
-  }
-
-  // Format duration
-  const formatDuration = (seconds) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, '0')}`
-  }
-
-  // Note: AI analysis is handled by Meeting.jsx using the same processWithClaude system as OCR
-  // This keeps the analysis standardized and avoids duplication
-
   // Clear transcript
   const clearTranscript = () => {
-    // Clear all transcript storage
     setTranscript('')
     setInterimText('')
     persistentTranscriptRef.current = ''
-    setSessionTranscripts([])
-    setCurrentSessionId(null)
     lastSavedTranscriptRef.current = ''
+    audioTranscriptionService.reset()
 
     console.log('🧹 All transcript storage cleared - starting fresh')
 
@@ -549,125 +436,120 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         </div>
 
         {/* Audio Source Selection */}
-        {availableAudioSources.length > 1 && (
-          <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-gray-700">Audio Source</label>
-              <button
-                onClick={() => setShowSourceSelector(!showSourceSelector)}
-                className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
-              >
-                <Settings size={12} />
-                {showSourceSelector ? 'Hide' : 'Configure'}
-              </button>
-            </div>
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-sm font-medium text-gray-700">Audio Source</label>
+            <button
+              onClick={() => setShowSourceSelector(!showSourceSelector)}
+              className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+            >
+              <Settings size={12} />
+              {showSourceSelector ? 'Hide' : 'Configure'}
+            </button>
+          </div>
 
-            <div className="relative">
-              <button
-                onClick={() => setShowSourceSelector(!showSourceSelector)}
-                disabled={isRecording}
-                className="w-full flex items-center justify-between p-2 bg-white border border-gray-200 rounded-md hover:border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">
-                    {availableAudioSources.find(s => s.id === selectedAudioSource)?.icon || '🎤'}
-                  </span>
-                  <div className="text-left">
-                    <div className="text-sm font-medium text-gray-900">
-                      {availableAudioSources.find(s => s.id === selectedAudioSource)?.name || 'Unknown'}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {availableAudioSources.find(s => s.id === selectedAudioSource)?.description || ''}
-                    </div>
+          <div className="relative">
+            <button
+              onClick={() => setShowSourceSelector(!showSourceSelector)}
+              disabled={isRecording}
+              className="w-full flex items-center justify-between p-2 bg-white border border-gray-200 rounded-md hover:border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-lg">
+                  {availableAudioSources.find(s => s.id === selectedAudioSource)?.icon || '🎤'}
+                </span>
+                <div className="text-left">
+                  <div className="text-sm font-medium text-gray-900">
+                    {availableAudioSources.find(s => s.id === selectedAudioSource)?.name || 'Unknown'}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {availableAudioSources.find(s => s.id === selectedAudioSource)?.description || ''}
                   </div>
                 </div>
-                <ChevronDown
-                  size={16}
-                  className={`text-gray-400 transition-transform ${showSourceSelector ? 'rotate-180' : ''}`}
-                />
-              </button>
+              </div>
+              <ChevronDown
+                size={16}
+                className={`text-gray-400 transition-transform ${showSourceSelector ? 'rotate-180' : ''}`}
+              />
+            </button>
 
-              {/* Audio Source Options */}
-              {showSourceSelector && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                  {availableAudioSources.map((source) => (
-                    <button
-                      key={source.id}
-                      onClick={() => {
-                        setSelectedAudioSource(source.id)
-                        setShowSourceSelector(false)
-                      }}
-                      disabled={isRecording || !source.supported}
-                      className={`w-full flex items-center gap-3 p-3 text-left hover:bg-gray-50 transition-colors first:rounded-t-md last:rounded-b-md disabled:opacity-50 disabled:cursor-not-allowed ${
-                        selectedAudioSource === source.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
-                      }`}
-                    >
-                      <span className="text-lg">{source.icon}</span>
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-gray-900 flex items-center gap-2">
-                          {source.name}
-                          {selectedAudioSource === source.id && (
-                            <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Selected</span>
-                          )}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-0.5">{source.description}</div>
-                        {!source.supported && (
-                          <div className="text-xs text-red-500 mt-0.5">Not supported in this browser</div>
+            {/* Audio Source Options */}
+            {showSourceSelector && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                {availableAudioSources.map((source) => (
+                  <button
+                    key={source.id}
+                    onClick={() => {
+                      setSelectedAudioSource(source.id)
+                      setShowSourceSelector(false)
+                    }}
+                    disabled={isRecording || !source.supported}
+                    className={`w-full flex items-center gap-3 p-3 text-left hover:bg-gray-50 transition-colors first:rounded-t-md last:rounded-b-md disabled:opacity-50 disabled:cursor-not-allowed ${
+                      selectedAudioSource === source.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
+                    }`}
+                  >
+                    <span className="text-lg">{source.icon}</span>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                        {source.name}
+                        {selectedAudioSource === source.id && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Selected</span>
                         )}
                       </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Audio Level Indicators */}
-            {selectedAudioSource === 'mixed' && (
-              <div className="mt-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-gray-600">🎤 Microphone</span>
-                  <div className="flex-1 mx-2 bg-gray-200 rounded-full h-1.5">
-                    <div
-                      className="bg-green-500 h-1.5 rounded-full transition-all duration-100"
-                      style={{ width: `${(audioLevels.microphone || 0) * 100}%` }}
-                    />
-                  </div>
-                  <span className="text-xs text-gray-500">{Math.round((audioLevels.microphone || 0) * 100)}%</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-gray-600">🖥️ Tab Audio</span>
-                  <div className="flex-1 mx-2 bg-gray-200 rounded-full h-1.5">
-                    <div
-                      className="bg-blue-500 h-1.5 rounded-full transition-all duration-100"
-                      style={{ width: `${(audioLevels.tabAudio || 0) * 100}%` }}
-                    />
-                  </div>
-                  <span className="text-xs text-gray-500">{Math.round((audioLevels.tabAudio || 0) * 100)}%</span>
-                </div>
-              </div>
-            )}
-
-            {selectedAudioSource === 'tabAudio' && (
-              <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded text-xs">
-                <div className="text-blue-800 font-medium mb-2">📺 Tab Audio Capture</div>
-                <div className="text-blue-700 space-y-1">
-                  <div>• Click record, then select browser tab/window to capture</div>
-                  <div>• Works with YouTube, web meetings, any browser audio</div>
-                  <div>• Audio will be captured and saved for processing</div>
-                  <div className="mt-2 p-2 bg-blue-100 rounded text-blue-800">
-                    <strong>For live transcription:</strong> Play audio through speakers (not headphones) and enable microphone to pick up the sound.
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {selectedAudioSource === 'mixed' && (
-              <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded text-xs text-purple-800">
-                🎙️ <strong>Mixed Mode:</strong> Captures both your microphone and tab audio simultaneously. Your voice will be transcribed live, tab audio will be captured for processing.
+                      <div className="text-xs text-gray-500 mt-0.5">{source.description}</div>
+                      {!source.supported && (
+                        <div className="text-xs text-red-500 mt-0.5">Not supported in this browser</div>
+                      )}
+                    </div>
+                  </button>
+                ))}
               </div>
             )}
           </div>
-        )}
+
+          {/* Audio Level Indicators */}
+          {selectedAudioSource === 'mixed' && (
+            <div className="mt-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600">🎤 Microphone</span>
+                <div className="flex-1 mx-2 bg-gray-200 rounded-full h-1.5">
+                  <div
+                    className="bg-green-500 h-1.5 rounded-full transition-all duration-100"
+                    style={{ width: `${(audioLevels.microphone || 0) * 100}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-500">{Math.round((audioLevels.microphone || 0) * 100)}%</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600">🖥️ Tab Audio</span>
+                <div className="flex-1 mx-2 bg-gray-200 rounded-full h-1.5">
+                  <div
+                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-100"
+                    style={{ width: `${(audioLevels.tabAudio || 0) * 100}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-500">{Math.round((audioLevels.tabAudio || 0) * 100)}%</span>
+              </div>
+            </div>
+          )}
+
+          {selectedAudioSource === 'tabAudio' && (
+            <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded text-xs">
+              <div className="text-blue-800 font-medium mb-2">📺 Tab Audio Capture</div>
+              <div className="text-blue-700 space-y-1">
+                <div>• Click record, then select browser tab/window to capture</div>
+                <div>• Works with YouTube, web meetings, any browser audio</div>
+                <div>• For live transcription: Play audio through speakers and enable microphone</div>
+              </div>
+            </div>
+          )}
+
+          {selectedAudioSource === 'mixed' && (
+            <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded text-xs text-purple-800">
+              🎙️ <strong>Hybrid Mode:</strong> Captures both your microphone and tab audio simultaneously. Your voice will be transcribed live.
+            </div>
+          )}
+        </div>
 
         {/* Main Recording Button */}
         <div className="flex items-center justify-center mb-4">
@@ -699,8 +581,8 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
               <p className="text-lg font-mono font-semibold text-gray-900">
                 {formatDuration(recordingDuration)}
               </p>
-              <p className="text-xs text-gray-500">Real-time Transcription</p>
-              {transcript && (
+              <p className="text-xs text-gray-500">Live Transcription</p>
+              {persistentTranscriptRef.current && (
                 <p className="text-xs text-blue-600">
                   📝 Continuing previous transcript
                 </p>
@@ -724,16 +606,15 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             </div>
           )}
         </div>
-
       </div>
 
-      {/* Whisper Transcription Display */}
+      {/* Transcript Display */}
       {transcript && (
-        <div className="bg-white rounded-lg border border-purple-200 p-4 shadow-sm">
+        <div className="bg-white rounded-lg border border-blue-200 p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-purple-800 flex items-center gap-2">
-              🎯 AI Transcription
-              <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
+            <h3 className="text-sm font-medium text-blue-800 flex items-center gap-2">
+              🎤 Live Transcription
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
                 {transcript.split(' ').filter(word => word.trim()).length} words
               </span>
             </h3>
@@ -748,6 +629,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           <div className="space-y-2 max-h-48 overflow-y-auto bg-gray-50 rounded p-3">
             <div className="text-sm text-gray-900 leading-relaxed">
               {transcript}
+              {interimText && (
+                <span className="text-gray-500 italic">{interimText}</span>
+              )}
             </div>
           </div>
 
@@ -759,40 +643,17 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         </div>
       )}
 
-      {/* Processing Status Indicator */}
-      {isProcessing && (
-        <div className="bg-purple-50 rounded-lg border border-purple-200 p-4">
-          <div className="flex items-center gap-2 text-purple-700 mb-2">
-            <div className="animate-spin w-4 h-4 border-2 border-purple-300 border-t-purple-600 rounded-full"></div>
-            <span className="text-sm font-medium">Processing with AI...</span>
-          </div>
-          {processingProgress > 0 && (
-            <div className="w-full bg-purple-200 rounded-full h-2">
-              <div
-                className="bg-purple-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${processingProgress}%` }}
-              ></div>
-            </div>
-          )}
-          <p className="text-xs text-purple-600 mt-2">
-            Audio is being processed using AI transcription
-          </p>
-        </div>
-      )}
-
-      {/* Recording Status when no transcript and not processing */}
-      {!transcript && !isProcessing && isRecording && (
+      {/* Recording Status when no transcript */}
+      {!transcript && isRecording && (
         <div className="bg-blue-50 rounded-lg border border-blue-200 p-4 text-center">
           <div className="text-blue-600 mb-1">
             🎤 Recording Audio...
           </div>
           <p className="text-xs text-blue-700">
-            Audio will be processed with AI when you stop recording
+            Speech will appear here as you speak
           </p>
         </div>
       )}
-
-      {/* AI Analysis is handled by Meeting.jsx using the standardized processWithClaude system */}
 
       {/* Error Display */}
       {error && (
@@ -807,7 +668,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         </div>
       )}
 
-      {/* Enhanced Info */}
+      {/* Info */}
       <div className="text-center space-y-1">
         <p className="text-xs text-gray-500">
           🎤 Persistent transcript accumulation • 🔒 Multi-strategy wake lock • 📱 Mobile optimized
@@ -820,20 +681,4 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   )
 }
 
-// Wrap AudioRecorder with Error Boundary
-const AudioRecorderWithErrorBoundary = (props) => {
-  const handleFallback = (fallbackMode, error) => {
-    console.log(`🔄 Switching to ${fallbackMode} due to error:`, error);
-    // The audioTranscriptionService will handle the fallback automatically
-  };
-
-  const handleRetry = (retryCount) => {
-    console.log(`🔄 Retrying initialization (attempt ${retryCount})`);
-    // Force re-initialization
-    window.location.reload();
-  };
-
-  return <AudioRecorder {...props} />;
-};
-
-export default AudioRecorderWithErrorBoundary
+export default AudioRecorder

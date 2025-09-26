@@ -348,8 +348,15 @@ class WhisperWebService {
         if (debugCallback) debugCallback('🍎 Applying iOS audio preprocessing...', 'info')
 
         // Research-based iOS Safari audio fixes for Whisper
-        // 1. Normalize audio amplitude for iOS Safari
-        const maxAmplitudeInAudio = Math.max(...processedAudio.map(Math.abs))
+        // 1. Normalize audio amplitude for iOS Safari (fixed stack overflow)
+        let maxAmplitudeInAudio = 0
+        for (let i = 0; i < processedAudio.length; i++) {
+          const absValue = Math.abs(processedAudio[i])
+          if (absValue > maxAmplitudeInAudio) {
+            maxAmplitudeInAudio = absValue
+          }
+        }
+
         if (maxAmplitudeInAudio > 0 && maxAmplitudeInAudio < 0.1) {
           // Boost quiet audio for iOS Safari Whisper
           const amplificationFactor = 0.3 / maxAmplitudeInAudio

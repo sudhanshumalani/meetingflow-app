@@ -360,18 +360,29 @@ class WhisperWebService {
         }
       }
 
-      // iOS Safari specific audio preprocessing
+      // iOS Safari specific audio preprocessing with detailed debugging
       if (isIOS) {
         if (debugCallback) debugCallback('🍎 Applying iOS audio preprocessing...', 'info')
 
         // Research-based iOS Safari audio fixes for Whisper
         // 1. Normalize audio amplitude for iOS Safari (fixed stack overflow)
         let maxAmplitudeInAudio = 0
+        let sampleCount = 0
+        let nonZeroSamples = 0
+
         for (let i = 0; i < processedAudio.length; i++) {
           const absValue = Math.abs(processedAudio[i])
           if (absValue > maxAmplitudeInAudio) {
             maxAmplitudeInAudio = absValue
           }
+          if (absValue > 0.001) nonZeroSamples++
+          sampleCount++
+        }
+
+        if (debugCallback) {
+          debugCallback(`🔍 Audio analysis: max=${maxAmplitudeInAudio.toFixed(4)}`, 'info')
+          debugCallback(`🔍 Non-zero samples: ${nonZeroSamples}/${sampleCount}`, 'info')
+          debugCallback(`🔍 Audio quality: ${nonZeroSamples > sampleCount * 0.1 ? 'Good' : 'Poor'}`, 'info')
         }
 
         if (maxAmplitudeInAudio > 0 && maxAmplitudeInAudio < 0.1) {
@@ -416,6 +427,16 @@ class WhisperWebService {
 
       if (debugCallback) debugCallback('🤖 Running AI transcription...', 'info')
 
+      // STEP-BY-STEP PIPELINE DEBUGGING
+      if (debugCallback) {
+        debugCallback(`🔍 STEP 1: Pipeline exists: ${!!this.pipeline}`, 'info')
+        debugCallback(`🔍 STEP 2: Audio length: ${processedAudio?.length || 0}`, 'info')
+        debugCallback(`🔍 STEP 3: Audio type: ${typeof processedAudio}`, 'info')
+        debugCallback(`🔍 STEP 4: Audio is Float32Array: ${processedAudio instanceof Float32Array}`, 'info')
+        debugCallback(`🔍 STEP 5: Model name: ${this.modelName}`, 'info')
+        debugCallback(`🔍 STEP 6: iOS optimized: ${this.iosOptimized}`, 'info')
+      }
+
       // iOS Safari specific pipeline configuration based on research
       const pipelineOptions = {
         task: 'transcribe',
@@ -424,10 +445,29 @@ class WhisperWebService {
         ...options
       }
 
-      // Simple pipeline configuration - avoid complex parameters that may cause issues
-      console.log('🎵 Using simplified pipeline configuration for maximum compatibility')
+      if (debugCallback) {
+        debugCallback(`🔍 STEP 7: Pipeline options: ${JSON.stringify(pipelineOptions)}`, 'info')
+        debugCallback(`🔍 STEP 8: About to call this.pipeline()...`, 'info')
+      }
 
-      const result = await this.pipeline(processedAudio, pipelineOptions)
+      console.log('🎵 Using simplified pipeline configuration for maximum compatibility')
+      console.log('🔍 Full pipeline call details:', {
+        pipelineExists: !!this.pipeline,
+        audioLength: processedAudio?.length,
+        audioType: typeof processedAudio,
+        modelName: this.modelName,
+        options: pipelineOptions
+      })
+
+      let result
+      try {
+        if (debugCallback) debugCallback(`🔍 STEP 9: Calling pipeline now...`, 'info')
+        result = await this.pipeline(processedAudio, pipelineOptions)
+        if (debugCallback) debugCallback(`🔍 STEP 10: Pipeline call completed`, 'info')
+      } catch (pipelineError) {
+        if (debugCallback) debugCallback(`🔍 STEP 10: Pipeline ERROR: ${pipelineError.message}`, 'error')
+        throw pipelineError
+      }
 
       if (debugCallback) debugCallback('✅ AI transcription completed', 'info')
 

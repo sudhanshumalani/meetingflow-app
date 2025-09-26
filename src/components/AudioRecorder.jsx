@@ -28,8 +28,27 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const [whisperEnabled, setWhisperEnabled] = useState(true)
   const [isEnhancing, setIsEnhancing] = useState(false)
   const [enhancedTranscript, setEnhancedTranscript] = useState('')
+
+  // Mobile Debug Panel State
+  const [debugMessages, setDebugMessages] = useState([])
+  const [showDebugPanel, setShowDebugPanel] = useState(false)
+  const debugRef = useRef(null)
   const [whisperStatus, setWhisperStatus] = useState(null)
   const [audioBuffer, setAudioBuffer] = useState(null)
+
+  // Mobile Debug Function
+  const addDebugMessage = (message, type = 'info') => {
+    const timestamp = new Date().toLocaleTimeString()
+    const newMessage = { timestamp, message, type, id: Date.now() }
+    setDebugMessages(prev => [...prev.slice(-9), newMessage]) // Keep last 10 messages
+
+    // Auto-scroll to bottom
+    setTimeout(() => {
+      if (debugRef.current) {
+        debugRef.current.scrollTop = debugRef.current.scrollHeight
+      }
+    }, 100)
+  }
 
   // Multi-strategy wake lock
   const [audioContext, setAudioContext] = useState(null)
@@ -514,64 +533,47 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
   // Enhance transcript with Whisper Web
   const enhanceWithWhisper = async (audioBlob) => {
-    console.log('🧪 enhanceWithWhisper called with comprehensive debugging:', {
-      hasAudioBlob: !!audioBlob,
-      audioBlobSize: audioBlob?.size || 0,
-      audioBlobType: audioBlob?.type || 'unknown',
-      whisperEnabled,
-      whisperStatus,
-      conditionsCheck: {
-        whisperEnabled: !!whisperEnabled,
-        statusReady: whisperStatus === 'ready',
-        hasBlob: !!audioBlob,
-        allConditionsMet: whisperEnabled && whisperStatus === 'ready' && !!audioBlob
-      },
-      isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
-      isPWA: window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
-    })
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
+
+    addDebugMessage(`🔍 Starting Whisper enhancement`, 'info')
+    addDebugMessage(`Audio: ${audioBlob?.size || 0} bytes, ${audioBlob?.type || 'unknown'}`, 'info')
+    addDebugMessage(`Whisper enabled: ${whisperEnabled}, Status: ${whisperStatus}`, 'info')
+    addDebugMessage(`iOS: ${isIOS}, PWA: ${isPWA}`, 'info')
 
     if (!whisperEnabled) {
-      console.log('❌ Whisper enhancement skipped - Whisper not enabled')
+      addDebugMessage('❌ Whisper not enabled', 'error')
       return
     }
 
     if (whisperStatus !== 'ready') {
-      console.log('❌ Whisper enhancement skipped - Whisper status not ready:', whisperStatus)
+      addDebugMessage(`❌ Whisper not ready: ${whisperStatus}`, 'error')
       return
     }
 
     if (!audioBlob) {
-      console.log('❌ Whisper enhancement skipped - No audio blob available')
+      addDebugMessage('❌ No audio blob available', 'error')
       return
     }
 
     try {
       setIsEnhancing(true)
-      console.log('🌙 Starting Whisper enhancement with blob:', {
-        size: audioBlob.size,
-        type: audioBlob.type,
-        sizeInMB: (audioBlob.size / 1024 / 1024).toFixed(2)
-      })
+      addDebugMessage(`🚀 Processing ${(audioBlob.size / 1024 / 1024).toFixed(2)}MB audio...`, 'info')
 
-      console.log('📞 Calling whisperWebService.enhanceTranscript...')
+      addDebugMessage('📞 Calling Whisper service...', 'info')
 
       const startTime = performance.now()
       const result = await whisperWebService.enhanceTranscript(audioBlob, {
-        language: 'english'
+        language: 'english',
+        debugCallback: addDebugMessage
       })
       const processingDuration = performance.now() - startTime
 
-      console.log('🔍 Whisper enhancement completed in', processingDuration.toFixed(2), 'ms')
-
-      console.log('🔍 Whisper result received:', {
-        hasResult: !!result,
-        hasText: !!(result && result.text),
-        textLength: result?.text?.length || 0,
-        textPreview: result?.text?.substring(0, 100) || 'No text'
-      })
+      addDebugMessage(`⏱️ Processing took ${(processingDuration / 1000).toFixed(1)}s`, 'info')
 
       if (result && result.text && result.text.trim()) {
-        console.log('✅ Setting enhanced transcript:', result.text.substring(0, 100) + '...')
+        addDebugMessage(`✅ Success: ${result.text.length} chars`, 'success')
+        addDebugMessage(`Preview: "${result.text.substring(0, 50)}..."`, 'success')
         setEnhancedTranscript(result.text)
         console.log('✅ Whisper enhancement completed:', {
           originalLength: (persistentTranscriptRef.current || '').length,
@@ -581,18 +583,14 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         })
 
         // Auto-apply enhanced transcript to meeting notes
-        console.log('🚀 Auto-applying enhanced transcript to meeting...')
+        // Auto-apply enhanced transcript to meeting notes
         applyEnhancedTranscriptToMeeting(result.text)
       } else {
-        console.log('⚠️ No valid text in Whisper result')
+        addDebugMessage('⚠️ Empty result from Whisper', 'warning')
       }
 
     } catch (error) {
-      console.error('❌ Whisper enhancement failed:', error)
-
-      // Enhanced iOS-specific error handling based on comprehensive research
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
-      const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
+      addDebugMessage(`❌ Error: ${error.message}`, 'error')
 
       let userFriendlyError = `AI enhancement failed: ${error.message}`
 
@@ -1082,6 +1080,54 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           </button>
         </div>
       )}
+
+      {/* Mobile Debug Panel */}
+      <div className="bg-gray-50 rounded-lg border border-gray-200 p-3">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-gray-700">🔧 Debug Panel</span>
+          <button
+            onClick={() => setShowDebugPanel(!showDebugPanel)}
+            className="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded transition-colors"
+          >
+            {showDebugPanel ? 'Hide' : 'Show'}
+          </button>
+        </div>
+
+        {showDebugPanel && (
+          <div
+            ref={debugRef}
+            className="max-h-40 overflow-y-auto bg-black text-green-400 text-xs font-mono p-2 rounded border space-y-1"
+          >
+            {debugMessages.length === 0 ? (
+              <div className="text-gray-500">No debug messages yet...</div>
+            ) : (
+              debugMessages.map((msg) => (
+                <div key={msg.id} className="flex">
+                  <span className="text-gray-400 mr-2">{msg.timestamp}</span>
+                  <span className={
+                    msg.type === 'error' ? 'text-red-400' :
+                    msg.type === 'warning' ? 'text-yellow-400' :
+                    msg.type === 'success' ? 'text-green-400' :
+                    'text-blue-400'
+                  }>
+                    {msg.message}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-between mt-2 text-xs text-gray-500">
+          <span>Whisper: {whisperStatus || 'unknown'}</span>
+          <button
+            onClick={() => setDebugMessages([])}
+            className="text-red-500 hover:text-red-700"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
 
       {/* Info */}
       <div className="text-center space-y-1">

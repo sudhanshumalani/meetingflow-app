@@ -85,16 +85,18 @@ class WhisperWebService {
         this.capabilities.memory = performance.memory.usedJSHeapSize / (1024 * 1024) // MB
       }
 
-      // Determine optimal model based on capabilities
+      // Determine optimal model based on capabilities with iOS memory optimization
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
       const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
       const hasHighMemory = this.capabilities.memory < 200 // Use tiny if already using >200MB
 
-      // Use extra small model for iOS PWAs due to stricter memory constraints
-      if (isIOS && isPWA) {
-        this.modelName = 'Xenova/whisper-tiny.en' // Smallest model for iOS PWA
-        console.log('📱 Detected iOS PWA - using minimal model for compatibility')
+      // iOS Memory Optimization Strategy
+      if (isIOS) {
+        // Research-backed iOS model selection for memory constraints
+        this.modelName = 'Xenova/whisper-tiny.en' // 39M parameters - most iOS-compatible
+        this.iosOptimized = true
+        console.log('🍎 iOS detected - using memory-optimized Whisper-tiny with quantization')
       } else if (isMobile || hasHighMemory) {
         this.modelName = 'Xenova/whisper-tiny.en' // ~39M parameters, Transformers.js optimized
       } else {
@@ -155,30 +157,25 @@ class WhisperWebService {
       env.allowLocalModels = false
       env.useBrowserCache = true // Enable browser caching
 
-      // iOS-specific optimizations
+      // iOS Memory Optimization - Research-backed approach
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
       const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
 
       if (isIOS) {
-        // CRITICAL: iOS has stricter memory and SharedArrayBuffer limitations
-        // Based on GitHub issue #1242 and extensive research
-        env.backends.onnx.wasm.proxy = false // Disable worker - causes crashes on iOS
-        env.backends.onnx.wasm.numThreads = 1 // Single thread only - multi-threading crashes iOS
-        env.backends.onnx.wasm.simd = false // Disable SIMD - compatibility issues
+        // MEMORY OPTIMIZATION: iOS WebKit constraints - use minimal settings
+        env.backends.onnx.wasm.proxy = false // Disable worker - reduces memory overhead
+        env.backends.onnx.wasm.numThreads = 1 // Single thread - prevents memory fragmentation
+        env.backends.onnx.wasm.simd = false // Disable SIMD - iOS compatibility
 
-        // Enhanced iOS PWA optimizations based on research findings
-        if (isPWA) {
-          console.log('📱 Detected iOS PWA - applying maximum compatibility constraints')
-          // Force minimal memory usage for PWA environment
-          try {
-            env.backends.onnx.wasm.initialMemoryPages = 256 // Start with minimal memory
-            env.backends.onnx.wasm.maximumMemoryPages = 512 // Very conservative maximum
-          } catch (memError) {
-            console.warn('Could not set memory pages (may not be supported):', memError.message)
-          }
+        // Conservative memory allocation for iOS WebKit
+        try {
+          env.backends.onnx.wasm.initialMemoryPages = 256 // ~16MB start
+          env.backends.onnx.wasm.maximumMemoryPages = 1024 // ~64MB max (within iOS limits)
+        } catch (memError) {
+          console.warn('Could not set memory pages:', memError.message)
         }
 
-        console.log('📱 Using enhanced iOS-optimized settings for maximum compatibility')
+        console.log('🍎 iOS memory optimization enabled - using conservative WASM settings')
       } else {
         // Optimize based on loading strategy for other platforms
         if (this.loadingStrategy === 'preload') {
@@ -206,19 +203,39 @@ class WhisperWebService {
       console.log(`🎵 Loading ${modelToTry} model...`)
       const startTime = performance.now()
 
+      // iOS Memory Optimization: Use quantized models and conservative settings
+      const pipelineOptions = {
+        device: (this.capabilities.webgpu && !isIOS) ? 'webgpu' : 'wasm',
+        progress_callback: (progress) => {
+          if (progress.status === 'downloading') {
+            const percent = Math.round((progress.loaded / progress.total) * 100)
+            console.log(`📥 Downloading model: ${percent}%`)
+          }
+        }
+      }
+
+      // CRITICAL iOS OPTIMIZATION: Use quantized models to reduce memory
+      if (isIOS) {
+        // Research-backed: q8 provides good balance of quality vs memory for iOS
+        pipelineOptions.dtype = 'q8' // 8-bit quantization - 75% memory reduction
+        console.log('🍎 iOS: Using 8-bit quantized model (q8) for memory optimization')
+      } else if (this.capabilities.webgpu) {
+        pipelineOptions.dtype = 'fp16' // Half precision for WebGPU
+      } else {
+        pipelineOptions.dtype = 'q8' // Default quantization for WASM
+      }
+
+      console.log(`🎵 Loading model with configuration:`, {
+        model: modelToTry,
+        dtype: pipelineOptions.dtype,
+        device: pipelineOptions.device,
+        iosOptimized: this.iosOptimized
+      })
+
       this.pipeline = await pipeline(
         'automatic-speech-recognition',
         modelToTry,
-        {
-          dtype: (this.capabilities.webgpu && !isIOS) ? 'fp16' : 'fp32',
-          device: (this.capabilities.webgpu && !isIOS) ? 'webgpu' : 'wasm',
-          progress_callback: (progress) => {
-            if (progress.status === 'downloading') {
-              const percent = Math.round((progress.loaded / progress.total) * 100)
-              console.log(`📥 Downloading model: ${percent}%`)
-            }
-          }
-        }
+        pipelineOptions
       )
 
       const loadTime = (performance.now() - startTime) / 1000
@@ -816,9 +833,11 @@ class WhisperWebService {
 
   /**
    * Check if Moonshine is supported
+   * NEW: iOS WebKit compatible with memory-optimized Whisper models
    */
   isSupported() {
     try {
+      // Always try Whisper first - we'll use memory-optimized models for iOS
       return !!(window.OffscreenCanvas || window.WebGLRenderingContext)
     } catch (error) {
       return false

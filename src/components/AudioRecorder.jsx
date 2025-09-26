@@ -107,6 +107,24 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       console.log('🎵 Initializing Whisper Web...')
       setWhisperStatus('initializing')
 
+      // Check Whisper compatibility
+      const isSupported = whisperWebService.isSupported()
+      if (!isSupported) {
+        console.warn('⚠️ Whisper not supported on this browser')
+        setWhisperStatus('incompatible')
+        setWhisperEnabled(false)
+        addDebugMessage('⚠️ Whisper not supported', 'warning')
+        addDebugMessage('✅ Web Speech API will handle transcription', 'info')
+        return
+      }
+
+      // iOS-specific optimization messages
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      if (isIOS) {
+        addDebugMessage('🍎 iOS detected - using memory-optimized Whisper', 'info')
+        addDebugMessage('⚡ Quantized model + conservative memory settings', 'info')
+      }
+
       const capabilities = await whisperWebService.checkCapabilities()
       console.log('🎵 Whisper capabilities:', capabilities)
 
@@ -114,10 +132,12 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       whisperWebService.initialize().then(() => {
         setWhisperStatus('ready')
         console.log('✅ Whisper Web ready for enhancement')
+        addDebugMessage('✅ Whisper AI ready for enhancement', 'info')
       }).catch(error => {
         console.warn('⚠️ Whisper initialization failed, using Web Speech API only:', error)
         setWhisperStatus('disabled')
         setWhisperEnabled(false)
+        addDebugMessage('⚠️ Whisper failed - using Web Speech only', 'warning')
       })
 
     } catch (error) {
@@ -730,6 +750,11 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
                 {whisperStatus === 'disabled' && (
                   <div className="flex items-center space-x-1">
                     <span className="text-xs text-gray-500">AI Disabled</span>
+                  </div>
+                )}
+                {whisperStatus === 'incompatible' && (
+                  <div className="flex items-center space-x-1">
+                    <span className="text-xs text-orange-600">Not Supported</span>
                   </div>
                 )}
                 {isEnhancing && (

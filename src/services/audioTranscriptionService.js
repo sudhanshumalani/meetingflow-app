@@ -3,8 +3,7 @@
  * Web Speech API + Whisper.cpp with CDN model loading
  */
 
-import whisperService from './whisper/WhisperService.js';
-import modelCacheService from './whisper/ModelCacheService.js';
+import hybridWhisperService from './whisper/HybridWhisperService.js';
 import { WHISPER_MODELS, getRecommendedModel } from '../config/modelConfig.js';
 
 class AudioTranscriptionService {
@@ -529,7 +528,7 @@ class AudioTranscriptionService {
    * Get service status
    */
   getStatus() {
-    const whisperStatus = whisperService.getStatus();
+    const whisperStatus = hybridWhisperService.getStatus();
 
     return {
       isInitialized: this.isInitialized,
@@ -571,7 +570,7 @@ class AudioTranscriptionService {
    * Initialize Whisper if not already done
    */
   async _ensureWhisperInitialized(progressCallback = null) {
-    if (whisperService.getStatus().isInitialized) {
+    if (hybridWhisperService.getStatus().isInitialized) {
       return true;
     }
 
@@ -581,7 +580,7 @@ class AudioTranscriptionService {
     const recommendedModel = getRecommendedModel();
 
     try {
-      await whisperService.initialize({
+      await hybridWhisperService.initialize({
         modelId: recommendedModel.id,
         progressCallback: (progress) => {
           console.log(`Whisper init: ${progress.stage} (${progress.progress}%)`);
@@ -631,7 +630,7 @@ class AudioTranscriptionService {
       });
 
       // Transcribe with Whisper
-      const result = await whisperService.transcribe(audioBlob, {
+      const result = await hybridWhisperService.transcribe(audioBlob, {
         language: 'en',
         progressCallback: (progress) => {
           this.notifyListeners('status', {
@@ -735,7 +734,7 @@ class AudioTranscriptionService {
    */
   async switchWhisperModel(modelId, progressCallback = null) {
     try {
-      await whisperService.switchModel(modelId, progressCallback);
+      await hybridWhisperService.switchTier(modelId === 'base' ? 'tier3' : 'tier2', progressCallback);
       console.log(`✅ Switched to Whisper model: ${modelId}`);
       return true;
     } catch (error) {

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Mic, MicOff, Square, Volume2, Monitor, Settings, ChevronDown, Zap } from 'lucide-react'
 import audioTranscriptionService from '../services/audioTranscriptionService'
 import ModelDownloadModal from './whisper/ModelDownloadModal'
+import WhisperErrorBoundary from './whisper/WhisperErrorBoundary'
 
 const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
@@ -814,4 +815,24 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   )
 }
 
-export default AudioRecorder
+// Wrap AudioRecorder with Error Boundary
+const AudioRecorderWithErrorBoundary = (props) => {
+  const handleFallback = (fallbackMode, error) => {
+    console.log(`🔄 Switching to ${fallbackMode} due to error:`, error);
+    // The audioTranscriptionService will handle the fallback automatically
+  };
+
+  const handleRetry = (retryCount) => {
+    console.log(`🔄 Retrying initialization (attempt ${retryCount})`);
+    // Force re-initialization
+    window.location.reload();
+  };
+
+  return (
+    <WhisperErrorBoundary onFallback={handleFallback} onRetry={handleRetry}>
+      <AudioRecorder {...props} />
+    </WhisperErrorBoundary>
+  );
+};
+
+export default AudioRecorderWithErrorBoundary

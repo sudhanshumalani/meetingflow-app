@@ -97,11 +97,35 @@ class AudioBufferService {
             return
           }
 
-          // Create audio blob
+          // Create audio blob with enhanced validation
           const mimeType = this.mediaRecorder.mimeType
           const audioBlob = new Blob(this.recordedChunks, { type: mimeType })
 
+          // Enhanced audio blob debugging for iOS issues
+          const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
           console.log(`🎵 Audio buffer created: ${(audioBlob.size / 1024 / 1024).toFixed(2)}MB`)
+          console.log(`🔍 Audio blob details:`, {
+            size: audioBlob.size,
+            type: audioBlob.type,
+            chunks: this.recordedChunks.length,
+            mimeType,
+            isIOS,
+            recordedDataTypes: this.recordedChunks.map(chunk => chunk.constructor.name),
+            firstChunkSize: this.recordedChunks[0]?.size || 0,
+            lastChunkSize: this.recordedChunks[this.recordedChunks.length - 1]?.size || 0
+          })
+
+          // Validate audio blob has actual data
+          if (audioBlob.size === 0) {
+            console.error('❌ Audio blob is empty - no audio data recorded')
+            resolve(null)
+            return
+          }
+
+          // iOS Safari specific validation
+          if (isIOS && audioBlob.type !== 'video/mp4') {
+            console.warn(`⚠️ iOS detected but blob type is ${audioBlob.type}, expected video/mp4`)
+          }
 
           this.cleanup()
           resolve(audioBlob)

@@ -315,12 +315,22 @@ class WhisperWebService {
       // Prepare audio data with optimization
       let processedAudio = audioData
 
-      // If it's a Blob, convert to Float32Array with caching
+      // If it's a Blob, convert to Float32Array with enhanced debugging
       if (audioData instanceof Blob) {
         if (debugCallback) debugCallback('🔄 Converting audio blob...', 'info')
+        if (debugCallback) debugCallback(`🔍 Blob details: ${audioData.size} bytes, type: ${audioData.type}`, 'info')
+
         const cacheKey = `audio_${audioData.size}_${audioData.type}`
-        processedAudio = await this.blobToFloat32Array(audioData, cacheKey)
-        if (debugCallback) debugCallback(`✅ Audio converted: ${processedAudio?.length || 0} samples`, 'info')
+        processedAudio = await this.blobToFloat32Array(audioData, cacheKey, debugCallback)
+
+        if (debugCallback) {
+          debugCallback(`✅ Audio converted: ${processedAudio?.length || 0} samples`, 'info')
+          if (processedAudio && processedAudio.length > 0) {
+            const sampleRate = 16000 // Expected sample rate
+            const durationSeconds = processedAudio.length / sampleRate
+            debugCallback(`🔍 Audio duration: ${durationSeconds.toFixed(2)}s at ${sampleRate}Hz`, 'info')
+          }
+        }
       }
 
       // Validate processed audio
@@ -683,11 +693,12 @@ class WhisperWebService {
   /**
    * Convert blob to Float32Array for processing with caching
    */
-  async blobToFloat32Array(blob, cacheKey = null) {
+  async blobToFloat32Array(blob, cacheKey = null, debugCallback = null) {
     try {
       // Check cache first if key provided
       if (cacheKey && this.audioCache && this.audioCache.has(cacheKey)) {
         console.log('🔄 Using cached audio data')
+        if (debugCallback) debugCallback('🔄 Using cached audio data', 'info')
         return this.audioCache.get(cacheKey)
       }
 
@@ -705,26 +716,33 @@ class WhisperWebService {
       })
 
       // Enhanced ArrayBuffer handling for iOS compatibility
+      if (debugCallback) debugCallback('🔄 Converting blob to ArrayBuffer...', 'info')
       let arrayBuffer
       try {
         arrayBuffer = await blob.arrayBuffer()
+        if (debugCallback) debugCallback(`✅ ArrayBuffer created: ${arrayBuffer.byteLength} bytes`, 'info')
 
         // Validate ArrayBuffer size for iOS memory constraints
         if (isIOS && arrayBuffer.byteLength > 10 * 1024 * 1024) { // 10MB limit for iOS
           console.warn('⚠️ Large audio file detected on iOS - may cause memory issues')
+          if (debugCallback) debugCallback('⚠️ Large audio file on iOS - memory risk', 'warning')
         }
       } catch (error) {
+        if (debugCallback) debugCallback(`❌ ArrayBuffer conversion failed: ${error.message}`, 'error')
         throw new Error(`Failed to convert blob to ArrayBuffer: ${error.message}`)
       }
 
       // iOS Safari AudioContext creation fix - research shows AudioContext must be created on main thread
+      if (debugCallback) debugCallback('🔄 Creating AudioContext...', 'info')
       const audioContextOptions = isIOS ? { sampleRate: 16000 } : {}
       const audioContext = new (window.AudioContext || window.webkitAudioContext)(audioContextOptions)
 
       // Research fix: Resume audio context for iOS Safari
       if (audioContext.state === 'suspended') {
+        if (debugCallback) debugCallback('🔄 Resuming suspended AudioContext...', 'info')
         await audioContext.resume()
       }
+      if (debugCallback) debugCallback(`✅ AudioContext ready: ${audioContext.state}`, 'info')
 
       // Handle SharedArrayBuffer compatibility (CRITICAL for iOS Safari)
       let processedArrayBuffer = arrayBuffer
@@ -748,6 +766,7 @@ class WhisperWebService {
         // CRITICAL FIX: iOS Safari requires callback-based decodeAudioData, not promise-based
         if (isIOS || isSafari) {
           console.log('🍎 Using callback-based decodeAudioData for Safari/iOS compatibility')
+          if (debugCallback) debugCallback('🔄 Decoding audio (Safari callback mode)...', 'info')
           audioBuffer = await new Promise((resolve, reject) => {
             audioContext.decodeAudioData(
               processedArrayBuffer,
@@ -757,6 +776,7 @@ class WhisperWebService {
                   sampleRate: decodedBuffer.sampleRate,
                   duration: decodedBuffer.duration
                 })
+                if (debugCallback) debugCallback(`✅ Audio decoded: ${decodedBuffer.duration.toFixed(2)}s`, 'info')
                 resolve(decodedBuffer)
               },
               (error) => {
@@ -769,8 +789,10 @@ class WhisperWebService {
 
                 // Safari null error bug - documented issue
                 if (error === null) {
+                  if (debugCallback) debugCallback('❌ Safari null error bug detected', 'error')
                   reject(new Error(`Safari decodeAudioData null error bug. Audio format ${blob.type} is incompatible with iOS Safari. Ensure MediaRecorder uses video/mp4 format.`))
                 } else {
+                  if (debugCallback) debugCallback(`❌ Safari decode error: ${error.message}`, 'error')
                   reject(new Error(`Safari audio decode failed: ${error.message || 'Unknown Safari error'}`))
                 }
               }
@@ -778,7 +800,9 @@ class WhisperWebService {
           })
         } else {
           // Use promise-based approach for other browsers
+          if (debugCallback) debugCallback('🔄 Decoding audio (promise mode)...', 'info')
           audioBuffer = await audioContext.decodeAudioData(processedArrayBuffer)
+          if (debugCallback) debugCallback(`✅ Audio decoded: ${audioBuffer.duration.toFixed(2)}s`, 'info')
         }
       } catch (decodeError) {
         console.error('❌ Comprehensive audio decode failure:', {

@@ -496,11 +496,22 @@ class HybridWhisperService {
       this.debug('🎯 Quality mode with downloads allowed: preferring Whisper AI');
       selectedTier = this.availableTiers.find(t => t.id === 'tier3') || this.availableTiers[0];
     } else {
-      // Balanced: Prefer Whisper AI for quality, fall back to Web Speech if needed
-      this.debug('⚖️ Balanced mode: preferring Whisper AI for quality transcription');
-      selectedTier = this.availableTiers.find(t => t.id === 'tier3') ||
-                    this.availableTiers.find(t => t.id === 'tier2') ||
-                    this.availableTiers[0];
+      // Balanced: ALWAYS prefer Whisper AI first for high accuracy transcription
+      this.debug('⚖️ Balanced mode: PRIORITIZING Whisper AI (tier3) for high accuracy meeting notes');
+
+      const whisperTier = this.availableTiers.find(t => t.id === 'tier3');
+      const webSpeechTier = this.availableTiers.find(t => t.id === 'tier2');
+
+      if (whisperTier && whisperTier.available) {
+        this.debug('✅ Whisper AI (tier3) is available - selecting for real transcription');
+        selectedTier = whisperTier;
+      } else if (webSpeechTier && webSpeechTier.available) {
+        this.debug('⚠️ Whisper AI not available, falling back to Web Speech API');
+        selectedTier = webSpeechTier;
+      } else {
+        this.debug('❌ Neither Whisper AI nor Web Speech available, using fallback');
+        selectedTier = this.availableTiers[0];
+      }
     }
 
     this.debug('🎯 Tier selection completed:', {

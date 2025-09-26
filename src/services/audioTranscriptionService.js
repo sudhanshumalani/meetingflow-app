@@ -24,10 +24,15 @@ class AudioTranscriptionService {
 
     try {
       if (!speechRecognitionService.isSupported()) {
-        throw new Error('Web Speech API is not supported in this browser');
+        console.error('❌ Web Speech API not supported. User agent:', navigator.userAgent);
+        throw new Error('Web Speech API is not supported in this browser. Please use Chrome, Edge, or Safari.');
       }
 
-      speechRecognitionService.initialize();
+      const initialized = speechRecognitionService.initialize();
+      if (!initialized) {
+        throw new Error('Failed to initialize speech recognition');
+      }
+
       this.isInitialized = true;
 
       console.log('✅ AudioTranscriptionService initialized successfully');
@@ -197,7 +202,12 @@ class AudioTranscriptionService {
    * Check if the service is supported
    */
   isSupported() {
-    return speechRecognitionService.isSupported();
+    try {
+      return speechRecognitionService.isSupported();
+    } catch (error) {
+      console.warn('Error checking speech recognition support:', error);
+      return false;
+    }
   }
 
   /**
@@ -210,6 +220,15 @@ class AudioTranscriptionService {
       supported: this.isSupported(),
       initialized: this.isInitialized,
       recording: this.isRecording
+    };
+  }
+
+  // Ensure service has required methods even if speechRecognitionService is undefined
+  getStatus() {
+    return {
+      isSupported: this.isSupported(),
+      isInitialized: this.isInitialized,
+      isRecording: this.isRecording
     };
   }
 }

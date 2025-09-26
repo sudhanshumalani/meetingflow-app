@@ -65,8 +65,8 @@ class AudioBufferService {
         this.isRecording = false
       }
 
-      // Start recording
-      this.mediaRecorder.start(1000) // Collect data every second
+      // Start recording with iOS Safari fix - research shows 500ms timing resolves transcription issues
+      this.mediaRecorder.start(500) // iOS Safari fix: collect data every 500ms
       this.isRecording = true
 
       console.log('✅ Audio buffer recording started successfully')

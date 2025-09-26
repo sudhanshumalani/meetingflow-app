@@ -559,6 +559,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     try {
       setIsEnhancing(true)
       addDebugMessage(`🚀 Processing ${(audioBlob.size / 1024 / 1024).toFixed(2)}MB audio...`, 'info')
+      addDebugMessage('📱 Applied MediaRecorder 500ms timing fix', 'info')
 
       addDebugMessage('📞 Calling Whisper service...', 'info')
 

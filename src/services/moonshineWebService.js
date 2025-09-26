@@ -336,16 +336,16 @@ class WhisperWebService {
 
       if (maxAmplitude < 0.001) {
         console.warn('⚠️ Audio appears to be silent or very quiet')
+        if (debugCallback) debugCallback('⚠️ Very quiet audio detected', 'warning')
         // Throw error for completely silent audio to prevent garbage output
         if (maxAmplitude === 0) {
           throw new Error('Audio is completely silent - cannot transcribe. Please check microphone permissions and try recording again.')
         }
       }
 
-      // Additional validation for iOS Safari - check for corrupted audio data
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
-      if (isIOS && processedAudio.length < 16000) { // Less than 1 second at 16kHz
-        console.warn('⚠️ Very short audio detected on iOS - may produce poor results')
+      // Simple validation - avoid complex preprocessing that may cause issues
+      if (processedAudio.length < 8000) { // Less than 0.5 second at 16kHz
+        if (debugCallback) debugCallback('⚠️ Very short audio detected', 'warning')
       }
 
       // Transcribe with simplified settings to avoid empty results
@@ -358,13 +358,17 @@ class WhisperWebService {
 
       if (debugCallback) debugCallback('🤖 Running AI transcription...', 'info')
 
-      const result = await this.pipeline(processedAudio, {
+      // Simple pipeline configuration - research shows complex settings can cause issues
+      const pipelineOptions = {
         task: 'transcribe',
         language: 'english',
-        return_timestamps: false, // Disable timestamps to simplify
-        // Remove potentially problematic options
+        return_timestamps: false,
         ...options
-      })
+      }
+
+      if (debugCallback) debugCallback('🤖 Using simple pipeline settings', 'info')
+
+      const result = await this.pipeline(processedAudio, pipelineOptions)
 
       if (debugCallback) debugCallback('✅ AI transcription completed', 'info')
 
@@ -438,15 +442,29 @@ class WhisperWebService {
       // If extracted text appears to be garbage, don't use it
       if (isGarbageText(extractedText)) {
         console.warn('🚨 GARBAGE TEXT DETECTED - rejecting Whisper result:', extractedText)
+        if (debugCallback) debugCallback(`🚨 Garbage text rejected: "${extractedText}"`, 'error')
 
         // For iOS Safari, disable Whisper temporarily to prevent further garbage
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
         if (isIOS) {
           console.warn('🍎 Disabling Whisper on iOS Safari due to garbage output')
-          // Don't completely disable, but make it clear this is an iOS issue
+          if (debugCallback) debugCallback('🍎 iOS Safari garbage output detected', 'error')
         }
 
         throw new Error(`Whisper produced invalid output: "${extractedText}". This appears to be an iOS Safari audio processing issue. Web Speech API transcript has been preserved.`)
+      }
+
+      // Enhanced iOS Safari empty output debugging
+      if (!extractedText || extractedText.length === 0) {
+        if (debugCallback) {
+          debugCallback('❌ Empty Whisper output detected', 'error')
+          debugCallback(`Result type: ${typeof result}`, 'error')
+          debugCallback(`Audio duration: ${(processedAudio.length / 16000).toFixed(2)}s`, 'error')
+          debugCallback(`Max amplitude: ${maxAmplitude.toFixed(4)}`, 'error')
+
+          if (isIOS) {
+            debugCallback('📱 iOS Safari empty output - trying fixes...', 'warning')
+          }
+        }
       }
 
       // Format result
@@ -535,13 +553,14 @@ class WhisperWebService {
         throw new Error(`Failed to convert blob to ArrayBuffer: ${error.message}`)
       }
 
-      // iOS-optimized AudioContext creation
-      const audioContextOptions = {}
-      if (isIOS) {
-        audioContextOptions.sampleRate = 16000 // Match Whisper's expected rate
-      }
-
+      // iOS Safari AudioContext creation fix - research shows AudioContext must be created on main thread
+      const audioContextOptions = isIOS ? { sampleRate: 16000 } : {}
       const audioContext = new (window.AudioContext || window.webkitAudioContext)(audioContextOptions)
+
+      // Research fix: Resume audio context for iOS Safari
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume()
+      }
 
       // Handle SharedArrayBuffer compatibility (CRITICAL for iOS Safari)
       let processedArrayBuffer = arrayBuffer

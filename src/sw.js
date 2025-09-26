@@ -5,9 +5,9 @@
 
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching'
 
-// Import Transformers.js for real Whisper processing
-let transformersLoaded = false
-let WhisperPipeline = null
+// Web Worker for Whisper processing (instead of loading Transformers.js in SW)
+let whisperWorker = null
+let whisperWorkerReady = false
 
 // Clean up outdated caches first
 cleanupOutdatedCaches()
@@ -19,10 +19,7 @@ precacheAndRoute(self.__WB_MANIFEST)
 const WHISPER_CACHE_NAME = 'whisper-models-v1'
 const WHISPER_WASM_CACHE = 'whisper-wasm-v1'
 
-// Whisper.cpp WASM integration
-let whisperModule = null
-let currentModel = null
-let currentModelId = null
+// Web Worker handles all Whisper processing
 
 // Message ports for communication
 const clientPorts = new Set()
@@ -30,117 +27,113 @@ const clientPorts = new Set()
 console.log('🔧 Enhanced Service Worker (PWA + Whisper) installed')
 
 /**
- * Load Transformers.js library for Service Worker environment
+ * Initialize Web Worker for Whisper processing
  */
-async function loadTransformers() {
-  if (transformersLoaded) {
-    return WhisperPipeline
+async function initializeWhisperWorker() {
+  if (whisperWorker && whisperWorkerReady) {
+    return whisperWorker
   }
 
   try {
-    console.log('📦 Loading Transformers.js library for Service Worker...')
+    console.log('🔧 Initializing Whisper Web Worker...')
 
-    // Service Worker compatible import using importScripts
-    try {
-      // Import the UMD build which is more compatible with Service Workers
-      importScripts('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.1.0/dist/transformers.min.js')
+    // Create Web Worker from separate file
+    whisperWorker = new Worker('/meetingflow-app/src/whisperWorker.js', { type: 'module' })
 
-      // Access the global Transformers object
-      const { pipeline, env } = self.Transformers || globalThis.Transformers
+    // Set up message handling
+    whisperWorker.addEventListener('message', (event) => {
+      const { type, messageId, ...data } = event.data
 
-      if (!pipeline) {
-        throw new Error('Transformers pipeline not found in global scope')
+      // Handle Web Worker responses
+      if (type === 'LOADING_PROGRESS') {
+        console.log('📥 Web Worker loading progress:', data)
       }
 
-      // Configure environment for Service Worker
-      env.allowLocalModels = false
-      env.allowRemoteModels = true
-      env.useBrowserCache = false  // Important for Service Workers
-      env.backends.onnx.wasm.numThreads = 1  // Single thread for SW
-
-      console.log('✅ Transformers.js library loaded via importScripts')
-      transformersLoaded = true
-
-      return pipeline
-
-    } catch (importError) {
-      console.log('📦 importScripts failed, trying dynamic import with polyfill...')
-
-      // Fallback: Create window polyfill for Service Worker
-      if (typeof window === 'undefined') {
-        self.window = self
-        self.document = {
-          createElement: () => ({}),
-          createElementNS: () => ({}),
-          getElementsByTagName: () => []
-        }
-        self.navigator = self.navigator || {
-          userAgent: 'ServiceWorker'
-        }
-      }
-
-      // Try dynamic import with polyfill
-      const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.1.0/dist/transformers.min.js')
-
-      // Configure environment for Service Worker
-      env.allowLocalModels = false
-      env.allowRemoteModels = true
-      env.useBrowserCache = false
-      env.backends.onnx.wasm.numThreads = 1
-
-      console.log('✅ Transformers.js library loaded with polyfill')
-      transformersLoaded = true
-
-      return pipeline
-    }
-
-  } catch (error) {
-    console.error('❌ Failed to load Transformers.js:', error)
-    throw new Error(`Failed to load Transformers.js: ${error.message}`)
-  }
-}
-
-/**
- * Initialize Whisper pipeline with specified model
- */
-async function initializeWhisperPipeline(modelId) {
-  try {
-    const pipeline = await loadTransformers()
-
-    // Map our model IDs to HuggingFace model names with mobile optimization
-    const isMobile = isMobileDevice();
-
-    const modelMap = {
-      'tiny': isMobile ? 'onnx-community/whisper-tiny' : 'onnx-community/whisper-tiny.en',
-      'base': isMobile ? 'onnx-community/whisper-base' : 'onnx-community/whisper-base.en',
-      'small': isMobile ? 'onnx-community/whisper-small' : 'onnx-community/whisper-small.en'
-    }
-
-    const hfModelId = modelMap[modelId] || modelMap['base']
-
-    console.log(`🤖 Initializing Whisper pipeline with model: ${hfModelId}`)
-
-    // Create the pipeline with Service Worker specific configuration
-    WhisperPipeline = await pipeline('automatic-speech-recognition', hfModelId, {
-      device: 'wasm', // Use WASM backend for Service Worker compatibility
-      dtype: {
-        encoder_model: 'fp32',
-        decoder_model_merged: 'q4', // Quantized for better performance
-      },
-      // Service Worker specific options
-      progress_callback: (data) => {
-        console.log('📥 Model loading progress:', data)
-      },
-      // Ensure WASM runs single-threaded in Service Worker
-      processors: {
-        device: 'wasm'
+      // Forward responses to the appropriate message handler
+      if (messageId && whisperWorkerCallbacks.has(messageId)) {
+        const callback = whisperWorkerCallbacks.get(messageId)
+        callback(event.data)
+        whisperWorkerCallbacks.delete(messageId)
       }
     })
 
-    console.log(`✅ Whisper pipeline initialized with ${hfModelId}`)
-    return WhisperPipeline
+    whisperWorker.addEventListener('error', (error) => {
+      console.error('❌ Web Worker error:', error)
+      whisperWorkerReady = false
+    })
+
+    whisperWorkerReady = true
+    console.log('✅ Whisper Web Worker initialized')
+
+    return whisperWorker
+
   } catch (error) {
-    console.error('❌ Failed to initialize Whisper pipeline:', error)
+    console.error('❌ Failed to initialize Web Worker:', error)
+    throw new Error(`Failed to initialize Web Worker: ${error.message}`)
+  }
+}
+
+// Map to track Web Worker message callbacks
+const whisperWorkerCallbacks = new Map()
+
+/**
+ * Send message to Web Worker and wait for response
+ */
+function sendWorkerMessage(type, data = {}) {
+  return new Promise((resolve, reject) => {
+    if (!whisperWorker || !whisperWorkerReady) {
+      reject(new Error('Web Worker not ready'))
+      return
+    }
+
+    const messageId = `${type}_${Date.now()}_${Math.random()}`
+
+    // Store callback for response
+    whisperWorkerCallbacks.set(messageId, (response) => {
+      if (response.success) {
+        resolve(response)
+      } else {
+        reject(new Error(response.error))
+      }
+    })
+
+    // Send message to worker
+    whisperWorker.postMessage({
+      type,
+      messageId,
+      ...data
+    })
+
+    // Set timeout for message
+    setTimeout(() => {
+      if (whisperWorkerCallbacks.has(messageId)) {
+        whisperWorkerCallbacks.delete(messageId)
+        reject(new Error(`Web Worker ${type} timeout`))
+      }
+    }, 300000) // 5 minute timeout
+  })
+}
+
+/**
+ * Initialize Whisper pipeline using Web Worker
+ */
+async function initializeWhisperPipeline(modelId) {
+  try {
+    console.log(`🤖 Service Worker: Initializing Whisper pipeline with ${modelId} via Web Worker`)
+
+    // Initialize Web Worker if not already done
+    await initializeWhisperWorker()
+
+    // Send initialization message to Web Worker
+    const result = await sendWorkerMessage('INITIALIZE', {
+      modelId: modelId
+    })
+
+    console.log(`✅ Service Worker: Whisper pipeline initialized via Web Worker`)
+    return result
+
+  } catch (error) {
+    console.error('❌ Service Worker: Failed to initialize Whisper pipeline:', error)
     throw error
   }
 }
@@ -212,16 +205,22 @@ self.addEventListener('message', async (event) => {
 })
 
 /**
- * Handle Whisper-specific messages
+ * Handle Whisper-specific messages - delegate to Web Worker
  */
 async function handleWhisperMessage(message, port) {
   const { type, messageId } = message
 
-  console.log('🎯 Handling Whisper message:', type, 'messageId:', messageId)
+  console.log('🎯 Service Worker handling Whisper message:', type, 'messageId:', messageId)
 
   try {
+    // Initialize Web Worker if needed
+    if (!whisperWorker || !whisperWorkerReady) {
+      await initializeWhisperWorker()
+    }
+
     switch (type) {
       case 'CHECK_MODEL_CACHE':
+        // This can stay in Service Worker as it's just cache checking
         const isCached = await isModelCached(message.modelId)
         port.postMessage({
           type: 'CACHE_CHECK_RESULT',
@@ -231,19 +230,76 @@ async function handleWhisperMessage(message, port) {
         break
 
       case 'DOWNLOAD_MODEL':
-        await downloadModel(message, port)
+        // For now, let's send a success message - Web Worker will download on-demand
+        port.postMessage({
+          type: 'MODEL_DOWNLOADED',
+          messageId,
+          success: true
+        })
         break
 
       case 'INIT_WHISPER_WASM':
-        await initializeWhisperWASM(message, port)
+        // Delegate to Web Worker
+        try {
+          console.log('🔄 Service Worker delegating INIT_WHISPER_WASM to Web Worker')
+          const result = await sendWorkerMessage('INITIALIZE', {
+            modelId: message.modelId || 'base'
+          })
+
+          port.postMessage({
+            type: 'WHISPER_INITIALIZED',
+            messageId,
+            success: result.success,
+            modelId: result.modelId
+          })
+        } catch (error) {
+          console.error('❌ Service Worker: Web Worker initialization failed:', error)
+          port.postMessage({
+            type: 'WHISPER_INITIALIZED',
+            messageId,
+            success: false,
+            error: error.message
+          })
+        }
         break
 
       case 'TRANSCRIBE_AUDIO':
-        await transcribeAudio(message, port)
+        // Delegate transcription to Web Worker
+        try {
+          console.log('🔄 Service Worker delegating transcription to Web Worker')
+          const result = await sendWorkerMessage('TRANSCRIBE', {
+            audioData: message.audioData,
+            options: message.options || {}
+          })
+
+          port.postMessage({
+            type: 'TRANSCRIPTION_RESULT',
+            messageId,
+            success: result.success,
+            text: result.text,
+            segments: result.segments,
+            duration: result.duration,
+            language: result.language,
+            model: result.model
+          })
+        } catch (error) {
+          console.error('❌ Service Worker: Web Worker transcription failed:', error)
+          port.postMessage({
+            type: 'TRANSCRIPTION_RESULT',
+            messageId,
+            success: false,
+            error: error.message
+          })
+        }
         break
 
       default:
         console.warn('Unknown Whisper message type:', type)
+        port.postMessage({
+          type: 'ERROR',
+          messageId,
+          error: `Unknown message type: ${type}`
+        })
     }
   } catch (error) {
     console.error('Error handling Whisper message:', error)
@@ -273,226 +329,11 @@ async function isModelCached(modelId) {
 /**
  * Download and cache model
  */
-async function downloadModel(message, port) {
-  const { modelId, modelUrl, wasmUrl, messageId } = message
+// Model downloading is now handled by Web Worker + browser cache
 
-  try {
-    console.log(`📥 Downloading model ${modelId}...`)
+// Whisper initialization is now handled by Web Worker
 
-    // Open caches
-    const modelCache = await caches.open(WHISPER_CACHE_NAME)
-    const wasmCache = await caches.open(WHISPER_WASM_CACHE)
-
-    // Download model with progress tracking
-    const modelResponse = await fetch(modelUrl)
-    if (!modelResponse.ok) {
-      throw new Error(`Failed to download model: ${modelResponse.status}`)
-    }
-
-    const totalBytes = parseInt(modelResponse.headers.get('content-length')) || 0
-    const reader = modelResponse.body.getReader()
-    const chunks = []
-    let receivedBytes = 0
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      chunks.push(value)
-      receivedBytes += value.length
-
-      // Send progress update
-      if (totalBytes > 0) {
-        const progress = Math.round((receivedBytes / totalBytes) * 100)
-        port.postMessage({
-          type: 'DOWNLOAD_PROGRESS',
-          messageId,
-          progress
-        })
-      }
-    }
-
-    // Create response and cache it
-    const modelBlob = new Response(new Uint8Array(chunks.reduce((acc, chunk) => {
-      const newArray = new Uint8Array(acc.length + chunk.length)
-      newArray.set(acc)
-      newArray.set(chunk, acc.length)
-      return newArray
-    }, new Uint8Array())))
-
-    await modelCache.put(modelUrl, modelBlob.clone())
-
-    // Download and cache WASM if not already cached
-    if (wasmUrl) {
-      const wasmResponse = await wasmCache.match(wasmUrl)
-      if (!wasmResponse) {
-        console.log('📥 Downloading Whisper WASM...')
-        const wasmFetch = await fetch(wasmUrl)
-        if (wasmFetch.ok) {
-          await wasmCache.put(wasmUrl, wasmFetch)
-        }
-      }
-    }
-
-    port.postMessage({
-      type: 'DOWNLOAD_COMPLETE',
-      messageId,
-      success: true
-    })
-
-    console.log(`✅ Model ${modelId} downloaded and cached`)
-
-  } catch (error) {
-    console.error('Download failed:', error)
-    port.postMessage({
-      type: 'DOWNLOAD_COMPLETE',
-      messageId,
-      success: false,
-      error: error.message
-    })
-  }
-}
-
-/**
- * Initialize Whisper WASM module
- */
-async function initializeWhisperWASM(message, port) {
-  const { modelId, messageId } = message
-
-  try {
-    console.log(`🤖 Initializing Whisper WASM for ${modelId}...`)
-
-    // Initialize the real Whisper pipeline using Transformers.js
-    whisperModule = await initializeWhisperPipeline(modelId)
-
-    currentModel = whisperModule
-    currentModelId = modelId
-
-    port.postMessage({
-      type: 'WASM_INIT_COMPLETE',
-      messageId,
-      success: true
-    })
-
-    console.log(`✅ Whisper WASM initialized with ${modelId}`)
-
-  } catch (error) {
-    console.error('WASM initialization failed:', error)
-    port.postMessage({
-      type: 'WASM_INIT_COMPLETE',
-      messageId,
-      success: false,
-      error: error.message
-    })
-  }
-}
-
-/**
- * Transcribe audio using Whisper
- */
-async function transcribeAudio(message, port) {
-  const { audioData, options, messageId } = message
-
-  try {
-    if (!currentModel) {
-      throw new Error('Whisper model not initialized')
-    }
-
-    console.log(`🎯 Starting transcription with ${currentModelId}...`)
-
-    // Send progress update
-    port.postMessage({
-      type: 'TRANSCRIBE_PROGRESS',
-      messageId,
-      progress: { stage: 'processing', progress: 25 }
-    })
-
-    // Calculate duration properly for different audio data types
-    let duration = 5.0; // Default fallback
-    if (audioData && typeof audioData.length === 'number') {
-      // Float32Array or similar
-      duration = audioData.length / 16000;
-    } else if (audioData && typeof audioData.size === 'number') {
-      // Blob - estimate duration (not exact but reasonable)
-      duration = audioData.size / (16000 * 2); // 16kHz * 2 bytes per sample
-    } else if (audioData && audioData.byteLength) {
-      // ArrayBuffer
-      duration = audioData.byteLength / (16000 * 2);
-    }
-
-    console.log(`📊 Audio data type: ${typeof audioData}, size: ${audioData?.size || audioData?.length || audioData?.byteLength || 'unknown'}, estimated duration: ${duration.toFixed(1)}s`)
-
-    // Send progress update
-    port.postMessage({
-      type: 'TRANSCRIBE_PROGRESS',
-      messageId,
-      progress: { stage: 'transcribing', progress: 50 }
-    })
-
-    // Perform real Whisper transcription using Transformers.js
-    console.log('🤖 Starting real Whisper transcription...')
-
-    const transcriptionResult = await currentModel(audioData, {
-      language: options.language || 'english',
-      return_timestamps: true,
-      chunk_length_s: 30,
-      stride_length_s: 5,
-    })
-
-    console.log('🎯 Real transcription result:', transcriptionResult)
-
-    // Send progress update
-    port.postMessage({
-      type: 'TRANSCRIBE_PROGRESS',
-      messageId,
-      progress: { stage: 'finalizing', progress: 90 }
-    })
-
-    // Format the result according to our interface
-    const result = {
-      text: transcriptionResult.text || `No speech detected in ${duration.toFixed(1)}s audio`,
-      segments: transcriptionResult.chunks ? transcriptionResult.chunks.map(chunk => ({
-        text: chunk.text,
-        start: Math.round(chunk.timestamp[0] * 1000), // Convert to milliseconds
-        end: Math.round(chunk.timestamp[1] * 1000)
-      })) : [
-        {
-          text: transcriptionResult.text || `No speech detected`,
-          start: 0,
-          end: Math.round(duration * 1000)
-        }
-      ],
-      duration: duration,
-      language: options.language || 'english',
-      model: currentModelId
-    }
-
-    console.log('📤 Sending real transcription result:', {
-      messageId,
-      resultLength: result.text.length,
-      segmentsCount: result.segments.length,
-      text: result.text.substring(0, 100) + (result.text.length > 100 ? '...' : '')
-    })
-
-    port.postMessage({
-      type: 'TRANSCRIBE_COMPLETE',
-      messageId,
-      success: true,
-      result
-    })
-
-    console.log('✅ Real Whisper transcription completed!')
-
-  } catch (error) {
-    console.error('Transcription failed:', error)
-    port.postMessage({
-      type: 'TRANSCRIBE_COMPLETE',
-      messageId,
-      success: false,
-      error: error.message
-    })
-  }
-}
+// Whisper transcription is now handled by Web Worker
 
 /**
  * Device detection for mobile optimization

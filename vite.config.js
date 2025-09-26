@@ -14,6 +14,12 @@ export default defineConfig({
       srcDir: 'src',
       filename: 'sw.js',
       registerType: 'autoUpdate',
+      workbox: {
+        // Force cache refresh
+        cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
+      },
       includeAssets: ['favicon.ico', 'pwa-icon.svg'],
       manifest: {
         name: 'MeetingFlow',
@@ -46,11 +52,19 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
+        // Force unique filenames for cache busting
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]',
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom']
         }
       }
     }
+  },
+  define: {
+    __APP_VERSION__: JSON.stringify('1.0.1'), // Bump version for cache bust
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   server: {
     https: true,

@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Mic, MicOff, Square, Volume2, Monitor, Settings, ChevronDown, Zap } from 'lucide-react'
 import audioTranscriptionService from '../services/audioTranscriptionService'
-import ModelDownloadModal from './whisper/ModelDownloadModal'
-import WhisperErrorBoundary from './whisper/WhisperErrorBoundary'
 
 const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
@@ -35,10 +33,8 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     videoWorkaround: false
   })
 
-  // NEW: Whisper integration
-  const [showModelDownloadModal, setShowModelDownloadModal] = useState(false)
-  const [whisperStatus, setWhisperStatus] = useState(null)
-  const [transcriptionMode, setTranscriptionMode] = useState('whisper') // 'whisper' or 'realtime'
+  // Web Speech API mode only
+  const [transcriptionMode, setTranscriptionMode] = useState('realtime')
 
   const timerRef = useRef(null)
   const lastSavedTranscriptRef = useRef('')
@@ -837,11 +833,7 @@ const AudioRecorderWithErrorBoundary = (props) => {
     window.location.reload();
   };
 
-  return (
-    <WhisperErrorBoundary onFallback={handleFallback} onRetry={handleRetry}>
-      <AudioRecorder {...props} />
-    </WhisperErrorBoundary>
-  );
+  return <AudioRecorder {...props} />;
 };
 
 export default AudioRecorderWithErrorBoundary

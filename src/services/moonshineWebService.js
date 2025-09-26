@@ -283,6 +283,15 @@ class WhisperWebService {
     const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
     const debugCallback = options.debugCallback
 
+    // IMMEDIATE DEBUG TEST - This should appear first in mobile panel
+    if (debugCallback) {
+      debugCallback('🧪 DEBUG TEST: Enhanced debugging is active!', 'info')
+      debugCallback('🔍 Debug callback function working correctly', 'info')
+      debugCallback(`🎯 Function called with: ${typeof audioData} audio data`, 'info')
+    } else {
+      console.warn('❌ No debugCallback provided - mobile debugging disabled')
+    }
+
     console.log('🧪 moonshineWebService.enhanceTranscript called with comprehensive debugging:', {
       audioDataType: typeof audioData,
       isBlob: audioData instanceof Blob,
@@ -296,7 +305,10 @@ class WhisperWebService {
       options
     })
 
-    if (debugCallback) debugCallback('🎵 Moonshine service called', 'info')
+    if (debugCallback) {
+      debugCallback('🎵 Moonshine service called', 'info')
+      debugCallback('✅ Debug callback confirmed working', 'info')
+    }
 
     // Fast initialization check
     if (!this.isInitialized && !this.initPromise) {

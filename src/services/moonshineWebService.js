@@ -421,6 +421,11 @@ class WhisperWebService {
         extractedLength: extractedText.length
       })
 
+      // Debug: Log the actual text for mobile debugging
+      if (debugCallback && extractedText) {
+        debugCallback(`🔤 Whisper output: "${extractedText}"`, 'info')
+      }
+
       // CRITICAL: Validate extracted text quality for iOS Safari
       const isGarbageText = (text) => {
         if (!text || typeof text !== 'string') return true
@@ -439,18 +444,22 @@ class WhisperWebService {
         return garbagePatterns.some(pattern => pattern.test(trimmed))
       }
 
-      // If extracted text appears to be garbage, don't use it
+      // Check for garbage but allow borderline cases for iOS debugging
       if (isGarbageText(extractedText)) {
-        console.warn('🚨 GARBAGE TEXT DETECTED - rejecting Whisper result:', extractedText)
-        if (debugCallback) debugCallback(`🚨 Garbage text rejected: "${extractedText}"`, 'error')
-
-        // For iOS Safari, disable Whisper temporarily to prevent further garbage
-        if (isIOS) {
-          console.warn('🍎 Disabling Whisper on iOS Safari due to garbage output')
-          if (debugCallback) debugCallback('🍎 iOS Safari garbage output detected', 'error')
+        console.warn('🚨 GARBAGE TEXT DETECTED - but allowing for iOS debugging:', extractedText)
+        if (debugCallback) {
+          debugCallback(`⚠️ Potential garbage: "${extractedText}"`, 'warning')
+          debugCallback('🧪 Allowing output for iOS debugging', 'warning')
         }
 
-        throw new Error(`Whisper produced invalid output: "${extractedText}". This appears to be an iOS Safari audio processing issue. Web Speech API transcript has been preserved.`)
+        // For iOS Safari, log but don't throw error during debugging
+        if (isIOS) {
+          console.warn('🍎 iOS Safari garbage output detected - allowing for debug')
+          if (debugCallback) debugCallback('🍎 iOS Safari output - check if useful', 'warning')
+        }
+
+        // Still return the text for debugging purposes - user can evaluate if it's useful
+        // throw new Error(`Whisper produced invalid output: "${extractedText}". This appears to be an iOS Safari audio processing issue. Web Speech API transcript has been preserved.`)
       }
 
       // Enhanced iOS Safari empty output debugging

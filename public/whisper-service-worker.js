@@ -3,7 +3,7 @@
  * Extends VitePWA functionality with ML model caching and execution
  */
 
-// Import workbox if available (from VitePWA)
+// Import workbox and set up manifest (required by VitePWA)
 if (typeof importScripts === 'function') {
   try {
     importScripts('/workbox-sw.js');
@@ -11,6 +11,9 @@ if (typeof importScripts === 'function') {
     console.log('Workbox not available, using custom implementation');
   }
 }
+
+// VitePWA manifest injection point - DO NOT REMOVE
+self.__WB_MANIFEST;
 
 // Whisper-specific caches
 const WHISPER_CACHE_NAME = 'whisper-models-v1';

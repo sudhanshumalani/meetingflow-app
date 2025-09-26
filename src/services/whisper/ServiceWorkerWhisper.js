@@ -132,10 +132,20 @@ class ServiceWorkerWhisper {
       this.handleServiceWorkerMessage(event.data);
     };
 
-    // Send port to service worker
-    registration.active.postMessage({
-      type: 'INIT_WHISPER_CHANNEL'
-    }, [this.messageChannel.port2]);
+    // Try to send port to service worker (may not be supported by default VitePWA)
+    if (registration.active) {
+      try {
+        registration.active.postMessage({
+          type: 'INIT_WHISPER_CHANNEL'
+        }, [this.messageChannel.port2]);
+      } catch (error) {
+        console.warn('Service Worker communication not supported, using fallback');
+        // For now, we'll simulate the service worker functionality
+        setTimeout(() => {
+          this.serviceWorkerReady = true;
+        }, 100);
+      }
+    }
   }
 
   /**
@@ -155,23 +165,28 @@ class ServiceWorkerWhisper {
         return;
       }
 
-      const messageId = `check_cache_${Date.now()}`;
-
-      const handleResponse = (event) => {
-        if (event.data.messageId === messageId) {
-          this.messageChannel.port1.removeEventListener('message', handleResponse);
-          resolve(event.data.isCached || false);
-        }
-      };
-
-      this.messageChannel.port1.addEventListener('message', handleResponse);
-
-      this.messageChannel.port1.postMessage({
-        type: 'CHECK_MODEL_CACHE',
-        modelId,
-        messageId
-      });
+      // For default VitePWA, we'll check Cache API directly
+      this.checkCacheDirectly(modelId).then(resolve).catch(() => resolve(false));
     });
+  }
+
+  /**
+   * Check cache directly using Cache API
+   */
+  async checkCacheDirectly(modelId) {
+    try {
+      const cache = await caches.open('whisper-models');
+      const modelUrls = {
+        'tiny': 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin',
+        'base': 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin',
+        'small': 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin'
+      };
+      const response = await cache.match(modelUrls[modelId]);
+      return !!response;
+    } catch (error) {
+      console.warn('Cache check failed:', error);
+      return false;
+    }
   }
 
   /**

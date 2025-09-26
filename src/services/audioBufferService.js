@@ -314,23 +314,39 @@ class AudioBufferService {
   }
 
   /**
-   * Get supported MIME type for recording
+   * Get supported MIME type for recording with iOS compatibility
    */
   getSupportedMimeType() {
-    const possibleTypes = [
-      'audio/webm;codecs=opus',
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+
+    // Prioritize iOS-compatible formats for Safari
+    const possibleTypes = isIOS ? [
+      'audio/mp4',           // Best iOS compatibility
+      'audio/wav',           // Fallback for iOS
+      'audio/webm;codecs=opus', // Legacy fallback
+      'audio/webm'
+    ] : [
+      'audio/webm;codecs=opus', // Best quality for other browsers
       'audio/webm',
       'audio/mp4',
       'audio/wav'
     ]
 
+    console.log(`🎵 Testing audio formats for ${isIOS ? 'iOS' : 'other'} platform:`)
+
     for (const type of possibleTypes) {
-      if (MediaRecorder.isTypeSupported(type)) {
+      const isSupported = MediaRecorder.isTypeSupported(type)
+      console.log(`  ${type}: ${isSupported ? '✅' : '❌'}`)
+      if (isSupported) {
+        console.log(`🎵 Selected audio format: ${type}`)
         return type
       }
     }
 
-    return 'audio/webm' // Fallback
+    // Last resort fallback
+    const fallback = isIOS ? 'audio/mp4' : 'audio/webm'
+    console.warn(`⚠️ No supported format found, using fallback: ${fallback}`)
+    return fallback
   }
 
   /**

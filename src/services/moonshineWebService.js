@@ -423,14 +423,45 @@ class WhisperWebService {
         return this.audioCache.get(cacheKey)
       }
 
+      console.log('🎵 Converting blob to Float32Array:', {
+        blobSize: blob.size,
+        blobType: blob.type,
+        isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent)
+      })
+
       const arrayBuffer = await blob.arrayBuffer()
       const audioContext = new (window.AudioContext || window.webkitAudioContext)()
-      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+
+      let audioBuffer
+      try {
+        audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+      } catch (decodeError) {
+        console.error('❌ Audio decode failed - likely unsupported format:', {
+          blobType: blob.type,
+          error: decodeError.message,
+          isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent)
+        })
+
+        // Provide more specific error for iOS format issues
+        if (/iPad|iPhone|iPod/.test(navigator.userAgent) && blob.type.includes('webm')) {
+          throw new Error(`iOS Safari doesn't support ${blob.type}. Please use audio/mp4 or audio/wav format.`)
+        }
+
+        throw new Error(`Audio format ${blob.type} is not supported by this browser. Error: ${decodeError.message}`)
+      }
 
       // Get first channel and resample to 16kHz if needed
       let audioData = audioBuffer.getChannelData(0)
 
+      console.log('🎵 Audio decoded successfully:', {
+        channels: audioBuffer.numberOfChannels,
+        sampleRate: audioBuffer.sampleRate,
+        duration: audioBuffer.duration,
+        samples: audioData.length
+      })
+
       if (audioBuffer.sampleRate !== 16000) {
+        console.log(`🔄 Resampling from ${audioBuffer.sampleRate}Hz to 16000Hz`)
         audioData = this.resampleAudio(audioData, audioBuffer.sampleRate, 16000)
       }
 
@@ -441,7 +472,11 @@ class WhisperWebService {
 
       return audioData
     } catch (error) {
-      console.error('Error converting blob to Float32Array:', error)
+      console.error('❌ Error converting blob to Float32Array:', {
+        message: error.message,
+        blobType: blob?.type,
+        blobSize: blob?.size
+      })
       throw error
     }
   }

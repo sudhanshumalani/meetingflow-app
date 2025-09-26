@@ -551,6 +551,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
     } catch (error) {
       console.error('❌ Whisper enhancement failed:', error)
+
+      // Show user-friendly error message
+      if (error.message.includes('iOS Safari') || error.message.includes('audio format')) {
+        setError(`Audio format not supported on iOS. The recording may be in WebM format which iOS cannot process. This has been fixed - please try recording again.`)
+      } else {
+        setError(`AI enhancement failed: ${error.message}`)
+      }
     } finally {
       setIsEnhancing(false)
     }

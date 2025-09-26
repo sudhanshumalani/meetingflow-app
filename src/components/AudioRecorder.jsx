@@ -261,6 +261,14 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       if (selectedAudioSource === 'microphone') {
         await audioTranscriptionService.startLiveTranscription({
         onTranscript: (result) => {
+          // CRITICAL DEBUG: Log what Web Speech API is producing
+          console.log('🎤 Web Speech API result:', {
+            text: result.text,
+            isFinal: result.isFinal,
+            length: result.text?.length,
+            isGarbage: /^(Generate\s*){2,}$/i.test(result.text || '')
+          })
+
           // Append to persistent transcript for text persistence
           const newText = result.text
           if (result.isFinal && newText.trim()) {
@@ -360,7 +368,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         console.log('✅ Starting auto-enhancement with Whisper...')
         enhanceWithWhisper(recordedAudio)
       } else {
-        console.log('⚠️ Auto-enhancement skipped - conditions not met')
+        console.log('⚠️ Auto-enhancement skipped - conditions not met:', {
+          noAudio: !recordedAudio,
+          whisperDisabled: !whisperEnabled,
+          whisperNotReady: whisperStatus !== 'ready',
+          currentStatus: whisperStatus,
+          selectedSource: selectedAudioSource
+        })
       }
 
       console.log('🛑 Recording stopped - transcript preserved for next session')
@@ -573,6 +587,16 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       }
 
       setError(userFriendlyError)
+
+      // CRITICAL FIX: Preserve Web Speech API transcript when Whisper fails
+      console.log('🔄 Whisper failed - preserving Web Speech API transcript:', {
+        currentTranscript: transcript,
+        persistentTranscript: persistentTranscriptRef.current
+      })
+
+      // Don't overwrite the good Web Speech API transcript
+      // The user still has their original transcript from Web Speech API
+
     } finally {
       setIsEnhancing(false)
     }

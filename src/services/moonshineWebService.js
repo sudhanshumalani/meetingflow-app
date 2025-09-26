@@ -311,6 +311,16 @@ class WhisperWebService {
 
       if (maxAmplitude < 0.001) {
         console.warn('⚠️ Audio appears to be silent or very quiet')
+        // Throw error for completely silent audio to prevent garbage output
+        if (maxAmplitude === 0) {
+          throw new Error('Audio is completely silent - cannot transcribe. Please check microphone permissions and try recording again.')
+        }
+      }
+
+      // Additional validation for iOS Safari - check for corrupted audio data
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      if (isIOS && processedAudio.length < 16000) { // Less than 1 second at 16kHz
+        console.warn('⚠️ Very short audio detected on iOS - may produce poor results')
       }
 
       // Transcribe with simplified settings to avoid empty results
@@ -377,6 +387,38 @@ class WhisperWebService {
         finalExtractedText: extractedText,
         extractedLength: extractedText.length
       })
+
+      // CRITICAL: Validate extracted text quality for iOS Safari
+      const isGarbageText = (text) => {
+        if (!text || typeof text !== 'string') return true
+        const trimmed = text.trim()
+        if (trimmed.length < 3) return true
+
+        // Check for common garbage patterns from iOS Safari issues
+        const garbagePatterns = [
+          /^(Generate\s*){2,}$/i,        // "Generate Generate"
+          /^(\w+\s*)\1{3,}$/,           // Repeated words
+          /^[^a-zA-Z]*$/,               // No letters
+          /^(.)\1{10,}$/,               // Repeated characters
+          /^(undefined|null|NaN)$/i     // Technical artifacts
+        ]
+
+        return garbagePatterns.some(pattern => pattern.test(trimmed))
+      }
+
+      // If extracted text appears to be garbage, don't use it
+      if (isGarbageText(extractedText)) {
+        console.warn('🚨 GARBAGE TEXT DETECTED - rejecting Whisper result:', extractedText)
+
+        // For iOS Safari, disable Whisper temporarily to prevent further garbage
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+        if (isIOS) {
+          console.warn('🍎 Disabling Whisper on iOS Safari due to garbage output')
+          // Don't completely disable, but make it clear this is an iOS issue
+        }
+
+        throw new Error(`Whisper produced invalid output: "${extractedText}". This appears to be an iOS Safari audio processing issue. Web Speech API transcript has been preserved.`)
+      }
 
       // Format result
       const enhancedResult = {

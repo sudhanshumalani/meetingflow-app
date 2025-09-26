@@ -160,14 +160,25 @@ class WhisperWebService {
       const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
 
       if (isIOS) {
-        // iOS has stricter memory and SharedArrayBuffer limitations
-        env.backends.onnx.wasm.proxy = false // Disable worker for iOS compatibility
-        env.backends.onnx.wasm.numThreads = 1 // Single thread for iOS stability
+        // CRITICAL: iOS has stricter memory and SharedArrayBuffer limitations
+        // Based on GitHub issue #1242 and extensive research
+        env.backends.onnx.wasm.proxy = false // Disable worker - causes crashes on iOS
+        env.backends.onnx.wasm.numThreads = 1 // Single thread only - multi-threading crashes iOS
+        env.backends.onnx.wasm.simd = false // Disable SIMD - compatibility issues
 
-        // Additional iOS memory optimizations for Transformers.js v2.15.1
-        env.backends.onnx.wasm.simd = false // Disable SIMD for better compatibility
+        // Enhanced iOS PWA optimizations based on research findings
+        if (isPWA) {
+          console.log('📱 Detected iOS PWA - applying maximum compatibility constraints')
+          // Force minimal memory usage for PWA environment
+          try {
+            env.backends.onnx.wasm.initialMemoryPages = 256 // Start with minimal memory
+            env.backends.onnx.wasm.maximumMemoryPages = 512 // Very conservative maximum
+          } catch (memError) {
+            console.warn('Could not set memory pages (may not be supported):', memError.message)
+          }
+        }
 
-        console.log('📱 Using iOS-optimized settings with memory constraints')
+        console.log('📱 Using enhanced iOS-optimized settings for maximum compatibility')
       } else {
         // Optimize based on loading strategy for other platforms
         if (this.loadingStrategy === 'preload') {
@@ -427,38 +438,122 @@ class WhisperWebService {
         return this.audioCache.get(cacheKey)
       }
 
-      console.log('🎵 Converting blob to Float32Array:', {
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+      const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
+
+      console.log('🎵 Converting blob to Float32Array with comprehensive iOS support:', {
         blobSize: blob.size,
         blobType: blob.type,
-        isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent)
+        isIOS,
+        isSafari,
+        isPWA,
+        userAgent: navigator.userAgent.substring(0, 100)
       })
 
-      const arrayBuffer = await blob.arrayBuffer()
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+      // Enhanced ArrayBuffer handling for iOS compatibility
+      let arrayBuffer
+      try {
+        arrayBuffer = await blob.arrayBuffer()
+
+        // Validate ArrayBuffer size for iOS memory constraints
+        if (isIOS && arrayBuffer.byteLength > 10 * 1024 * 1024) { // 10MB limit for iOS
+          console.warn('⚠️ Large audio file detected on iOS - may cause memory issues')
+        }
+      } catch (error) {
+        throw new Error(`Failed to convert blob to ArrayBuffer: ${error.message}`)
+      }
+
+      // iOS-optimized AudioContext creation
+      const audioContextOptions = {}
+      if (isIOS) {
+        audioContextOptions.sampleRate = 16000 // Match Whisper's expected rate
+      }
+
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)(audioContextOptions)
+
+      // Handle SharedArrayBuffer compatibility (CRITICAL for iOS Safari)
+      let processedArrayBuffer = arrayBuffer
+      if (arrayBuffer.constructor.name === 'SharedArrayBuffer') {
+        console.log('🔄 Converting SharedArrayBuffer to ArrayBuffer for Safari compatibility')
+        processedArrayBuffer = new ArrayBuffer(arrayBuffer.byteLength)
+        new Uint8Array(processedArrayBuffer).set(new Uint8Array(arrayBuffer))
+      }
+
+      console.log('🎵 Attempting audio decode with enhanced iOS support:', {
+        blobType: blob.type,
+        isIOS,
+        isSafari,
+        isPWA,
+        bufferSize: processedArrayBuffer.byteLength,
+        useCallbackMode: isIOS || isSafari
+      })
 
       let audioBuffer
       try {
-        audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+        // CRITICAL FIX: iOS Safari requires callback-based decodeAudioData, not promise-based
+        if (isIOS || isSafari) {
+          console.log('🍎 Using callback-based decodeAudioData for Safari/iOS compatibility')
+          audioBuffer = await new Promise((resolve, reject) => {
+            audioContext.decodeAudioData(
+              processedArrayBuffer,
+              (decodedBuffer) => {
+                console.log('✅ Safari callback decode succeeded:', {
+                  channels: decodedBuffer.numberOfChannels,
+                  sampleRate: decodedBuffer.sampleRate,
+                  duration: decodedBuffer.duration
+                })
+                resolve(decodedBuffer)
+              },
+              (error) => {
+                console.error('❌ Safari callback decode failed:', {
+                  error,
+                  errorType: typeof error,
+                  isNull: error === null,
+                  blobType: blob.type
+                })
+
+                // Safari null error bug - documented issue
+                if (error === null) {
+                  reject(new Error(`Safari decodeAudioData null error bug. Audio format ${blob.type} is incompatible with iOS Safari. Ensure MediaRecorder uses video/mp4 format.`))
+                } else {
+                  reject(new Error(`Safari audio decode failed: ${error.message || 'Unknown Safari error'}`))
+                }
+              }
+            )
+          })
+        } else {
+          // Use promise-based approach for other browsers
+          audioBuffer = await audioContext.decodeAudioData(processedArrayBuffer)
+        }
       } catch (decodeError) {
-        console.error('❌ Audio decode failed - likely unsupported format:', {
+        console.error('❌ Comprehensive audio decode failure:', {
           blobType: blob.type,
           error: decodeError.message,
           errorType: typeof decodeError,
           isNull: decodeError === null,
-          isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent)
+          isIOS,
+          isSafari,
+          isPWA,
+          bufferSize: processedArrayBuffer.byteLength
         })
 
-        // Safari bug: decodeAudioData rejects with null instead of proper EncodingError
-        if (decodeError === null && /iPad|iPhone|iPod/.test(navigator.userAgent)) {
-          throw new Error(`Safari decodeAudioData bug detected. Audio format ${blob.type} cannot be decoded. Try using video/mp4 format for recording.`)
+        // Enhanced error handling based on comprehensive research
+        let errorMessage = `Audio decode failed: ${decodeError?.message || 'Unknown error'}`
+
+        if (isIOS || isSafari) {
+          if (blob.type.includes('webm')) {
+            errorMessage = `❌ iOS Safari doesn't support WebM audio format (${blob.type}). MediaRecorder must use video/mp4 format for iOS compatibility.`
+          } else if (blob.type.includes('opus')) {
+            errorMessage = `❌ iOS Safari doesn't support Opus codec (${blob.type}). Use MP4 with AAC codec instead.`
+          } else if (isPWA) {
+            errorMessage = `❌ iOS PWA audio decode failed. This may be due to iOS memory constraints or format incompatibility. Ensure MediaRecorder uses video/mp4 format and audio files are under 10MB.`
+          } else {
+            errorMessage = `❌ iOS Safari audio decode failed. ${blob.type} format may be incompatible. Try recording with video/mp4 format.`
+          }
         }
 
-        // Provide more specific error for iOS format issues
-        if (/iPad|iPhone|iPod/.test(navigator.userAgent) && blob.type.includes('webm')) {
-          throw new Error(`iOS Safari doesn't support ${blob.type}. Please use video/mp4 format for recording.`)
-        }
-
-        throw new Error(`Audio format ${blob.type} is not supported by this browser. Error: ${decodeError?.message || 'Unknown decode error'}`)
+        throw new Error(errorMessage)
       }
 
       // Get first channel and resample to 16kHz if needed

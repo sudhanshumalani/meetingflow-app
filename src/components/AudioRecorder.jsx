@@ -552,12 +552,27 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     } catch (error) {
       console.error('❌ Whisper enhancement failed:', error)
 
-      // Show user-friendly error message
-      if (error.message.includes('iOS Safari') || error.message.includes('audio format')) {
-        setError(`Audio format not supported on iOS. The recording may be in WebM format which iOS cannot process. This has been fixed - please try recording again.`)
-      } else {
-        setError(`AI enhancement failed: ${error.message}`)
+      // Enhanced iOS-specific error handling based on comprehensive research
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
+
+      let userFriendlyError = `AI enhancement failed: ${error.message}`
+
+      if (isIOS) {
+        if (error.message.includes('iOS Safari') || error.message.includes('audio format') || error.message.includes('WebM')) {
+          userFriendlyError = `❌ iOS audio format issue detected. The recording may be in WebM format which iOS cannot process. This has been fixed - please try recording again.`
+        } else if (error.message.includes('memory') || error.message.includes('crash') || error.message.includes('Out of memory')) {
+          userFriendlyError = `❌ iOS memory limitation reached. Try shorter recordings (under 2 minutes) or restart the app.`
+        } else if (isPWA && (error.message.includes('SharedArrayBuffer') || error.message.includes('Worker'))) {
+          userFriendlyError = `❌ iOS PWA compatibility issue detected. Please refresh the app and try again with a shorter recording.`
+        } else if (error.message.includes('decodeAudioData') || error.message.includes('Safari callback')) {
+          userFriendlyError = `❌ iOS Safari audio decoding failed. Please ensure recording format is compatible and try again.`
+        } else if (error.message.includes('null error')) {
+          userFriendlyError = `❌ Safari audio processing bug detected. This is a known iOS Safari issue - please try recording again.`
+        }
       }
+
+      setError(userFriendlyError)
     } finally {
       setIsEnhancing(false)
     }

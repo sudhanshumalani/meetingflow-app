@@ -319,23 +319,24 @@ class AudioBufferService {
   getSupportedMimeType() {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
 
-    // Prioritize iOS-compatible formats for Safari
-    // NOTE: iOS Safari requires video/mp4 even for audio-only recording
+    // Enhanced iOS-compatible formats based on comprehensive research
+    // CRITICAL: iOS Safari requires video/mp4 even for audio-only recording
     const possibleTypes = isIOS ? [
-      'video/mp4',           // Required for iOS Safari (works for audio-only)
-      'audio/mp4',           // Secondary option
-      'audio/wav',           // Fallback for iOS
-      'audio/webm;codecs=opus', // Legacy fallback
-      'audio/webm'
+      'video/mp4',           // REQUIRED for iOS Safari (works for audio-only) - TOP PRIORITY
+      'audio/mp4',           // Secondary option but often doesn't work
+      'audio/wav',           // Fallback for iOS - larger files but compatible
+      'audio/webm;codecs=opus', // Legacy fallback - iOS Safari doesn't support this
+      'audio/webm'          // Legacy fallback - iOS Safari doesn't support this
     ] : [
       'audio/webm;codecs=opus', // Best quality for other browsers
       'audio/webm',
       'audio/mp4',
-      'video/mp4',
+      'video/mp4',           // Also works for other browsers
       'audio/wav'
     ]
 
-    console.log(`🎵 Testing audio formats for ${isIOS ? 'iOS' : 'other'} platform:`)
+    const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
+    console.log(`🎵 Testing audio formats for ${isIOS ? 'iOS' : 'other'} platform (PWA: ${isPWA}):`)
 
     for (const type of possibleTypes) {
       const isSupported = MediaRecorder.isTypeSupported(type)

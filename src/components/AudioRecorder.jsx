@@ -514,30 +514,54 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
   // Enhance transcript with Whisper Web
   const enhanceWithWhisper = async (audioBlob) => {
-    console.log('🔍 enhanceWithWhisper called with:', {
+    console.log('🧪 enhanceWithWhisper called with comprehensive debugging:', {
       hasAudioBlob: !!audioBlob,
       audioBlobSize: audioBlob?.size || 0,
+      audioBlobType: audioBlob?.type || 'unknown',
       whisperEnabled,
       whisperStatus,
       conditionsCheck: {
         whisperEnabled: !!whisperEnabled,
         statusReady: whisperStatus === 'ready',
-        hasBlob: !!audioBlob
-      }
+        hasBlob: !!audioBlob,
+        allConditionsMet: whisperEnabled && whisperStatus === 'ready' && !!audioBlob
+      },
+      isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
+      isPWA: window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
     })
 
-    if (!whisperEnabled || whisperStatus !== 'ready' || !audioBlob) {
-      console.log('❌ Whisper enhancement skipped - conditions not met')
+    if (!whisperEnabled) {
+      console.log('❌ Whisper enhancement skipped - Whisper not enabled')
+      return
+    }
+
+    if (whisperStatus !== 'ready') {
+      console.log('❌ Whisper enhancement skipped - Whisper status not ready:', whisperStatus)
+      return
+    }
+
+    if (!audioBlob) {
+      console.log('❌ Whisper enhancement skipped - No audio blob available')
       return
     }
 
     try {
       setIsEnhancing(true)
-      console.log('🌙 Starting Whisper enhancement...')
+      console.log('🌙 Starting Whisper enhancement with blob:', {
+        size: audioBlob.size,
+        type: audioBlob.type,
+        sizeInMB: (audioBlob.size / 1024 / 1024).toFixed(2)
+      })
 
+      console.log('📞 Calling whisperWebService.enhanceTranscript...')
+
+      const startTime = performance.now()
       const result = await whisperWebService.enhanceTranscript(audioBlob, {
         language: 'english'
       })
+      const processingDuration = performance.now() - startTime
+
+      console.log('🔍 Whisper enhancement completed in', processingDuration.toFixed(2), 'ms')
 
       console.log('🔍 Whisper result received:', {
         hasResult: !!result,

@@ -256,20 +256,40 @@ class WhisperWebService {
    * @returns {Promise<Object>} Enhanced transcript result
    */
   async enhanceTranscript(audioData, options = {}) {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
+
+    console.log('🧪 moonshineWebService.enhanceTranscript called with comprehensive debugging:', {
+      audioDataType: typeof audioData,
+      isBlob: audioData instanceof Blob,
+      audioBlobSize: audioData?.size || 'N/A',
+      audioBlobType: audioData?.type || 'N/A',
+      isInitialized: this.isInitialized,
+      hasInitPromise: !!this.initPromise,
+      hasPipeline: !!this.pipeline,
+      isIOS,
+      isPWA,
+      options
+    })
+
     // Fast initialization check
     if (!this.isInitialized && !this.initPromise) {
       console.log('🎵 Starting on-demand Whisper initialization...')
       this.loadingStrategy = 'progressive' // Use fastest loading for on-demand
     }
 
+    console.log('📊 Calling initialize()...')
     await this.initialize()
 
     if (!this.pipeline) {
+      console.error('❌ Pipeline not available after initialization')
       throw new Error('Whisper pipeline not initialized')
     }
 
+    console.log('✅ Pipeline ready, starting transcription process...')
+
     try {
-      console.log('🎵 Starting Whisper enhancement...')
+      console.log('🎵 Starting Whisper enhancement processing...')
       const startTime = performance.now()
 
       // Prepare audio data with optimization
@@ -277,8 +297,13 @@ class WhisperWebService {
 
       // If it's a Blob, convert to Float32Array with caching
       if (audioData instanceof Blob) {
+        console.log('🔄 Converting Blob to Float32Array...')
         const cacheKey = `audio_${audioData.size}_${audioData.type}`
         processedAudio = await this.blobToFloat32Array(audioData, cacheKey)
+        console.log('✅ Blob conversion completed:', {
+          processedAudioType: typeof processedAudio,
+          processedAudioLength: processedAudio?.length || 0
+        })
       }
 
       // Validate processed audio
@@ -331,6 +356,13 @@ class WhisperWebService {
         samplePreview: processedAudio?.slice(0, 10)
       })
 
+      console.log('📞 Calling pipeline with options:', {
+        task: 'transcribe',
+        language: 'english',
+        return_timestamps: false,
+        ...options
+      })
+
       const result = await this.pipeline(processedAudio, {
         task: 'transcribe',
         language: 'english',
@@ -338,6 +370,8 @@ class WhisperWebService {
         // Remove potentially problematic options
         ...options
       })
+
+      console.log('✅ Pipeline call completed, received result')
 
       const endTime = performance.now()
       const duration = (endTime - startTime) / 1000

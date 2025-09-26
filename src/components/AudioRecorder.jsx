@@ -180,16 +180,25 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   }, [])
 
 
+  // Track the last transcript sent to parent to prevent loops
+  const lastSentTranscriptRef = useRef('')
+
   // Update parent component when transcript changes
   useEffect(() => {
+    const currentTranscript = transcript.trim()
+
     console.log('🎤 AudioRecorder: Transcript state changed:', {
       transcript: transcript?.substring(0, 50) + '...',
-      hasTranscript: !!transcript.trim(),
-      hasCallback: !!onTranscriptUpdate
+      hasTranscript: !!currentTranscript,
+      hasCallback: !!onTranscriptUpdate,
+      isDifferent: currentTranscript !== lastSentTranscriptRef.current
     })
-    if (transcript.trim() && onTranscriptUpdate) {
-      console.log('🎤 AudioRecorder: Updating parent with transcript:', transcript.substring(0, 100) + '...')
-      onTranscriptUpdate(transcript.trim())
+
+    // Only update parent if transcript is different from last sent
+    if (currentTranscript && onTranscriptUpdate && currentTranscript !== lastSentTranscriptRef.current) {
+      console.log('🎤 AudioRecorder: Updating parent with transcript:', currentTranscript.substring(0, 100) + '...')
+      lastSentTranscriptRef.current = currentTranscript
+      onTranscriptUpdate(currentTranscript)
     }
   }, [transcript, onTranscriptUpdate])
 

@@ -8,10 +8,10 @@ import { WHISPER_MODELS, getRecommendedModel } from '../config/modelConfig.js';
 
 class AudioTranscriptionService {
   constructor() {
-    this.isInitialized = false
-    this.recognition = null
-    this.isRecording = false
-    this.listeners = new Set()
+    this.isInitialized = false;
+    this.recognition = null;
+    this.isRecording = false;
+    this.listeners = new Set();
 
     // Audio sources
     this.audioSources = {
@@ -22,9 +22,9 @@ class AudioTranscriptionService {
     this.activeSource = 'microphone'
 
     // Web Audio API for tab audio processing
-    this.audioContext = null
-    this.mediaRecorder = null
-    this.analyserNode = null
+    this.audioContext = null;
+    this.mediaRecorder = null;
+    this.analyserNode = null;
 
     // Settings
     this.realtimeEnabled = this.checkWebSpeechSupport()
@@ -471,10 +471,10 @@ class AudioTranscriptionService {
     // Clean up audio context
     if (this.audioContext && this.audioContext.state !== 'closed') {
       this.audioContext.close().catch(console.warn)
-      this.audioContext = null
+      this.audioContext = null;
     }
 
-    this.analyserNode = null
+    this.analyserNode = null;
 
     console.log('✅ Recording stopped')
     return { success: true }
@@ -556,7 +556,7 @@ class AudioTranscriptionService {
 
     if (this.recognition) {
       this.recognition.abort()
-      this.recognition = null
+      this.recognition = null;
     }
 
     this.listeners.clear()
@@ -578,6 +578,8 @@ class AudioTranscriptionService {
 
     // Show model selection UI (for now, auto-select recommended model)
     const recommendedModel = getRecommendedModel();
+
+    console.log('🔧🔧🔧 About to call hybridWhisperService.initialize with model:', recommendedModel.id);
 
     try {
       await hybridWhisperService.initialize({

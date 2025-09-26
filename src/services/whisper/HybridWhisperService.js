@@ -8,22 +8,28 @@ import { WHISPER_MODELS, getRecommendedModel } from '../../config/modelConfig.js
 
 class HybridWhisperService {
   constructor() {
+    console.log('🏗️🏗️🏗️ HybridWhisperService constructor called');
     this.isInitialized = false;
     this.isLoading = false;
     this.currentTier = null;
     this.availableTiers = [];
     this.currentModelId = null;
-    this.userPreferences = this.loadUserPreferences();
     this.performanceMetrics = {
       initTimes: [],
       transcriptionTimes: [],
       errorCounts: { tier1: 0, tier2: 0, tier3: 0 }
     };
 
-    // Debug system
-    this.debugEnabled = this.userPreferences.debugMode || false;
+    // Initialize debug system first
     this.debugLog = [];
     this.initializationSteps = [];
+    this.debugEnabled = false; // Will be updated after loading preferences
+
+    // Load user preferences (now safe to use debug)
+    this.userPreferences = this.loadUserPreferences();
+
+    // Update debug mode based on preferences
+    this.debugEnabled = this.userPreferences.debugMode || false;
 
     this.debug('🎯 HybridWhisperService constructor called');
     this.debug('📊 Initial state:', {
@@ -38,6 +44,11 @@ class HybridWhisperService {
    * Debug logging system
    */
   debug(message, data = null) {
+    // Safety check for initialization
+    if (!this.debugLog) {
+      this.debugLog = [];
+    }
+
     const timestamp = new Date().toISOString();
     const logEntry = {
       timestamp,
@@ -62,6 +73,11 @@ class HybridWhisperService {
    * Add initialization step for tracking
    */
   addInitStep(step, status = 'started', data = null) {
+    // Safety check for initialization
+    if (!this.initializationSteps) {
+      this.initializationSteps = [];
+    }
+
     const stepEntry = {
       step,
       status,
@@ -124,7 +140,7 @@ class HybridWhisperService {
         maxModelSize: '244MB', // small model
         offlineMode: false,
         performanceMode: 'balanced', // fast, balanced, quality
-        debugMode: false
+        debugMode: true
       };
 
       const preferences = stored ? { ...defaults, ...JSON.parse(stored) } : defaults;
@@ -141,7 +157,7 @@ class HybridWhisperService {
         maxModelSize: '244MB',
         offlineMode: false,
         performanceMode: 'balanced',
-        debugMode: false
+        debugMode: true
       };
     }
   }
@@ -207,7 +223,26 @@ class HybridWhisperService {
     if (hasServiceWorker) {
       try {
         this.debug('⏳ Waiting for Service Worker ready...');
-        await navigator.serviceWorker.ready;
+
+        // Add timeout to prevent infinite hanging
+        const serviceWorkerReady = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error('Service Worker ready timeout after 5 seconds'));
+          }, 5000);
+
+          navigator.serviceWorker.ready.then(
+            (registration) => {
+              clearTimeout(timeout);
+              resolve(registration);
+            },
+            (error) => {
+              clearTimeout(timeout);
+              reject(error);
+            }
+          );
+        });
+
+        await serviceWorkerReady;
         this.debug('✅ Service Worker ready');
 
         tiers.push({
@@ -247,6 +282,7 @@ class HybridWhisperService {
    * Initialize with intelligent tier selection
    */
   async initialize(options = {}) {
+    console.log('🚀🚀🚀 HybridWhisperService.initialize() called with options:', options);
     this.addInitStep('initialize_start');
     this.debug('🚀 Initialize called with options:', options);
 
@@ -263,6 +299,29 @@ class HybridWhisperService {
 
     const startTime = Date.now();
 
+    // Add overall timeout to prevent infinite hanging
+    const initTimeout = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('HybridWhisperService initialization timeout after 15 seconds'));
+      }, 15000);
+    });
+
+    const initPromise = this._doInitialize(options, startTime);
+
+    try {
+      return await Promise.race([initPromise, initTimeout]);
+    } catch (error) {
+      this.debug('❌ Initialization failed or timed out:', error);
+      this.isLoading = false;
+      this.isInitialized = false;
+      throw error;
+    }
+  }
+
+  /**
+   * Internal initialization method
+   */
+  async _doInitialize(options, startTime) {
     try {
       this.isLoading = true;
       this.addInitStep('set_loading_state', 'completed', { isLoading: true });
@@ -732,11 +791,30 @@ class HybridWhisperService {
    * Transcribe with Web Speech API
    */
   async transcribeWithWebSpeech(audioData, options = {}) {
+    this.debug('🎤 Web Speech transcription starting', {
+      audioDataType: audioData?.constructor?.name,
+      audioDataLength: audioData?.length,
+      audioDataSize: audioData?.size,
+      audioData: audioData
+    });
+
     // For demonstration, we'll simulate Web Speech API
     // In a real implementation, this would convert audioData to real-time recognition
     await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 1200));
 
-    const duration = audioData.length / 16000;
+    // Calculate duration based on audio data type
+    let duration = 0;
+    if (audioData instanceof Blob) {
+      // For Blob, estimate based on size (rough estimate)
+      duration = Math.max(1, audioData.size / 16000); // Rough estimate
+    } else if (audioData?.length) {
+      // For array-like data
+      duration = audioData.length / 16000;
+    } else {
+      // Fallback duration
+      duration = 3.0;
+    }
+
     return {
       success: true,
       text: `🎤 Browser Speech Recognition: Processed ${duration.toFixed(1)}s of audio using native browser capabilities. This tier provides fast, reliable transcription with good accuracy for most languages. Perfect for real-time use cases.`,
@@ -766,7 +844,18 @@ class HybridWhisperService {
   async transcribeWithFallback(audioData, options = {}) {
     await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 700));
 
-    const duration = audioData.length / 16000;
+    // Calculate duration based on audio data type
+    let duration = 0;
+    if (audioData instanceof Blob) {
+      // For Blob, estimate based on size (rough estimate)
+      duration = Math.max(1, audioData.size / 16000); // Rough estimate
+    } else if (audioData?.length) {
+      // For array-like data
+      duration = audioData.length / 16000;
+    } else {
+      // Fallback duration
+      duration = 2.0;
+    }
     return {
       success: true,
       text: `📝 Fallback Transcription: Processed ${duration.toFixed(1)}s of audio with instant response. This mode ensures your app always works, even when advanced features are unavailable. Ready to upgrade to better transcription when possible.`,

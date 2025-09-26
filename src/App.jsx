@@ -127,6 +127,20 @@ function AppContent() {
     const skipLink = accessibility.createSkipLink('main-content')
     document.body.insertBefore(skipLink, document.body.firstChild)
 
+    // Register service worker for development mode
+    if ('serviceWorker' in navigator && import.meta.env.DEV) {
+      const swPath = import.meta.env.BASE_URL + 'sw-dev.js'
+      navigator.serviceWorker.register(swPath, {
+        scope: import.meta.env.BASE_URL
+      })
+        .then((registration) => {
+          console.log('🔧 Enhanced Service Worker registered:', registration)
+        })
+        .catch((error) => {
+          console.error('🚨 Service Worker registration failed:', error)
+        })
+    }
+
     // Announce app ready
     setTimeout(() => {
       a11y.announce('MeetingFlow application ready')

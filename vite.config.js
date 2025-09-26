@@ -10,34 +10,10 @@ export default defineConfig({
     react(),
     basicSsl(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
       registerType: 'autoUpdate',
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/huggingface\.co\/.*whisper.*\.bin$/,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'whisper-models',
-              expiration: {
-                maxEntries: 5,
-                maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
-              },
-            },
-          },
-          {
-            urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/npm\/.*whisper.*\.(js|wasm)$/,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'whisper-wasm',
-              expiration: {
-                maxEntries: 10,
-                maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
-              },
-            },
-          },
-        ]
-      },
       includeAssets: ['favicon.ico', 'pwa-icon.svg'],
       manifest: {
         name: 'MeetingFlow',

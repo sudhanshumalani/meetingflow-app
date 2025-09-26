@@ -163,7 +163,11 @@ class WhisperWebService {
         // iOS has stricter memory and SharedArrayBuffer limitations
         env.backends.onnx.wasm.proxy = false // Disable worker for iOS compatibility
         env.backends.onnx.wasm.numThreads = 1 // Single thread for iOS stability
-        console.log('📱 Using iOS-optimized settings')
+
+        // Additional iOS memory optimizations for Transformers.js v2.15.1
+        env.backends.onnx.wasm.simd = false // Disable SIMD for better compatibility
+
+        console.log('📱 Using iOS-optimized settings with memory constraints')
       } else {
         // Optimize based on loading strategy for other platforms
         if (this.loadingStrategy === 'preload') {
@@ -439,15 +443,22 @@ class WhisperWebService {
         console.error('❌ Audio decode failed - likely unsupported format:', {
           blobType: blob.type,
           error: decodeError.message,
+          errorType: typeof decodeError,
+          isNull: decodeError === null,
           isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent)
         })
 
-        // Provide more specific error for iOS format issues
-        if (/iPad|iPhone|iPod/.test(navigator.userAgent) && blob.type.includes('webm')) {
-          throw new Error(`iOS Safari doesn't support ${blob.type}. Please use audio/mp4 or audio/wav format.`)
+        // Safari bug: decodeAudioData rejects with null instead of proper EncodingError
+        if (decodeError === null && /iPad|iPhone|iPod/.test(navigator.userAgent)) {
+          throw new Error(`Safari decodeAudioData bug detected. Audio format ${blob.type} cannot be decoded. Try using video/mp4 format for recording.`)
         }
 
-        throw new Error(`Audio format ${blob.type} is not supported by this browser. Error: ${decodeError.message}`)
+        // Provide more specific error for iOS format issues
+        if (/iPad|iPhone|iPod/.test(navigator.userAgent) && blob.type.includes('webm')) {
+          throw new Error(`iOS Safari doesn't support ${blob.type}. Please use video/mp4 format for recording.`)
+        }
+
+        throw new Error(`Audio format ${blob.type} is not supported by this browser. Error: ${decodeError?.message || 'Unknown decode error'}`)
       }
 
       // Get first channel and resample to 16kHz if needed

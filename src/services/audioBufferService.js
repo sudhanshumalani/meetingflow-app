@@ -320,8 +320,10 @@ class AudioBufferService {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
 
     // Prioritize iOS-compatible formats for Safari
+    // NOTE: iOS Safari requires video/mp4 even for audio-only recording
     const possibleTypes = isIOS ? [
-      'audio/mp4',           // Best iOS compatibility
+      'video/mp4',           // Required for iOS Safari (works for audio-only)
+      'audio/mp4',           // Secondary option
       'audio/wav',           // Fallback for iOS
       'audio/webm;codecs=opus', // Legacy fallback
       'audio/webm'
@@ -329,6 +331,7 @@ class AudioBufferService {
       'audio/webm;codecs=opus', // Best quality for other browsers
       'audio/webm',
       'audio/mp4',
+      'video/mp4',
       'audio/wav'
     ]
 
@@ -344,7 +347,7 @@ class AudioBufferService {
     }
 
     // Last resort fallback
-    const fallback = isIOS ? 'audio/mp4' : 'audio/webm'
+    const fallback = isIOS ? 'video/mp4' : 'audio/webm'
     console.warn(`⚠️ No supported format found, using fallback: ${fallback}`)
     return fallback
   }

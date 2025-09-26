@@ -87,9 +87,15 @@ class WhisperWebService {
 
       // Determine optimal model based on capabilities
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
       const hasHighMemory = this.capabilities.memory < 200 // Use tiny if already using >200MB
 
-      if (isMobile || hasHighMemory) {
+      // Use extra small model for iOS PWAs due to stricter memory constraints
+      if (isIOS && isPWA) {
+        this.modelName = 'Xenova/whisper-tiny.en' // Smallest model for iOS PWA
+        console.log('📱 Detected iOS PWA - using minimal model for compatibility')
+      } else if (isMobile || hasHighMemory) {
         this.modelName = 'Xenova/whisper-tiny.en' // ~39M parameters, Transformers.js optimized
       } else {
         this.modelName = 'Xenova/whisper-base.en' // ~74M parameters, better accuracy
@@ -99,7 +105,9 @@ class WhisperWebService {
         webgpu: this.capabilities.webgpu,
         memory: `${this.capabilities.memory}MB`,
         model: this.modelName,
-        mobile: isMobile
+        mobile: isMobile,
+        iOS: isIOS,
+        PWA: isPWA
       })
 
       return this.capabilities
@@ -147,19 +155,33 @@ class WhisperWebService {
       env.allowLocalModels = false
       env.useBrowserCache = true // Enable browser caching
 
-      // Optimize based on loading strategy
-      if (this.loadingStrategy === 'preload') {
-        env.backends.onnx.wasm.proxy = false // Disable worker for preload
-        console.log('🚀 Using preload optimization strategy')
+      // iOS-specific optimizations
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
+
+      if (isIOS) {
+        // iOS has stricter memory and SharedArrayBuffer limitations
+        env.backends.onnx.wasm.proxy = false // Disable worker for iOS compatibility
+        env.backends.onnx.wasm.numThreads = 1 // Single thread for iOS stability
+        console.log('📱 Using iOS-optimized settings')
+      } else {
+        // Optimize based on loading strategy for other platforms
+        if (this.loadingStrategy === 'preload') {
+          env.backends.onnx.wasm.proxy = false // Disable worker for preload
+          console.log('🚀 Using preload optimization strategy')
+        }
       }
 
       // Use WebGPU if available, otherwise fallback to WASM
-      if (this.capabilities.webgpu) {
+      if (this.capabilities.webgpu && !isIOS) {
+        // WebGPU often has issues in iOS PWAs
         env.backends.onnx.device = 'webgpu'
         console.log('🚀 Using WebGPU acceleration')
       } else {
         env.backends.onnx.device = 'wasm'
-        env.backends.onnx.wasm.numThreads = Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4))
+        if (!isIOS) {
+          env.backends.onnx.wasm.numThreads = Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4))
+        }
         console.log('🔧 Using WASM with', env.backends.onnx.wasm.numThreads, 'threads')
       }
 
@@ -173,8 +195,8 @@ class WhisperWebService {
         'automatic-speech-recognition',
         modelToTry,
         {
-          dtype: this.capabilities.webgpu ? 'fp16' : 'fp32',
-          device: this.capabilities.webgpu ? 'webgpu' : 'wasm',
+          dtype: (this.capabilities.webgpu && !isIOS) ? 'fp16' : 'fp32',
+          device: (this.capabilities.webgpu && !isIOS) ? 'webgpu' : 'wasm',
           progress_callback: (progress) => {
             if (progress.status === 'downloading') {
               const percent = Math.round((progress.loaded / progress.total) * 100)
@@ -467,12 +489,23 @@ class WhisperWebService {
    * Get service status
    */
   getStatus() {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
+
     return {
       isSupported: this.isSupported(),
       isInitialized: this.isInitialized,
       isLoading: this.isLoading,
       model: this.modelName,
-      capabilities: this.capabilities
+      capabilities: this.capabilities,
+      platform: {
+        isIOS,
+        isPWA,
+        userAgent: navigator.userAgent,
+        hardwareConcurrency: navigator.hardwareConcurrency,
+        sharedArrayBufferSupported: typeof SharedArrayBuffer !== 'undefined',
+        webGPUAvailable: !!navigator.gpu
+      }
     }
   }
 

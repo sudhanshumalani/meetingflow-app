@@ -60,16 +60,104 @@ export const CDN_CONFIG = {
   }
 };
 
-// Device-specific model recommendations
-export const getRecommendedModel = () => {
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  const hasSlowConnection = navigator.connection &&
-    (navigator.connection.effectiveType === 'slow-2g' || navigator.connection.effectiveType === '2g');
+/**
+ * Enhanced device detection for optimal model selection
+ */
+export const detectDeviceCapabilities = () => {
+  const userAgent = navigator.userAgent;
 
-  if (isMobile || hasSlowConnection) {
-    return WHISPER_MODELS.tiny;
+  // Enhanced mobile detection
+  const isMobile = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+  const isTablet = /iPad|Android.*\bTablet\b/i.test(userAgent);
+
+  // Low-end device detection
+  const isLowEnd = /Android.*\b(SM-J|SM-A|SM-G|LG-|HUAWEI|Xiaomi).*(4|6).*GB/i.test(userAgent);
+
+  // Connection detection
+  const connection = navigator.connection;
+  const hasSlowConnection = connection &&
+    (connection.effectiveType === 'slow-2g' ||
+     connection.effectiveType === '2g' ||
+     connection.effectiveType === '3g');
+
+  // Memory detection
+  const deviceMemory = navigator.deviceMemory || 0;
+  const isLowMemory = deviceMemory > 0 && deviceMemory <= 4;
+
+  // Screen size detection
+  const isSmallScreen = window.innerWidth <= 768;
+  const screenSize = `${window.innerWidth}x${window.innerHeight}`;
+
+  // Battery status (if available)
+  const battery = navigator.getBattery ? 'available' : 'not available';
+
+  // Hardware concurrency (CPU cores approximation)
+  const cpuCores = navigator.hardwareConcurrency || 'unknown';
+
+  return {
+    deviceType: isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop',
+    isMobile,
+    isTablet,
+    isLowEnd,
+    hasSlowConnection,
+    deviceMemory: `${deviceMemory}GB`,
+    isLowMemory,
+    isSmallScreen,
+    screenSize,
+    battery,
+    cpuCores,
+    connectionType: connection?.effectiveType || 'unknown',
+    downlink: connection?.downlink || 'unknown',
+    rtt: connection?.rtt || 'unknown',
+    userAgent: userAgent.substring(0, 100) + '...' // Truncate for logging
+  };
+};
+
+// Device-specific model recommendations with enhanced detection
+export const getRecommendedModel = () => {
+  const capabilities = detectDeviceCapabilities();
+
+  console.log('📱 Device capabilities detected:', capabilities);
+
+  // Mobile phones: Always use tiny for battery efficiency and performance
+  if (capabilities.isMobile && !capabilities.isTablet) {
+    console.log('📱 Mobile phone detected: selecting tiny model for optimal performance');
+    return {
+      ...WHISPER_MODELS.tiny,
+      reason: 'mobile_phone_optimization'
+    };
+  }
+
+  // Tablets: Use tiny for low-end, base for high-end
+  if (capabilities.isTablet) {
+    if (capabilities.isLowEnd || capabilities.isLowMemory || capabilities.hasSlowConnection) {
+      console.log('📱 Low-end tablet detected: selecting tiny model');
+      return {
+        ...WHISPER_MODELS.tiny,
+        reason: 'tablet_low_end'
+      };
+    } else {
+      console.log('📱 High-end tablet detected: selecting base model');
+      return {
+        ...WHISPER_MODELS.base,
+        reason: 'tablet_high_end'
+      };
+    }
+  }
+
+  // Desktop: Base model unless constrained
+  if (capabilities.isLowMemory || capabilities.hasSlowConnection) {
+    console.log('💻 Constrained desktop detected: selecting base model');
+    return {
+      ...WHISPER_MODELS.base,
+      reason: 'desktop_constrained'
+    };
   } else {
-    return WHISPER_MODELS.base;
+    console.log('💻 Desktop detected: selecting base model for optimal balance');
+    return {
+      ...WHISPER_MODELS.base,
+      reason: 'desktop_optimal'
+    };
   }
 };
 

@@ -496,10 +496,10 @@ class HybridWhisperService {
       this.debug('🎯 Quality mode with downloads allowed: preferring Whisper AI');
       selectedTier = this.availableTiers.find(t => t.id === 'tier3') || this.availableTiers[0];
     } else {
-      // Balanced: Use Web Speech for actual transcription, keep service worker ready
-      this.debug('⚖️ Balanced mode: using Web Speech for real transcription, service worker ready');
-      selectedTier = this.availableTiers.find(t => t.id === 'tier2') ||
-                    this.availableTiers.find(t => t.id === 'tier3') ||
+      // Balanced: Prefer Whisper AI for quality, fall back to Web Speech if needed
+      this.debug('⚖️ Balanced mode: preferring Whisper AI for quality transcription');
+      selectedTier = this.availableTiers.find(t => t.id === 'tier3') ||
+                    this.availableTiers.find(t => t.id === 'tier2') ||
                     this.availableTiers[0];
     }
 
@@ -681,6 +681,7 @@ class HybridWhisperService {
    */
   selectModel() {
     if (this.userPreferences.preferredModel !== 'auto') {
+      this.debug('🎛️ User selected specific model:', this.userPreferences.preferredModel);
       return this.userPreferences.preferredModel;
     }
 
@@ -688,17 +689,29 @@ class HybridWhisperService {
     const { performanceMode, maxModelSize } = this.userPreferences;
     const recommended = getRecommendedModel();
 
+    this.debug('📱 Device-based model recommendation:', {
+      recommendedModel: recommended.id,
+      modelSize: recommended.size,
+      isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
+      performanceMode,
+      maxModelSize
+    });
+
     if (performanceMode === 'fast') {
+      this.debug('⚡ Fast mode selected: using tiny model');
       return 'tiny';
     } else if (performanceMode === 'quality') {
       // Check if small model is within size limit
       if (maxModelSize === '244MB' || maxModelSize === '466MB') {
+        this.debug('🎯 Quality mode with large size limit: using small model');
         return 'small';
       } else {
+        this.debug('🎯 Quality mode with size limit: using base model');
         return 'base';
       }
     } else {
-      // Balanced - use recommended
+      // Balanced - use device-recommended model
+      this.debug('⚖️ Balanced mode: using device-recommended model:', recommended.id);
       return recommended.id;
     }
   }

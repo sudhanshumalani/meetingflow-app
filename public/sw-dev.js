@@ -7,6 +7,10 @@
 const WHISPER_CACHE_NAME = 'whisper-models-v1'
 const WHISPER_WASM_CACHE = 'whisper-wasm-v1'
 
+// Transformers.js for real Whisper processing
+let transformersLoaded = false
+let WhisperPipeline = null
+
 // Whisper.cpp WASM integration
 let whisperModule = null
 let currentModel = null
@@ -16,6 +20,72 @@ let currentModelId = null
 const clientPorts = new Set()
 
 console.log('🔧 Enhanced Service Worker (PWA + Whisper) installed - DEV MODE')
+
+/**
+ * Load Transformers.js library dynamically (Development Mode)
+ */
+async function loadTransformers() {
+  if (transformersLoaded) {
+    return WhisperPipeline
+  }
+
+  try {
+    console.log('📦 Loading Transformers.js library (DEV)...')
+
+    // Use dynamic import in development
+    const transformersLib = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.1.0/dist/transformers.min.js')
+    const { pipeline, env } = transformersLib
+
+    // Configure for CDN loading
+    env.allowLocalModels = false
+    env.allowRemoteModels = true
+
+    console.log('✅ Transformers.js library loaded (DEV)')
+    transformersLoaded = true
+
+    return pipeline
+  } catch (error) {
+    console.error('❌ Failed to load Transformers.js (DEV):', error)
+    throw new Error(`Failed to load Transformers.js: ${error.message}`)
+  }
+}
+
+/**
+ * Initialize Whisper pipeline with specified model (Development Mode)
+ */
+async function initializeWhisperPipeline(modelId) {
+  try {
+    const pipeline = await loadTransformers()
+
+    // Map our model IDs to HuggingFace model names with mobile optimization
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    const modelMap = {
+      'tiny': isMobile ? 'onnx-community/whisper-tiny' : 'onnx-community/whisper-tiny.en',
+      'base': isMobile ? 'onnx-community/whisper-base' : 'onnx-community/whisper-base.en',
+      'small': isMobile ? 'onnx-community/whisper-small' : 'onnx-community/whisper-small.en'
+    }
+
+    const hfModelId = modelMap[modelId] || modelMap['base']
+
+    console.log(`🤖 Initializing Whisper pipeline (DEV) with model: ${hfModelId}`)
+
+    // Create the pipeline
+    WhisperPipeline = await pipeline('automatic-speech-recognition', hfModelId, {
+      device: 'wasm',
+      dtype: {
+        encoder_model: 'fp32',
+        decoder_model_merged: 'q4',
+      },
+    })
+
+    console.log(`✅ Whisper pipeline initialized (DEV) with ${hfModelId}`)
+    return WhisperPipeline
+  } catch (error) {
+    console.error('❌ Failed to initialize Whisper pipeline (DEV):', error)
+    throw error
+  }
+}
 
 /**
  * Service Worker Installation
@@ -232,26 +302,10 @@ async function initializeWhisperWASM(message, port) {
   const { modelId, messageId } = message
 
   try {
-    console.log(`🤖 Initializing Whisper WASM for ${modelId}...`)
+    console.log(`🤖 Initializing Whisper WASM for ${modelId} (DEV)...`)
 
-    // Load the model from cache
-    const cache = await caches.open(WHISPER_CACHE_NAME)
-    const modelUrl = getModelUrl(modelId)
-    const modelResponse = await cache.match(modelUrl)
-
-    if (!modelResponse) {
-      throw new Error('Model not found in cache')
-    }
-
-    const modelArrayBuffer = await modelResponse.arrayBuffer()
-
-    // Initialize whisper module (simulated for now)
-    // In a real implementation, you would load whisper.cpp WASM here
-    whisperModule = {
-      ready: true,
-      modelData: new Uint8Array(modelArrayBuffer),
-      modelId: modelId
-    }
+    // Initialize the real Whisper pipeline using Transformers.js
+    whisperModule = await initializeWhisperPipeline(modelId)
 
     currentModel = whisperModule
     currentModelId = modelId
@@ -262,10 +316,10 @@ async function initializeWhisperWASM(message, port) {
       success: true
     })
 
-    console.log(`✅ Whisper WASM initialized with ${modelId}`)
+    console.log(`✅ Whisper WASM initialized (DEV) with ${modelId}`)
 
   } catch (error) {
-    console.error('WASM initialization failed:', error)
+    console.error('WASM initialization failed (DEV):', error)
     port.postMessage({
       type: 'WASM_INIT_COMPLETE',
       messageId,
@@ -286,41 +340,81 @@ async function transcribeAudio(message, port) {
       throw new Error('Whisper model not initialized')
     }
 
-    console.log(`🎯 Starting transcription with ${currentModelId}...`)
+    console.log(`🎯 Starting transcription with ${currentModelId} (DEV)...`)
 
     // Send progress update
     port.postMessage({
       type: 'TRANSCRIBE_PROGRESS',
       messageId,
-      progress: { stage: 'processing', progress: 50 }
+      progress: { stage: 'processing', progress: 25 }
     })
 
-    // For now, we'll use a more sophisticated simulation
-    // In a real implementation, this would call whisper.cpp WASM
-    await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000))
+    // Calculate duration properly for different audio data types
+    let duration = 5.0; // Default fallback
+    if (audioData && typeof audioData.length === 'number') {
+      // Float32Array or similar
+      duration = audioData.length / 16000;
+    } else if (audioData && typeof audioData.size === 'number') {
+      // Blob - estimate duration (not exact but reasonable)
+      duration = audioData.size / (16000 * 2); // 16kHz * 2 bytes per sample
+    } else if (audioData && audioData.byteLength) {
+      // ArrayBuffer
+      duration = audioData.byteLength / (16000 * 2);
+    }
 
-    const duration = audioData.length / 16000
+    console.log(`📊 Audio data type: ${typeof audioData}, size: ${audioData?.size || audioData?.length || audioData?.byteLength || 'unknown'}, estimated duration: ${duration.toFixed(1)}s`)
+
+    // Send progress update
+    port.postMessage({
+      type: 'TRANSCRIBE_PROGRESS',
+      messageId,
+      progress: { stage: 'transcribing', progress: 50 }
+    })
+
+    // Perform real Whisper transcription using Transformers.js
+    console.log('🤖 Starting real Whisper transcription (DEV)...')
+
+    const transcriptionResult = await currentModel(audioData, {
+      language: options.language || 'english',
+      return_timestamps: true,
+      chunk_length_s: 30,
+      stride_length_s: 5,
+    })
+
+    console.log('🎯 Real transcription result (DEV):', transcriptionResult)
+
+    // Send progress update
+    port.postMessage({
+      type: 'TRANSCRIBE_PROGRESS',
+      messageId,
+      progress: { stage: 'finalizing', progress: 90 }
+    })
+
+    // Format the result according to our interface
     const result = {
-      text: `🎯 REAL WHISPER TRANSCRIPTION (Service Worker): Successfully processed ${duration.toFixed(1)}s of audio using ${currentModelId} model via enhanced service worker. This demonstrates the complete integration of VitePWA with Whisper functionality. The model was loaded from cache and processed your speech offline.`,
-      segments: [
+      text: transcriptionResult.text || `No speech detected in ${duration.toFixed(1)}s audio`,
+      segments: transcriptionResult.chunks ? transcriptionResult.chunks.map(chunk => ({
+        text: chunk.text,
+        start: Math.round(chunk.timestamp[0] * 1000), // Convert to milliseconds
+        end: Math.round(chunk.timestamp[1] * 1000)
+      })) : [
         {
-          text: `🎯 REAL WHISPER TRANSCRIPTION (Service Worker)`,
+          text: transcriptionResult.text || `No speech detected`,
           start: 0,
-          end: 2000
-        },
-        {
-          text: `Successfully processed ${duration.toFixed(1)}s of audio using ${currentModelId} model`,
-          start: 2000,
-          end: 4000
-        },
-        {
-          text: `via enhanced service worker with VitePWA integration.`,
-          start: 4000,
-          end: 6000
+          end: Math.round(duration * 1000)
         }
       ],
-      duration: duration
+      duration: duration,
+      language: options.language || 'english',
+      model: currentModelId
     }
+
+    console.log('📤 Sending real transcription result (DEV):', {
+      messageId,
+      resultLength: result.text.length,
+      segmentsCount: result.segments.length,
+      text: result.text.substring(0, 100) + (result.text.length > 100 ? '...' : '')
+    })
 
     port.postMessage({
       type: 'TRANSCRIBE_COMPLETE',
@@ -329,10 +423,10 @@ async function transcribeAudio(message, port) {
       result
     })
 
-    console.log('✅ Transcription completed via Enhanced Service Worker')
+    console.log('✅ Real Whisper transcription completed (DEV)!')
 
   } catch (error) {
-    console.error('Transcription failed:', error)
+    console.error('Transcription failed (DEV):', error)
     port.postMessage({
       type: 'TRANSCRIBE_COMPLETE',
       messageId,

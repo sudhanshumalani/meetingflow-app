@@ -5,6 +5,10 @@
 
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching'
 
+// Import Transformers.js for real Whisper processing
+let transformersLoaded = false
+let WhisperPipeline = null
+
 // Clean up outdated caches first
 cleanupOutdatedCaches()
 
@@ -24,6 +28,71 @@ let currentModelId = null
 const clientPorts = new Set()
 
 console.log('🔧 Enhanced Service Worker (PWA + Whisper) installed')
+
+/**
+ * Load Transformers.js library dynamically
+ */
+async function loadTransformers() {
+  if (transformersLoaded) {
+    return WhisperPipeline
+  }
+
+  try {
+    console.log('📦 Loading Transformers.js library...')
+
+    // Import transformers dynamically in service worker
+    const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.1.0/dist/transformers.min.js')
+
+    // Disable local models to force CDN loading
+    env.allowLocalModels = false
+    env.allowRemoteModels = true
+
+    console.log('✅ Transformers.js library loaded')
+    transformersLoaded = true
+
+    return pipeline
+  } catch (error) {
+    console.error('❌ Failed to load Transformers.js:', error)
+    throw new Error(`Failed to load Transformers.js: ${error.message}`)
+  }
+}
+
+/**
+ * Initialize Whisper pipeline with specified model
+ */
+async function initializeWhisperPipeline(modelId) {
+  try {
+    const pipeline = await loadTransformers()
+
+    // Map our model IDs to HuggingFace model names with mobile optimization
+    const isMobile = isMobileDevice();
+
+    const modelMap = {
+      'tiny': isMobile ? 'onnx-community/whisper-tiny' : 'onnx-community/whisper-tiny.en',
+      'base': isMobile ? 'onnx-community/whisper-base' : 'onnx-community/whisper-base.en',
+      'small': isMobile ? 'onnx-community/whisper-small' : 'onnx-community/whisper-small.en'
+    }
+
+    const hfModelId = modelMap[modelId] || modelMap['base']
+
+    console.log(`🤖 Initializing Whisper pipeline with model: ${hfModelId}`)
+
+    // Create the pipeline
+    WhisperPipeline = await pipeline('automatic-speech-recognition', hfModelId, {
+      device: 'wasm', // Use WASM backend for compatibility
+      dtype: {
+        encoder_model: 'fp32',
+        decoder_model_merged: 'q4', // Quantized for better performance
+      },
+    })
+
+    console.log(`✅ Whisper pipeline initialized with ${hfModelId}`)
+    return WhisperPipeline
+  } catch (error) {
+    console.error('❌ Failed to initialize Whisper pipeline:', error)
+    throw error
+  }
+}
 
 /**
  * Service Worker Installation
@@ -242,24 +311,8 @@ async function initializeWhisperWASM(message, port) {
   try {
     console.log(`🤖 Initializing Whisper WASM for ${modelId}...`)
 
-    // Load the model from cache
-    const cache = await caches.open(WHISPER_CACHE_NAME)
-    const modelUrl = getModelUrl(modelId)
-    const modelResponse = await cache.match(modelUrl)
-
-    if (!modelResponse) {
-      throw new Error('Model not found in cache')
-    }
-
-    const modelArrayBuffer = await modelResponse.arrayBuffer()
-
-    // Initialize whisper module (simulated for now)
-    // In a real implementation, you would load whisper.cpp WASM here
-    whisperModule = {
-      ready: true,
-      modelData: new Uint8Array(modelArrayBuffer),
-      modelId: modelId
-    }
+    // Initialize the real Whisper pipeline using Transformers.js
+    whisperModule = await initializeWhisperPipeline(modelId)
 
     currentModel = whisperModule
     currentModelId = modelId
@@ -300,7 +353,7 @@ async function transcribeAudio(message, port) {
     port.postMessage({
       type: 'TRANSCRIBE_PROGRESS',
       messageId,
-      progress: { stage: 'processing', progress: 50 }
+      progress: { stage: 'processing', progress: 25 }
     })
 
     // Calculate duration properly for different audio data types
@@ -318,25 +371,57 @@ async function transcribeAudio(message, port) {
 
     console.log(`📊 Audio data type: ${typeof audioData}, size: ${audioData?.size || audioData?.length || audioData?.byteLength || 'unknown'}, estimated duration: ${duration.toFixed(1)}s`)
 
-    // Request real transcription from main thread via message channel
-    // This bridges service worker with actual speech recognition APIs
-    console.log('🔄 Requesting real speech transcription from main thread...')
+    // Send progress update
+    port.postMessage({
+      type: 'TRANSCRIBE_PROGRESS',
+      messageId,
+      progress: { stage: 'transcribing', progress: 50 }
+    })
 
-    const transcriptionResult = await requestMainThreadTranscription(audioData, options, port)
+    // Perform real Whisper transcription using Transformers.js
+    console.log('🤖 Starting real Whisper transcription...')
 
+    const transcriptionResult = await currentModel(audioData, {
+      language: options.language || 'english',
+      return_timestamps: true,
+      chunk_length_s: 30,
+      stride_length_s: 5,
+    })
+
+    console.log('🎯 Real transcription result:', transcriptionResult)
+
+    // Send progress update
+    port.postMessage({
+      type: 'TRANSCRIBE_PROGRESS',
+      messageId,
+      progress: { stage: 'finalizing', progress: 90 }
+    })
+
+    // Format the result according to our interface
     const result = {
-      text: transcriptionResult.text || `Audio processed via enhanced service worker using ${currentModelId} model. Duration: ${duration.toFixed(1)}s. Ready for real speech recognition integration.`,
-      segments: transcriptionResult.segments || [
+      text: transcriptionResult.text || `No speech detected in ${duration.toFixed(1)}s audio`,
+      segments: transcriptionResult.chunks ? transcriptionResult.chunks.map(chunk => ({
+        text: chunk.text,
+        start: Math.round(chunk.timestamp[0] * 1000), // Convert to milliseconds
+        end: Math.round(chunk.timestamp[1] * 1000)
+      })) : [
         {
-          text: transcriptionResult.text || `Processed ${duration.toFixed(1)}s of audio`,
+          text: transcriptionResult.text || `No speech detected`,
           start: 0,
-          end: duration * 1000
+          end: Math.round(duration * 1000)
         }
       ],
-      duration: duration
+      duration: duration,
+      language: options.language || 'english',
+      model: currentModelId
     }
 
-    console.log('📤 Sending transcription result:', { messageId, resultLength: result.text.length })
+    console.log('📤 Sending real transcription result:', {
+      messageId,
+      resultLength: result.text.length,
+      segmentsCount: result.segments.length,
+      text: result.text.substring(0, 100) + (result.text.length > 100 ? '...' : '')
+    })
 
     port.postMessage({
       type: 'TRANSCRIBE_COMPLETE',
@@ -345,7 +430,7 @@ async function transcribeAudio(message, port) {
       result
     })
 
-    console.log('✅ Transcription completed via Enhanced Service Worker')
+    console.log('✅ Real Whisper transcription completed!')
 
   } catch (error) {
     console.error('Transcription failed:', error)
@@ -359,19 +444,27 @@ async function transcribeAudio(message, port) {
 }
 
 /**
- * Request transcription from main thread (where speech APIs are available)
+ * Device detection for mobile optimization
  */
-async function requestMainThreadTranscription(audioData, options, port) {
-  return new Promise((resolve) => {
-    // For now, return a placeholder that indicates the system is ready for real transcription
-    // This maintains the service worker architecture while providing clear feedback
-    setTimeout(() => {
-      resolve({
-        text: "Your speech transcription would appear here. The service worker architecture is fully operational and ready for real speech recognition integration.",
-        segments: []
-      })
-    }, 1000)
-  })
+function isMobileDevice() {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+}
+
+/**
+ * Get optimal model for device capabilities
+ */
+function getOptimalModelForDevice() {
+  const isMobile = isMobileDevice()
+  const hasSlowConnection = typeof navigator !== 'undefined' && navigator.connection &&
+    (navigator.connection.effectiveType === 'slow-2g' || navigator.connection.effectiveType === '2g')
+
+  if (isMobile || hasSlowConnection) {
+    console.log('📱 Mobile device or slow connection detected - using tiny model')
+    return 'tiny'
+  } else {
+    console.log('💻 Desktop device detected - using base model')
+    return 'base'
+  }
 }
 
 /**

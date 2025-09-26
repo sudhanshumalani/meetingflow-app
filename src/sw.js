@@ -97,7 +97,7 @@ self.addEventListener('message', async (event) => {
 async function handleWhisperMessage(message, port) {
   const { type, messageId } = message
 
-  console.log('🎯 Handling Whisper message:', type)
+  console.log('🎯 Handling Whisper message:', type, 'messageId:', messageId)
 
   try {
     switch (type) {
@@ -307,7 +307,20 @@ async function transcribeAudio(message, port) {
     // In a real implementation, this would call whisper.cpp WASM
     await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000))
 
-    const duration = audioData.length / 16000
+    // Calculate duration properly for different audio data types
+    let duration = 5.0; // Default fallback
+    if (audioData && typeof audioData.length === 'number') {
+      // Float32Array or similar
+      duration = audioData.length / 16000;
+    } else if (audioData && typeof audioData.size === 'number') {
+      // Blob - estimate duration (not exact but reasonable)
+      duration = audioData.size / (16000 * 2); // 16kHz * 2 bytes per sample
+    } else if (audioData && audioData.byteLength) {
+      // ArrayBuffer
+      duration = audioData.byteLength / (16000 * 2);
+    }
+
+    console.log(`📊 Audio data type: ${typeof audioData}, size: ${audioData?.size || audioData?.length || audioData?.byteLength || 'unknown'}, estimated duration: ${duration.toFixed(1)}s`)
     const result = {
       text: `🎯 REAL WHISPER TRANSCRIPTION (Service Worker): Successfully processed ${duration.toFixed(1)}s of audio using ${currentModelId} model via enhanced service worker. This demonstrates the complete integration of VitePWA with Whisper functionality. The model was loaded from cache and processed your speech offline.`,
       segments: [
@@ -329,6 +342,8 @@ async function transcribeAudio(message, port) {
       ],
       duration: duration
     }
+
+    console.log('📤 Sending transcription result:', { messageId, resultLength: result.text.length })
 
     port.postMessage({
       type: 'TRANSCRIBE_COMPLETE',

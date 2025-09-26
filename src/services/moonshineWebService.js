@@ -343,12 +343,46 @@ class WhisperWebService {
         }
       }
 
+      // iOS Safari specific audio preprocessing
+      if (isIOS) {
+        if (debugCallback) debugCallback('🍎 Applying iOS audio preprocessing...', 'info')
+
+        // Research-based iOS Safari audio fixes for Whisper
+        // 1. Normalize audio amplitude for iOS Safari
+        const maxAmplitudeInAudio = Math.max(...processedAudio.map(Math.abs))
+        if (maxAmplitudeInAudio > 0 && maxAmplitudeInAudio < 0.1) {
+          // Boost quiet audio for iOS Safari Whisper
+          const amplificationFactor = 0.3 / maxAmplitudeInAudio
+          for (let i = 0; i < processedAudio.length; i++) {
+            processedAudio[i] *= amplificationFactor
+          }
+          if (debugCallback) debugCallback(`🔊 Amplified quiet audio by ${amplificationFactor.toFixed(2)}x`, 'info')
+          console.log(`🍎 iOS audio amplification applied: ${amplificationFactor.toFixed(2)}x`)
+        }
+
+        // 2. Ensure minimum audio length for iOS Safari Whisper
+        const minSamples = 16000 * 1.0 // Minimum 1 second for iOS Safari
+        if (processedAudio.length < minSamples) {
+          if (debugCallback) debugCallback('⚠️ Audio too short, padding for iOS Safari', 'warning')
+          const paddedAudio = new Float32Array(minSamples)
+          paddedAudio.set(processedAudio)
+          // Fill remaining with very quiet noise instead of silence
+          for (let i = processedAudio.length; i < minSamples; i++) {
+            paddedAudio[i] = (Math.random() - 0.5) * 0.001 // Very quiet noise
+          }
+          processedAudio = paddedAudio
+          console.log(`🍎 iOS Safari: Audio padded from ${processedAudio.length} to ${minSamples} samples`)
+        }
+
+        if (debugCallback) debugCallback('✅ iOS audio preprocessing completed', 'info')
+      }
+
       // Simple validation - avoid complex preprocessing that may cause issues
       if (processedAudio.length < 8000) { // Less than 0.5 second at 16kHz
         if (debugCallback) debugCallback('⚠️ Very short audio detected', 'warning')
       }
 
-      // Transcribe with simplified settings to avoid empty results
+      // Transcribe with iOS Safari specific optimizations
       console.log('🔍 Attempting transcription with processedAudio:', {
         audioLength: processedAudio?.length,
         audioType: typeof processedAudio,
@@ -358,7 +392,7 @@ class WhisperWebService {
 
       if (debugCallback) debugCallback('🤖 Running AI transcription...', 'info')
 
-      // Simple pipeline configuration - research shows complex settings can cause issues
+      // iOS Safari specific pipeline configuration based on research
       const pipelineOptions = {
         task: 'transcribe',
         language: 'english',
@@ -366,7 +400,20 @@ class WhisperWebService {
         ...options
       }
 
-      if (debugCallback) debugCallback('🤖 Using simple pipeline settings', 'info')
+      // CRITICAL iOS Safari fix: Add forced transcription parameters
+      if (isIOS) {
+        // Research shows iOS Safari needs explicit language forcing and temperature adjustment
+        pipelineOptions.language = 'en' // Use short form for iOS compatibility
+        pipelineOptions.forced_decoder_ids = null // Don't force specific tokens
+        pipelineOptions.temperature = 0.1 // Lower temperature for more deterministic output
+        pipelineOptions.num_beams = 1 // Disable beam search for iOS performance
+        pipelineOptions.do_sample = false // Disable sampling for deterministic results
+
+        if (debugCallback) debugCallback('🍎 Using iOS-optimized Whisper settings', 'info')
+        console.log('🍎 iOS Safari Whisper config:', pipelineOptions)
+      } else {
+        if (debugCallback) debugCallback('🤖 Using standard pipeline settings', 'info')
+      }
 
       const result = await this.pipeline(processedAudio, pipelineOptions)
 

@@ -214,15 +214,15 @@ class WhisperWebService {
         }
       }
 
-      // CRITICAL iOS OPTIMIZATION: Use quantized models to reduce memory
+      // COMPATIBILITY FIX: Use supported dtypes for Transformers.js 2.15.1
       if (isIOS) {
-        // Research-backed: q8 provides good balance of quality vs memory for iOS
-        pipelineOptions.dtype = 'q8' // 8-bit quantization - 75% memory reduction
-        console.log('🍎 iOS: Using 8-bit quantized model (q8) for memory optimization')
+        // Use fp32 for iOS compatibility with older Transformers.js version
+        pipelineOptions.dtype = 'fp32' // Full precision - more compatible
+        console.log('🍎 iOS: Using fp32 for maximum compatibility with current Transformers.js version')
       } else if (this.capabilities.webgpu) {
         pipelineOptions.dtype = 'fp16' // Half precision for WebGPU
       } else {
-        pipelineOptions.dtype = 'q8' // Default quantization for WASM
+        pipelineOptions.dtype = 'fp32' // Full precision for maximum compatibility
       }
 
       console.log(`🎵 Loading model with configuration:`, {
@@ -424,20 +424,8 @@ class WhisperWebService {
         ...options
       }
 
-      // CRITICAL iOS Safari fix: Add forced transcription parameters
-      if (isIOS) {
-        // Research shows iOS Safari needs explicit language forcing and temperature adjustment
-        pipelineOptions.language = 'en' // Use short form for iOS compatibility
-        pipelineOptions.forced_decoder_ids = null // Don't force specific tokens
-        pipelineOptions.temperature = 0.1 // Lower temperature for more deterministic output
-        pipelineOptions.num_beams = 1 // Disable beam search for iOS performance
-        pipelineOptions.do_sample = false // Disable sampling for deterministic results
-
-        if (debugCallback) debugCallback('🍎 Using iOS-optimized Whisper settings', 'info')
-        console.log('🍎 iOS Safari Whisper config:', pipelineOptions)
-      } else {
-        if (debugCallback) debugCallback('🤖 Using standard pipeline settings', 'info')
-      }
+      // Simple pipeline configuration - avoid complex parameters that may cause issues
+      console.log('🎵 Using simplified pipeline configuration for maximum compatibility')
 
       const result = await this.pipeline(processedAudio, pipelineOptions)
 
@@ -460,8 +448,8 @@ class WhisperWebService {
       // Log the full result structure for debugging
       console.log('🔍 Complete Whisper result object:', result)
 
-      // ENHANCED iOS DEBUG: Log every property to mobile debug panel
-      if (debugCallback && isIOS) {
+      // ENHANCED DEBUG: Log every property to mobile debug panel
+      if (debugCallback) {
         debugCallback(`🔍 Whisper result type: ${typeof result}`, 'info')
         debugCallback(`🔍 Result keys: ${result ? Object.keys(result).join(', ') : 'null'}`, 'info')
         debugCallback(`🔍 Has text property: ${!!result?.text}`, 'info')
@@ -470,6 +458,16 @@ class WhisperWebService {
         debugCallback(`🔍 Chunks length: ${result?.chunks?.length || 0}`, 'info')
         if (result?.chunks?.length > 0) {
           debugCallback(`🔍 First chunk: ${JSON.stringify(result.chunks[0])}`, 'info')
+        }
+
+        // DEEP DEBUG: Show all properties of result object
+        try {
+          debugCallback(`🔍 All result properties:`, 'info')
+          for (const [key, value] of Object.entries(result || {})) {
+            debugCallback(`  ${key}: ${typeof value} = ${JSON.stringify(value)?.substring(0, 100)}`, 'info')
+          }
+        } catch (e) {
+          debugCallback(`🔍 Error inspecting result: ${e.message}`, 'error')
         }
       }
 

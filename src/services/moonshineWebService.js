@@ -4,7 +4,7 @@
  * Provides better accuracy than Web Speech API with client-side processing
  */
 
-import { pipeline, env } from '@xenova/transformers'
+import { pipeline, env } from '@huggingface/transformers'
 
 class WhisperWebService {
   constructor() {
@@ -98,6 +98,7 @@ class WhisperWebService {
         this.fallbackModel = 'Xenova/whisper-tiny.en' // Same model for consistency
         this.iosOptimized = true
         console.log('🍎 iOS detected - using memory-optimized Whisper-tiny with quantization')
+        console.log('⚠️ WARNING: Using @huggingface/transformers 3.x - monitor for memory issues')
         console.log('🔄 Fallback model prepared:', this.fallbackModel)
       } else if (isMobile || hasHighMemory) {
         this.modelName = 'Xenova/whisper-tiny.en' // ~39M parameters, English optimized for mobile
@@ -509,8 +510,9 @@ class WhisperWebService {
 
       if (debugCallback) {
         debugCallback(`🔍 STEP 9: Pipeline options: ${JSON.stringify(pipelineOptions)}`, 'info')
-        debugCallback(`🔧 CHUNKING FIX: Using chunk_length_s=29 (NOT 30) to prevent empty results`, 'warning')
-        debugCallback(`🔧 CHUNKING FIX: Using stride_length_s=5 for optimal overlap`, 'warning')
+        debugCallback(`🔧 CHUNKING FIX: Using chunk_length_s=${pipelineOptions.chunk_length_s}`, 'warning')
+        debugCallback(`🔧 CHUNKING FIX: Using stride_length_s=${pipelineOptions.stride_length_s}`, 'warning')
+        debugCallback(`🔧 CHUNKING STATUS: ${pipelineOptions.chunk_length_s ? 'ENABLED' : 'MISSING'}`, 'error')
         debugCallback(`🔍 STEP 10: About to call this.pipeline()...`, 'info')
       }
 

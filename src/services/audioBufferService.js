@@ -149,14 +149,25 @@ class AudioBufferService {
 
     switch (source) {
       case 'microphone':
-        const micStream = await navigator.mediaDevices.getUserMedia({
+        // iOS-specific microphone settings for better audio capture
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+        const micConstraints = {
           audio: {
             echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: 16000 // Optimal for Moonshine
+            noiseSuppression: isIOS ? false : true, // Disable on iOS to preserve audio levels
+            autoGainControl: isIOS ? false : true, // Disable on iOS to prevent over-reduction
+            sampleRate: 16000, // Optimal for Moonshine
+            ...(isIOS && {
+              // iOS-specific constraints for better recording
+              channelCount: 1,
+              latency: 0,
+              volume: 1.0
+            })
           }
-        })
+        }
+
+        console.log(`🎤 Requesting microphone with ${isIOS ? 'iOS-optimized' : 'standard'} settings:`, micConstraints)
+        const micStream = await navigator.mediaDevices.getUserMedia(micConstraints)
         console.log('🎤 Microphone stream obtained:', {
           audioTracks: micStream.getAudioTracks().length,
           trackSettings: micStream.getAudioTracks()[0]?.getSettings()

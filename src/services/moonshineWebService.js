@@ -413,13 +413,22 @@ class WhisperWebService {
           debugCallback(`🔍 Audio quality: ${nonZeroSamples > sampleCount * 0.1 ? 'Good' : 'Poor'}`, 'info')
         }
 
-        if (maxAmplitudeInAudio > 0 && maxAmplitudeInAudio < 0.1) {
-          // Boost quiet audio for iOS Safari Whisper
+        // ENHANCED AMPLIFICATION based on debugging - handle very low iOS audio levels
+        if (maxAmplitudeInAudio > 0 && maxAmplitudeInAudio < 0.01) {
+          // For extremely low audio (like 0.0074 from debugging), use aggressive boost
+          const aggressiveBoost = Math.min(40, 0.4 / maxAmplitudeInAudio) // Cap at 40x, target 0.4 amplitude
+          for (let i = 0; i < processedAudio.length; i++) {
+            processedAudio[i] *= aggressiveBoost
+          }
+          if (debugCallback) debugCallback(`🚀 AGGRESSIVE iOS boost: ${aggressiveBoost.toFixed(1)}x (was ${maxAmplitudeInAudio.toFixed(6)})`, 'warning')
+          console.log(`🍎 iOS aggressive audio boost applied: ${aggressiveBoost.toFixed(1)}x for very low signal`)
+        } else if (maxAmplitudeInAudio > 0 && maxAmplitudeInAudio < 0.1) {
+          // Regular boost for moderately quiet audio
           const amplificationFactor = 0.3 / maxAmplitudeInAudio
           for (let i = 0; i < processedAudio.length; i++) {
             processedAudio[i] *= amplificationFactor
           }
-          if (debugCallback) debugCallback(`🔊 Amplified quiet audio by ${amplificationFactor.toFixed(2)}x`, 'info')
+          if (debugCallback) debugCallback(`🔊 Standard iOS boost: ${amplificationFactor.toFixed(2)}x`, 'info')
           console.log(`🍎 iOS audio amplification applied: ${amplificationFactor.toFixed(2)}x`)
         }
 

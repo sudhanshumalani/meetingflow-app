@@ -1016,4 +1016,10 @@ class WhisperWebService {
 
 // Export singleton instance
 const whisperWebService = new WhisperWebService()
+
+// Make whisperWebService available globally for debugging and testing
+if (typeof window !== 'undefined') {
+  window.whisperWebService = whisperWebService
+}
+
 export default whisperWebService

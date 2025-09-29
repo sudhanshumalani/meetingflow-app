@@ -487,32 +487,42 @@ class WhisperWebService {
         debugCallback(`🔍 STEP 8: Available fallback: ${this.fallbackModel}`, 'info')
       }
 
-      // CRITICAL DEBUG: Try minimal options first to isolate the issue
-      // Start with absolute minimal configuration, then add chunking if needed
-      const pipelineOptions = {}
-
-      // Only enable chunking for audio longer than 25 seconds
+      // OPTIMIZED CHUNKING: Enable chunking for all audio but use optimal parameters
+      // Research shows chunking improves accuracy even for shorter audio in transformers.js 3.x
       const audioDurationSeconds = processedAudio.length / 16000
-      if (audioDurationSeconds > 25) {
-        pipelineOptions.chunk_length_s = 29    // Research-backed: avoid 30 (broken in transformers.js)
-        pipelineOptions.stride_length_s = 5    // Optimal overlap
-        if (debugCallback) debugCallback(`🔧 Audio >25s: Enabling chunking for ${audioDurationSeconds.toFixed(1)}s audio`, 'warning')
-      } else {
-        if (debugCallback) debugCallback(`🔧 Audio ${audioDurationSeconds.toFixed(1)}s: Using simple transcription (no chunking)`, 'info')
+      const pipelineOptions = {
+        chunk_length_s: 29,           // Research-backed: avoid 30 (broken in transformers.js)
+        stride_length_s: 5,           // Optimal overlap for accuracy
+        return_timestamps: false      // Disable timestamps to avoid complexity
       }
 
-      // Disable timestamps as they can cause issues
-      pipelineOptions.return_timestamps = false
+      if (debugCallback) {
+        debugCallback(`🔧 Audio ${audioDurationSeconds.toFixed(1)}s: Using optimized chunking (29s chunks, 5s overlap)`, 'info')
+      }
 
-      // Only add language if explicitly specified in options
-      if (options.language) {
+      // CRITICAL FIX: English-only models (.en models) reject language parameter in @huggingface/transformers 3.x
+      const isEnglishOnlyModel = this.modelName.includes('.en')
+
+      if (debugCallback) {
+        debugCallback(`🔍 Model check: ${this.modelName}`, 'info')
+        debugCallback(`🔍 Is English-only model: ${isEnglishOnlyModel}`, 'info')
+      }
+
+      // Only add language if explicitly specified AND model is multilingual
+      if (options.language && !isEnglishOnlyModel) {
         pipelineOptions.language = options.language
+        if (debugCallback) debugCallback(`🔧 Added language: ${options.language}`, 'info')
+      } else if (options.language && isEnglishOnlyModel) {
+        if (debugCallback) debugCallback(`🔧 SKIPPED language parameter (English-only model)`, 'warning')
       }
 
-      // Add any additional options but filter out invalid ones
-      const validOptions = ['language', 'chunk_length_s', 'stride_length_s', 'return_timestamps']
+      // Add any additional options but filter out invalid ones for English-only models
+      const validOptions = isEnglishOnlyModel
+        ? ['chunk_length_s', 'stride_length_s', 'return_timestamps']  // No language for .en models
+        : ['language', 'chunk_length_s', 'stride_length_s', 'return_timestamps']
+
       for (const [key, value] of Object.entries(options)) {
-        if (validOptions.includes(key)) {
+        if (validOptions.includes(key) && key !== 'language') {  // language handled above
           pipelineOptions[key] = value
         }
       }

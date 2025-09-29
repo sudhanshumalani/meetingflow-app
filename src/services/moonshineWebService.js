@@ -11,8 +11,8 @@ class WhisperWebService {
     this.pipeline = null
     this.isInitialized = false
     this.isLoading = false
-    this.modelName = 'Xenova/whisper-tiny.en' // Use Xenova optimized version for Transformers.js
-    this.fallbackModel = 'Xenova/whisper-tiny.en' // Smallest model for quick fallback
+    this.modelName = 'Xenova/whisper-tiny.en' // English-optimized default
+    this.fallbackModel = 'Xenova/whisper-tiny.en' // Consistent English model
     this.capabilities = {
       webgpu: false,
       wasm: true,
@@ -94,16 +94,16 @@ class WhisperWebService {
       // iOS Memory Optimization Strategy with alternative model testing
       if (isIOS) {
         // Research-backed iOS model selection for memory constraints
-        this.modelName = 'Xenova/whisper-tiny.en' // 39M parameters - most iOS-compatible
-        this.fallbackModel = 'Xenova/whisper-tiny' // Alternative if .en fails
+        this.modelName = 'Xenova/whisper-tiny.en' // 39M parameters - iOS-optimized English model
+        this.fallbackModel = 'Xenova/whisper-tiny.en' // Same model for consistency
         this.iosOptimized = true
         console.log('🍎 iOS detected - using memory-optimized Whisper-tiny with quantization')
         console.log('🔄 Fallback model prepared:', this.fallbackModel)
       } else if (isMobile || hasHighMemory) {
-        this.modelName = 'Xenova/whisper-tiny.en' // ~39M parameters, Transformers.js optimized
-        this.fallbackModel = 'Xenova/whisper-tiny'
+        this.modelName = 'Xenova/whisper-tiny.en' // ~39M parameters, English optimized for mobile
+        this.fallbackModel = 'Xenova/whisper-tiny.en'
       } else {
-        this.modelName = 'Xenova/whisper-base.en' // ~74M parameters, better accuracy
+        this.modelName = 'Xenova/whisper-base.en' // ~74M parameters, English better accuracy
         this.fallbackModel = 'Xenova/whisper-tiny.en'
       }
 
@@ -244,6 +244,16 @@ class WhisperWebService {
 
       const loadTime = (performance.now() - startTime) / 1000
       console.log(`✅ Whisper Web initialized in ${loadTime.toFixed(2)}s`)
+
+      // ENHANCED: Validate pipeline after creation
+      console.log('🔍 Pipeline validation:', {
+        pipelineExists: !!this.pipeline,
+        pipelineType: typeof this.pipeline,
+        pipelineConstructor: this.pipeline?.constructor?.name,
+        hasCall: typeof this.pipeline === 'function',
+        modelName: this.modelName,
+        actualModel: modelToTry
+      })
 
       // Mark as used for future preloading
       localStorage.setItem('whisper-used', 'true')
@@ -476,16 +486,31 @@ class WhisperWebService {
         debugCallback(`🔍 STEP 8: Available fallback: ${this.fallbackModel}`, 'info')
       }
 
-      // iOS Safari specific pipeline configuration based on research
+      // CRITICAL FIX: Add chunking parameters to prevent empty text results
+      // Research shows chunk_length_s=30 breaks in transformers.js - use 29 instead
       const pipelineOptions = {
         task: 'transcribe',
-        language: 'english',
+        chunk_length_s: 29,           // CRITICAL: 29 instead of 30 (known bug fix)
+        stride_length_s: 5,           // Optimal overlap (29/6 ≈ 5)
         return_timestamps: false,
         ...options
       }
 
+      // Only add language if explicitly specified in options
+      if (options.language) {
+        pipelineOptions.language = options.language
+      }
+
+      // IMPORTANT: Remove max_new_tokens if present - causes empty results
+      if ('max_new_tokens' in pipelineOptions) {
+        delete pipelineOptions.max_new_tokens
+        if (debugCallback) debugCallback('🔧 Removed max_new_tokens (causes empty results)', 'warning')
+      }
+
       if (debugCallback) {
         debugCallback(`🔍 STEP 9: Pipeline options: ${JSON.stringify(pipelineOptions)}`, 'info')
+        debugCallback(`🔧 CHUNKING FIX: Using chunk_length_s=29 (NOT 30) to prevent empty results`, 'warning')
+        debugCallback(`🔧 CHUNKING FIX: Using stride_length_s=5 for optimal overlap`, 'warning')
         debugCallback(`🔍 STEP 10: About to call this.pipeline()...`, 'info')
       }
 

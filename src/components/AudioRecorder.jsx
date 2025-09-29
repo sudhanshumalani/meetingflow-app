@@ -4,6 +4,11 @@ import audioTranscriptionService from '../services/audioTranscriptionService'
 import whisperWebService from '../services/moonshineWebService'
 import audioBufferService from '../services/audioBufferService'
 
+// Make whisperWebService available globally for debugging and testing
+if (typeof window !== 'undefined') {
+  window.whisperWebService = whisperWebService
+}
+
 const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
   const [isRecording, setIsRecording] = useState(false)

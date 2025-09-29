@@ -487,26 +487,44 @@ class WhisperWebService {
         debugCallback(`🔍 STEP 8: Available fallback: ${this.fallbackModel}`, 'info')
       }
 
-      // CRITICAL FIX: Add chunking parameters to prevent empty text results
-      // Research shows chunk_length_s=30 breaks in transformers.js - use 29 instead
-      const pipelineOptions = {
-        task: 'transcribe',
-        chunk_length_s: 29,           // CRITICAL: 29 instead of 30 (known bug fix)
-        stride_length_s: 5,           // Optimal overlap (29/6 ≈ 5)
-        return_timestamps: false,
-        ...options
+      // CRITICAL DEBUG: Try minimal options first to isolate the issue
+      // Start with absolute minimal configuration, then add chunking if needed
+      const pipelineOptions = {}
+
+      // Only enable chunking for audio longer than 25 seconds
+      const audioDurationSeconds = processedAudio.length / 16000
+      if (audioDurationSeconds > 25) {
+        pipelineOptions.chunk_length_s = 29    // Research-backed: avoid 30 (broken in transformers.js)
+        pipelineOptions.stride_length_s = 5    // Optimal overlap
+        if (debugCallback) debugCallback(`🔧 Audio >25s: Enabling chunking for ${audioDurationSeconds.toFixed(1)}s audio`, 'warning')
+      } else {
+        if (debugCallback) debugCallback(`🔧 Audio ${audioDurationSeconds.toFixed(1)}s: Using simple transcription (no chunking)`, 'info')
       }
+
+      // Disable timestamps as they can cause issues
+      pipelineOptions.return_timestamps = false
 
       // Only add language if explicitly specified in options
       if (options.language) {
         pipelineOptions.language = options.language
       }
 
-      // IMPORTANT: Remove max_new_tokens if present - causes empty results
-      if ('max_new_tokens' in pipelineOptions) {
-        delete pipelineOptions.max_new_tokens
-        if (debugCallback) debugCallback('🔧 Removed max_new_tokens (causes empty results)', 'warning')
+      // Add any additional options but filter out invalid ones
+      const validOptions = ['language', 'chunk_length_s', 'stride_length_s', 'return_timestamps']
+      for (const [key, value] of Object.entries(options)) {
+        if (validOptions.includes(key)) {
+          pipelineOptions[key] = value
+        }
       }
+
+      // IMPORTANT: Remove invalid parameters that cause empty results
+      const invalidParams = ['task', 'max_new_tokens', 'do_sample', 'temperature']
+      invalidParams.forEach(param => {
+        if (param in pipelineOptions) {
+          delete pipelineOptions[param]
+          if (debugCallback) debugCallback(`🔧 Removed ${param} (causes issues)`, 'warning')
+        }
+      })
 
       if (debugCallback) {
         debugCallback(`🔍 STEP 9: Pipeline options: ${JSON.stringify(pipelineOptions)}`, 'info')
@@ -525,13 +543,57 @@ class WhisperWebService {
         options: pipelineOptions
       })
 
+      // COMPREHENSIVE DEBUGGING: Log everything before pipeline call
+      if (debugCallback) {
+        debugCallback('🔍 === COMPREHENSIVE PRE-PIPELINE DEBUG ===', 'warning')
+        debugCallback(`🔍 processedAudio.length: ${processedAudio?.length}`, 'info')
+        debugCallback(`🔍 processedAudio type: ${typeof processedAudio}`, 'info')
+        debugCallback(`🔍 processedAudio instanceof Float32Array: ${processedAudio instanceof Float32Array}`, 'info')
+        debugCallback(`🔍 Audio sample preview: [${processedAudio?.slice(0, 5).join(', ')}...]`, 'info')
+        debugCallback(`🔍 Audio duration: ${audioDurationSeconds.toFixed(2)}s`, 'info')
+        debugCallback(`🔍 Pipeline exists: ${!!this.pipeline}`, 'info')
+        debugCallback(`🔍 Pipeline type: ${typeof this.pipeline}`, 'info')
+        debugCallback(`🔍 Pipeline options: ${JSON.stringify(pipelineOptions, null, 2)}`, 'info')
+        debugCallback(`🔍 Model name: ${this.modelName}`, 'info')
+        debugCallback('🔍 === END PRE-PIPELINE DEBUG ===', 'warning')
+      }
+
       let result
       try {
         if (debugCallback) debugCallback(`🔍 STEP 11: Calling pipeline now...`, 'info')
-        result = await this.pipeline(processedAudio, pipelineOptions)
+
+        // CRITICAL: Try the most basic possible call first
+        if (Object.keys(pipelineOptions).length === 0 || (Object.keys(pipelineOptions).length === 1 && 'return_timestamps' in pipelineOptions)) {
+          if (debugCallback) debugCallback('🔧 Using MINIMAL pipeline call (no options)', 'warning')
+          result = await this.pipeline(processedAudio)
+        } else {
+          if (debugCallback) debugCallback('🔧 Using pipeline call WITH options', 'warning')
+          result = await this.pipeline(processedAudio, pipelineOptions)
+        }
+
         if (debugCallback) debugCallback(`🔍 STEP 12: Pipeline call completed`, 'info')
+
+        // IMMEDIATE result logging
+        if (debugCallback) {
+          debugCallback('🔍 === IMMEDIATE PIPELINE RESULT DEBUG ===', 'warning')
+          debugCallback(`🔍 Result type: ${typeof result}`, 'info')
+          debugCallback(`🔍 Result is null: ${result === null}`, 'info')
+          debugCallback(`🔍 Result is undefined: ${result === undefined}`, 'info')
+          if (result) {
+            debugCallback(`🔍 Result keys: [${Object.keys(result).join(', ')}]`, 'info')
+            debugCallback(`🔍 Result.text: "${result.text}"`, 'info')
+            debugCallback(`🔍 Result.text type: ${typeof result.text}`, 'info')
+            debugCallback(`🔍 Full result JSON: ${JSON.stringify(result)}`, 'info')
+          }
+          debugCallback('🔍 === END IMMEDIATE RESULT DEBUG ===', 'warning')
+        }
+
       } catch (pipelineError) {
-        if (debugCallback) debugCallback(`🔍 STEP 12: Pipeline ERROR: ${pipelineError.message}`, 'error')
+        if (debugCallback) {
+          debugCallback(`🔍 STEP 12: Pipeline ERROR: ${pipelineError.message}`, 'error')
+          debugCallback(`🔍 Error type: ${typeof pipelineError}`, 'error')
+          debugCallback(`🔍 Error stack: ${pipelineError.stack}`, 'error')
+        }
         throw pipelineError
       }
 

@@ -84,7 +84,23 @@ class AudioTranscriptionService {
     if (onEnd) {
       speechRecognitionService.onEnd(() => {
         this.isRecording = false;
-        const finalTranscript = speechRecognitionService.getTranscript().final;
+        const transcript = speechRecognitionService.getTranscript();
+        const finalTranscript = transcript.final || transcript.combined || '';
+
+        // Ensure we have some transcript for mobile devices
+        if (!finalTranscript && this.currentTranscript) {
+          console.log('📱 Mobile: Using current transcript as fallback');
+          onEnd({
+            text: this.currentTranscript,
+            success: true,
+            segments: [{
+              text: this.currentTranscript,
+              start: 0,
+              end: 0
+            }]
+          });
+          return;
+        }
 
         onEnd({
           text: finalTranscript,

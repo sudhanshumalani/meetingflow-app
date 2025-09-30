@@ -598,7 +598,7 @@ export default function Settings() {
                   </div>
 
                   {/* Sync Stats */}
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
                     {(() => {
                       const stats = sync.getSyncStats()
                       return (
@@ -610,6 +610,10 @@ export default function Settings() {
                           <div className="p-4 bg-green-50 rounded-lg">
                             <div className="text-2xl font-bold text-green-600">{stats.stakeholders}</div>
                             <div className="text-sm text-gray-600">Stakeholders</div>
+                          </div>
+                          <div className="p-4 bg-yellow-50 rounded-lg">
+                            <div className="text-2xl font-bold text-yellow-600">{stats.categories}</div>
+                            <div className="text-sm text-gray-600">Categories</div>
                           </div>
                           <div className="p-4 bg-purple-50 rounded-lg">
                             <div className="text-2xl font-bold text-purple-600">

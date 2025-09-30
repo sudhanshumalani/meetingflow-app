@@ -125,6 +125,23 @@ class SpeechRecognitionService {
       console.log('🎤 Speech recognition ended');
       this.isListening = false;
 
+      // Mobile browsers often don't mark final results properly
+      // Ensure any interim transcript gets saved as final
+      if (this.interimTranscript && this.interimTranscript.trim()) {
+        console.log('📱 Mobile: Saving interim transcript as final on end');
+        this.finalTranscript += this.interimTranscript;
+        this.interimTranscript = '';
+
+        // Trigger a final result callback for mobile
+        if (this.onResultCallback) {
+          this.onResultCallback({
+            final: this.finalTranscript,
+            interim: '',
+            combined: this.finalTranscript
+          });
+        }
+      }
+
       if (this.onEndCallback) {
         this.onEndCallback();
       }

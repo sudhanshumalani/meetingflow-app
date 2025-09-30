@@ -26,6 +26,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const lastSentTranscriptRef = useRef('')
   const persistentTranscriptRef = useRef('') // Stores accumulated transcript across sessions
 
+  // Mobile lifecycle management
+  const [wakeLock, setWakeLock] = useState(null)
+
   // Initialize service on mount
   useEffect(() => {
     const initService = async () => {
@@ -80,6 +83,59 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     return () => clearInterval(autoSaveInterval)
   }, [isRecording, transcript])
 
+  // Mobile wake lock management
+  const requestWakeLock = async () => {
+    try {
+      if ('wakeLock' in navigator) {
+        const lock = await navigator.wakeLock.request('screen')
+        setWakeLock(lock)
+        console.log('🔒 Wake lock acquired - screen will stay on during recording')
+
+        lock.addEventListener('release', () => {
+          console.log('🔓 Wake lock released')
+          setWakeLock(null)
+        })
+      }
+    } catch (error) {
+      console.warn('Wake lock request failed:', error)
+    }
+  }
+
+  const releaseWakeLock = async () => {
+    if (wakeLock) {
+      try {
+        await wakeLock.release()
+        setWakeLock(null)
+        console.log('🔓 Wake lock manually released')
+      } catch (error) {
+        console.warn('Wake lock release failed:', error)
+      }
+    }
+  }
+
+  // Handle app going to background on mobile
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden && isRecording) {
+        console.log('📱 App went to background during recording - auto-saving transcript')
+        handleAutoSave('background')
+
+        // Capture current transcript state before potential suspension
+        const currentTranscript = audioTranscriptionService.getCurrentTranscript()
+        if (currentTranscript && currentTranscript.trim()) {
+          persistentTranscriptRef.current = currentTranscript
+          setTranscript(currentTranscript)
+          console.log('📱 Preserved transcript before background:', currentTranscript.substring(0, 50) + '...')
+        }
+      } else if (!document.hidden && isRecording) {
+        console.log('📱 App returned to foreground during recording')
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [isRecording])
+
   // Check microphone permissions
   const checkPermissions = async () => {
     try {
@@ -107,18 +163,34 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
       await checkPermissions()
 
+      // Request wake lock to prevent screen from turning off on mobile
+      await requestWakeLock()
+
       // Only start Web Speech API for microphone source
       if (selectedAudioSource === 'microphone') {
         await audioTranscriptionService.startLiveTranscription({
           onTranscript: (result) => {
             const newText = result.text
+            console.log('🎤 Mobile transcript debug:', {
+              text: newText,
+              isFinal: result.isFinal,
+              length: newText?.length,
+              persistentLength: persistentTranscriptRef.current.length
+            })
+
             if (result.isFinal && newText.trim()) {
               persistentTranscriptRef.current += newText + ' '
               setTranscript(persistentTranscriptRef.current)
+              console.log('📱 Final transcript added, total length:', persistentTranscriptRef.current.length)
             } else {
               // Show interim text alongside persistent content
               setInterimText(newText)
               setTranscript(persistentTranscriptRef.current)
+
+              // Mobile safety: If we have substantial interim text, save it periodically
+              if (newText && newText.length > 20) {
+                console.log('📱 Mobile interim text safety backup:', newText.substring(0, 30) + '...')
+              }
             }
           },
           onEnd: (result) => {
@@ -153,6 +225,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       console.error('Failed to start recording:', error)
       setError(error.message)
       handleAutoSave('start_error')
+
+      // Release wake lock if recording failed
+      await releaseWakeLock()
     }
   }
 
@@ -161,27 +236,47 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     try {
       handleAutoSave('stop')
 
+      // Capture any remaining interim text before stopping (critical for mobile)
+      const currentServiceTranscript = audioTranscriptionService.getCurrentTranscript()
+      if (currentServiceTranscript && currentServiceTranscript.trim()) {
+        console.log('📱 Capturing remaining transcript from service:', currentServiceTranscript.substring(0, 50) + '...')
+        persistentTranscriptRef.current = currentServiceTranscript
+      }
+
       // Only stop Web Speech API if we're using microphone
       if (selectedAudioSource === 'microphone') {
         const finalTranscript = audioTranscriptionService.stopLiveTranscription()
         if (finalTranscript && finalTranscript.trim()) {
           persistentTranscriptRef.current += finalTranscript + ' '
+          console.log('📱 Added final transcript from stop:', finalTranscript.substring(0, 30) + '...')
         }
       }
 
-      setTranscript(persistentTranscriptRef.current || transcript)
+      // Ensure we have the best available transcript
+      const bestTranscript = persistentTranscriptRef.current || transcript || interimText
+      setTranscript(bestTranscript)
       setIsRecording(false)
+
+      // Release wake lock
+      await releaseWakeLock()
 
       if (timerRef.current) {
         clearInterval(timerRef.current)
         timerRef.current = null
       }
 
-      console.log('🛑 Recording stopped - transcript preserved for next session')
+      console.log('🛑 Recording stopped - transcript preserved:', {
+        length: bestTranscript.length,
+        words: bestTranscript.split(' ').filter(w => w.trim()).length,
+        preview: bestTranscript.substring(0, 50) + '...'
+      })
     } catch (error) {
       console.error('Failed to stop recording:', error)
       setError(error.message)
       handleAutoSave('stop_error')
+
+      // Always try to release wake lock even on error
+      await releaseWakeLock()
     }
   }
 

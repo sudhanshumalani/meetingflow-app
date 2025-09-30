@@ -35,10 +35,11 @@ export function SyncProvider({ children }) {
       }
 
       // Only sync if we have actual data
-      if (appData.meetings.length > 0 || appData.stakeholders.length > 0) {
+      if (appData.meetings.length > 0 || appData.stakeholders.length > 0 || appData.stakeholderCategories.length > 0) {
         console.log('🔄 Auto-syncing app data to cloud...', {
           meetings: appData.meetings.length,
-          stakeholders: appData.stakeholders.length
+          stakeholders: appData.stakeholders.length,
+          categories: appData.stakeholderCategories.length
         })
 
         await sync.syncToCloud(appData)

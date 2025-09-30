@@ -717,8 +717,13 @@ class SyncService {
         fullCategory: category
       })
 
-      if (hasName && notInMap && notDefault) {
-        console.log('✅ Adding category to merge:', categoryName)
+      // Check if this is a legitimate user category vs a default category
+      const isUserCategory = category?.id || category?.createdAt || category?.updatedAt || category?.stakeholderCount > 0
+      const shouldInclude = hasName && notInMap && (notDefault || isUserCategory)
+
+      if (shouldInclude) {
+        const categoryType = isUserCategory && defaultCategories.has(categoryName) ? 'user-created with default name' : 'custom'
+        console.log(`✅ Adding ${categoryType} category to merge:`, categoryName)
         // Ensure the category has a 'name' property for consistency
         const normalizedCategory = {
           ...category,
@@ -729,10 +734,11 @@ class SyncService {
         console.log('❌ Skipping category:', categoryName || 'unnamed', {
           reason: !hasName ? 'no name/label property' :
                   !notInMap ? 'already in map' :
-                  !notDefault ? `is default (matches: ${categoryName})` : 'unknown',
+                  (!notDefault && !isUserCategory) ? `is default without user data (matches: ${categoryName})` : 'unknown',
           hasName,
           notInMap,
-          notDefault
+          notDefault,
+          isUserCategory
         })
       }
     })

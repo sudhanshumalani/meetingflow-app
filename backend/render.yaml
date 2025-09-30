@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: meetingflow-transcription
+    env: node
+    runtime: node
+    plan: free
+    buildCommand: npm install && bash scripts/setup-whisper-render.sh
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+    disk:
+      name: whisper-data
+      mountPath: /opt/render/project/src/whisper-bin
+      sizeGB: 1

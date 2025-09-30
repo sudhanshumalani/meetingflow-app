@@ -1,0 +1,102 @@
+const fs = require('fs').promises;
+const path = require('path');
+const ffmpeg = require('fluent-ffmpeg');
+const { v4: uuidv4 } = require('uuid');
+
+// Set FFmpeg path directly
+const FFMPEG_PATH = 'C:/ffmpeg/bin/ffmpeg.exe';
+const FFPROBE_PATH = 'C:/ffmpeg/bin/ffprobe.exe';
+
+ffmpeg.setFfmpegPath(FFMPEG_PATH);
+ffmpeg.setFfprobePath(FFPROBE_PATH);
+
+class AudioProcessor {
+  constructor(sessionId) {
+    this.sessionId = sessionId;
+    this.tempDir = path.join(__dirname, '../temp');
+    this.ensureTempDir();
+  }
+
+  async ensureTempDir() {
+    try {
+      await fs.mkdir(this.tempDir, { recursive: true });
+      console.log(`✓ Temp directory ready: ${this.tempDir}`);
+    } catch (error) {
+      console.error('Error creating temp directory:', error);
+    }
+  }
+
+  async saveAudio(audioBuffer) {
+    const filename = `${this.sessionId}_${uuidv4()}.webm`;
+    const webmPath = path.join(this.tempDir, filename);
+    const wavPath = webmPath.replace('.webm', '.wav');
+
+    // Save the raw WebM audio
+    await fs.writeFile(webmPath, audioBuffer);
+    console.log(`✓ Saved audio chunk: ${filename}`);
+
+    // Convert to WAV format for Whisper
+    await this.convertToWav(webmPath, wavPath);
+
+    // Clean up the WebM file
+    await fs.unlink(webmPath);
+
+    return wavPath;
+  }
+
+  convertToWav(inputPath, outputPath) {
+    return new Promise((resolve, reject) => {
+      ffmpeg(inputPath)
+        .toFormat('wav')
+        .audioFrequency(16000) // Whisper expects 16kHz
+        .audioChannels(1)      // Mono audio
+        .on('end', () => {
+          console.log(`✓ Converted to WAV: ${path.basename(outputPath)}`);
+          resolve(outputPath);
+        })
+        .on('error', (err) => {
+          console.error('FFmpeg conversion error:', err);
+          reject(err);
+        })
+        .save(outputPath);
+    });
+  }
+
+  async cleanup(filePath) {
+    try {
+      await fs.unlink(filePath);
+      console.log(`✓ Cleaned up: ${path.basename(filePath)}`);
+    } catch (error) {
+      console.error('Cleanup error:', error);
+    }
+  }
+
+  async cleanupAll() {
+    try {
+      const files = await fs.readdir(this.tempDir);
+      const sessionFiles = files.filter(f => f.startsWith(this.sessionId));
+
+      await Promise.all(
+        sessionFiles.map(f => fs.unlink(path.join(this.tempDir, f)))
+      );
+
+      console.log(`✓ Cleaned up ${sessionFiles.length} files for session ${this.sessionId}`);
+    } catch (error) {
+      console.error('Cleanup all error:', error);
+    }
+  }
+
+  async getStats() {
+    try {
+      const files = await fs.readdir(this.tempDir);
+      return {
+        totalFiles: files.length,
+        sessionFiles: files.filter(f => f.startsWith(this.sessionId)).length
+      };
+    } catch (error) {
+      return { totalFiles: 0, sessionFiles: 0 };
+    }
+  }
+}
+
+module.exports = AudioProcessor;

@@ -58,6 +58,13 @@ class AudioTranscriptionService {
 
     const { onTranscript, onEnd, onError } = callbacks;
 
+    // Detect mobile for enhanced error handling
+    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile) {
+      console.log('📱 Mobile device detected - enabling enhanced error recovery');
+      speechRecognitionService.autoRestart = true;
+    }
+
     // Set up callbacks
     if (onTranscript) {
       speechRecognitionService.onResult((result) => {
@@ -93,8 +100,31 @@ class AudioTranscriptionService {
 
     if (onError) {
       speechRecognitionService.onError((error) => {
+        // Enhanced mobile error handling
+        if (isMobile && (error === 'aborted' || error === 'no-speech')) {
+          console.log(`📱 Mobile: Ignoring harmless error: ${error}`);
+          return; // Don't propagate harmless mobile errors
+        }
+
         this.isRecording = false;
-        onError(new Error(`Speech recognition error: ${error}`));
+
+        // Provide user-friendly error messages for mobile
+        let userMessage = `Speech recognition error: ${error}`;
+        if (isMobile) {
+          switch (error) {
+            case 'not-allowed':
+              userMessage = 'Microphone permission denied. Please enable microphone access in your browser settings.';
+              break;
+            case 'audio-capture':
+              userMessage = 'Unable to access microphone. Please check your device settings and try again.';
+              break;
+            case 'network':
+              userMessage = 'Network error. Please check your internet connection and try again.';
+              break;
+          }
+        }
+
+        onError(new Error(userMessage));
       });
     }
 
@@ -104,7 +134,7 @@ class AudioTranscriptionService {
       speechRecognitionService.startListening();
       this.isRecording = true;
 
-      console.log('🎤 Live transcription started');
+      console.log('🎤 Live transcription started' + (isMobile ? ' (mobile optimized)' : ''));
     } catch (error) {
       console.error('❌ Failed to start live transcription:', error);
       throw error;
@@ -119,6 +149,9 @@ class AudioTranscriptionService {
       console.log('⚠️ Transcription is not running');
       return this.currentTranscript;
     }
+
+    // Disable auto-restart before stopping to prevent unwanted restarts
+    speechRecognitionService.autoRestart = false;
 
     const finalTranscript = speechRecognitionService.stopListening();
     this.isRecording = false;

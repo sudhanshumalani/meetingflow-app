@@ -12,6 +12,7 @@ class SpeechRecognitionService {
     this.onResultCallback = null;
     this.onEndCallback = null;
     this.onErrorCallback = null;
+    this.autoRestart = false; // Enable auto-restart on mobile abort errors
 
     console.log('🎤 SpeechRecognitionService initialized');
   }
@@ -84,6 +85,36 @@ class SpeechRecognitionService {
 
     this.recognition.onerror = (event) => {
       console.error('🚨 Speech recognition error:', event.error);
+
+      // Handle mobile-specific errors with recovery strategies
+      if (event.error === 'aborted') {
+        console.log('📱 Mobile speech recognition aborted - attempting recovery');
+        // Don't call error callback for aborted errors on mobile, try to restart
+        this.isListening = false;
+
+        // Auto-restart after a short delay if this was an unexpected abort
+        if (this.autoRestart) {
+          setTimeout(() => {
+            console.log('🔄 Auto-restarting speech recognition after abort');
+            this.startListening();
+          }, 1000);
+        }
+        return;
+      }
+
+      if (event.error === 'no-speech') {
+        console.log('📱 No speech detected - this is normal, continuing...');
+        // Don't treat no-speech as an error, just continue
+        return;
+      }
+
+      if (event.error === 'audio-capture') {
+        console.error('📱 Audio capture failed - check microphone permissions');
+      }
+
+      if (event.error === 'not-allowed') {
+        console.error('📱 Microphone permission denied');
+      }
 
       if (this.onErrorCallback) {
         this.onErrorCallback(event.error);

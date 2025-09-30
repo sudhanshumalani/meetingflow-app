@@ -11,7 +11,5 @@ services:
         value: production
       - key: PORT
         value: 10000
-    disk:
-      name: whisper-data
-      mountPath: /opt/render/project/src/whisper-bin
-      sizeGB: 1
+      - key: ALLOWED_ORIGINS
+        value: https://sudhanshumalani.github.io,http://localhost:5173

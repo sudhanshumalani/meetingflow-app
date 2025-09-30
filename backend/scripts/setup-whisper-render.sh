@@ -1,6 +1,6 @@
 #!/bin/bash
 # Setup script for Render deployment
-# Downloads whisper.cpp binary and model
+# Builds whisper.cpp from source and downloads model
 
 set -e
 
@@ -9,17 +9,21 @@ echo "🔧 Setting up Whisper.cpp for Render..."
 # Create directories
 mkdir -p whisper-bin models
 
-# Download whisper.cpp binary for Linux (Render uses Linux)
-echo "📥 Downloading whisper.cpp binary..."
+# Build whisper.cpp from source (more reliable than pre-built binaries)
+echo "📥 Cloning whisper.cpp repository..."
 cd whisper-bin
-curl -L "https://huggingface.co/echogarden/echogarden-packages/resolve/main/whisper.cpp-binaries-linux-x64-cpu-1.5.5-20240403.tar.gz" -o whisper-cpp-linux.tar.gz
-tar -xzf whisper-cpp-linux.tar.gz
-rm whisper-cpp-linux.tar.gz
+git clone https://github.com/ggerganov/whisper.cpp.git .
+echo "🔨 Building whisper.cpp..."
+make
 
-# Find the main binary and make it executable
-find . -name "main" -type f -exec chmod +x {} \;
-BINARY_PATH=$(find . -name "main" -type f | head -1)
-echo "✅ Binary found at: $BINARY_PATH"
+# Verify binary was built
+if [ -f "main" ]; then
+  chmod +x main
+  echo "✅ Whisper.cpp built successfully: ./main"
+else
+  echo "❌ Failed to build whisper.cpp binary"
+  exit 1
+fi
 
 cd ..
 

@@ -20,6 +20,10 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
       },
+      injectManifest: {
+        // Allow large WASM files (transformers.js models) - 25MB limit
+        maximumFileSizeToCacheInBytes: 25 * 1024 * 1024,
+      },
       includeAssets: ['favicon.ico', 'pwa-icon.svg'],
       manifest: {
         name: 'MeetingFlow',

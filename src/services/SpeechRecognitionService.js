@@ -27,11 +27,20 @@ class SpeechRecognitionService {
    * Initialize speech recognition
    */
   initialize() {
+    if (this.recognition) {
+      return true; // Already initialized
+    }
+
     if (!this.isSupported()) {
       throw new Error('Web Speech API is not supported in this browser');
     }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      throw new Error('SpeechRecognition constructor not available');
+    }
+
     this.recognition = new SpeechRecognition();
 
     // Configure recognition settings

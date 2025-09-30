@@ -146,7 +146,8 @@ class AudioTranscriptionService {
 
     // Start listening
     try {
-      speechRecognitionService.reset();
+      // REMOVED: speechRecognitionService.reset() - this was wiping accumulated transcript!
+      // The reset should only happen when explicitly clearing transcript, not on each start
       speechRecognitionService.startListening();
       this.isRecording = true;
 

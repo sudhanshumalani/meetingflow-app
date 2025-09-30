@@ -240,7 +240,10 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       const currentServiceTranscript = audioTranscriptionService.getCurrentTranscript()
       if (currentServiceTranscript && currentServiceTranscript.trim()) {
         console.log('📱 Capturing remaining transcript from service:', currentServiceTranscript.substring(0, 50) + '...')
-        persistentTranscriptRef.current = currentServiceTranscript
+        // APPEND instead of overwrite to preserve previous transcript sessions
+        if (!persistentTranscriptRef.current.includes(currentServiceTranscript.trim())) {
+          persistentTranscriptRef.current += currentServiceTranscript + ' '
+        }
       }
 
       // Only stop Web Speech API if we're using microphone

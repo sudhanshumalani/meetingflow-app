@@ -49,7 +49,7 @@ import {
 // Note: Data integration now available via n8n in Settings
 import { useAIAnalysis } from '../hooks/useAIAnalysis'
 import { ExportOptionsButton } from '../components/ExportOptions'
-import AudioRecorder from '../components/AudioRecorder'
+import WhisperTranscription from '../components/WhisperTranscription'
 
 // Constants for better maintainability
 const CHAR_LIMITS = {
@@ -1722,9 +1722,10 @@ Example notes you might paste:
                     Audio Recording & Transcription
                   </h2>
 
-                  <AudioRecorder
+                  <WhisperTranscription
+                    enabled={true}
                     onTranscriptUpdate={(transcript) => {
-                      console.log('📝 Meeting: Received transcript update:', transcript?.substring(0, 100) + '...')
+                      console.log('📝 Meeting: Received Whisper transcript:', transcript?.substring(0, 100) + '...')
                       setAudioTranscript(transcript)
                       // Automatically populate digital notes when we have transcript
                       if (transcript && transcript.length > 50) {
@@ -1733,28 +1734,18 @@ Example notes you might paste:
                           summary: transcript
                         }))
                       }
-                    }}
-                    onAutoSave={(transcript, reason) => {
-                      console.log(`🔄 Auto-saving audio transcript (${reason})`)
-                      setAudioTranscript(transcript)
-                      // Auto-populate digital notes
-                      setDigitalNotes(prev => ({
-                        ...prev,
-                        summary: transcript
-                      }))
-                      // Trigger save if not a new meeting
+
+                      // Auto-save for existing meetings
                       if (id !== 'new') {
                         const updatedMeetingData = {
                           ...buildMeetingData(id),
                           audioTranscript: transcript,
-                          lastAutoSaved: new Date().toISOString(),
-                          autoSaveReason: reason
+                          lastAutoSaved: new Date().toISOString()
                         }
                         updateMeeting(updatedMeetingData)
-                        console.log(`✅ Auto-saved meeting due to: ${reason}`)
+                        console.log(`✅ Auto-saved Whisper transcript`)
                       }
                     }}
-                    className="mb-4"
                   />
 
                   {/* Transcript Display and Actions */}

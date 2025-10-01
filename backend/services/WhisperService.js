@@ -28,7 +28,7 @@ class WhisperService {
     this.isInitialized = false;
   }
 
-  // Helper to find whisper binary in extracted Linux tarball
+  // Helper to find whisper binary in extracted Linux tarball or built from source
   findWhisperBinary(baseDir) {
     const fs = require('fs');
     try {
@@ -39,7 +39,7 @@ class WhisperService {
           if (entry.isDirectory()) {
             const found = findBinary(fullPath);
             if (found) return found;
-          } else if (entry.name === 'main' && !entry.name.endsWith('.exe')) {
+          } else if ((entry.name === 'main' || entry.name === 'whisper-cli') && !entry.name.endsWith('.exe')) {
             return fullPath;
           }
         }

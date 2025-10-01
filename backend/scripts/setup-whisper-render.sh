@@ -18,12 +18,22 @@ cd whisper-bin
 echo "🔨 Building whisper.cpp..."
 make
 
-# Verify binary was built
-if [ -f "main" ]; then
+# Verify binary was built (whisper.cpp builds to bin/main or bin/whisper-cli)
+if [ -f "bin/main" ]; then
+  chmod +x bin/main
+  echo "✅ Whisper.cpp built successfully: bin/main"
+elif [ -f "bin/whisper-cli" ]; then
+  # Create symlink for compatibility
+  ln -sf bin/whisper-cli main
+  chmod +x bin/whisper-cli
+  echo "✅ Whisper.cpp built successfully: bin/whisper-cli"
+elif [ -f "main" ]; then
   chmod +x main
-  echo "✅ Whisper.cpp built successfully: ./main"
+  echo "✅ Whisper.cpp built successfully: main"
 else
   echo "❌ Failed to build whisper.cpp binary"
+  ls -la
+  ls -la bin/ || echo "bin/ directory not found"
   exit 1
 fi
 

@@ -32,20 +32,29 @@ class WhisperService {
   findWhisperBinary(baseDir) {
     const fs = require('fs');
     try {
+      let foundMain = null;
+      let foundCli = null;
+
       const findBinary = (dir) => {
         const entries = fs.readdirSync(dir, { withFileTypes: true });
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
           if (entry.isDirectory()) {
-            const found = findBinary(fullPath);
-            if (found) return found;
-          } else if ((entry.name === 'main' || entry.name === 'whisper-cli') && !entry.name.endsWith('.exe')) {
-            return fullPath;
+            findBinary(fullPath);
+          } else if (!entry.name.endsWith('.exe')) {
+            if (entry.name === 'whisper-cli') {
+              foundCli = fullPath;
+            } else if (entry.name === 'main') {
+              foundMain = fullPath;
+            }
           }
         }
-        return null;
       };
-      return findBinary(baseDir);
+
+      findBinary(baseDir);
+
+      // PRIORITIZE whisper-cli over deprecated main binary
+      return foundCli || foundMain;
     } catch (error) {
       return null;
     }

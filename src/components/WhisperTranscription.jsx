@@ -48,7 +48,8 @@ const WhisperTranscription = ({ onTranscriptUpdate, enabled = false }) => {
     try {
       setError(null);
       setStatus('Starting...');
-      await service.startRecording('auto');
+      // Force microphone mode for web deployment (system-audio requires desktop app)
+      await service.startRecording('microphone');
       setIsRecording(true);
     } catch (err) {
       setError(err.message);

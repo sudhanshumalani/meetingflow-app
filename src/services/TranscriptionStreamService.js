@@ -221,9 +221,23 @@ class TranscriptionStreamService {
         audioBitsPerSecond: 128000
       });
 
-      // Send audio chunks to backend
+      // Collect chunks for proper WebM assembly
+      this.audioChunks = [];
+
+      // Collect audio chunks in array
       this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && this.ws && this.ws.readyState === WebSocket.OPEN) {
+        if (event.data.size > 0) {
+          this.audioChunks.push(event.data);
+        }
+      };
+
+      // Send complete audio blob when recording completes each interval
+      this.mediaRecorder.onstop = () => {
+        if (this.audioChunks.length > 0 && this.ws && this.ws.readyState === WebSocket.OPEN) {
+          // Create complete valid Blob from all chunks
+          const audioBlob = new Blob(this.audioChunks, { type: mimeType });
+
+          // Convert to base64 and send
           const reader = new FileReader();
           reader.onloadend = () => {
             const base64Audio = reader.result.split(',')[1];
@@ -232,7 +246,20 @@ class TranscriptionStreamService {
               data: base64Audio
             }));
           };
-          reader.readAsDataURL(event.data);
+          reader.readAsDataURL(audioBlob);
+
+          this.audioChunks = []; // Clear for next interval
+        }
+
+        // Restart recording if still active (for continuous transcription)
+        if (this.isRecording && this.stream && this.stream.active) {
+          this.mediaRecorder.start();
+          // Schedule next stop in 5 seconds for interval transcription
+          setTimeout(() => {
+            if (this.isRecording && this.mediaRecorder.state === 'recording') {
+              this.mediaRecorder.stop();
+            }
+          }, 5000);
         }
       };
 
@@ -242,8 +269,14 @@ class TranscriptionStreamService {
         this.stopRecording();
       };
 
-      // Start recording with 250ms chunks
-      this.mediaRecorder.start(250);
+      // Start recording - will auto-stop after 5 seconds
+      this.mediaRecorder.start();
+      setTimeout(() => {
+        if (this.isRecording && this.mediaRecorder.state === 'recording') {
+          this.mediaRecorder.stop(); // Triggers onstop which restarts
+        }
+      }, 5000);
+
       this.isRecording = true;
 
       console.log(`✓ Recording started: ${mode}`);

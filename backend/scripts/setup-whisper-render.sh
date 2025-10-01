@@ -18,22 +18,29 @@ cd whisper-bin
 echo "🔨 Building whisper.cpp..."
 make
 
-# Verify binary was built (whisper.cpp builds to bin/main or bin/whisper-cli)
-if [ -f "bin/main" ]; then
+# Verify binary was built (CMake builds to build/bin/, Makefile to root)
+if [ -f "build/bin/main" ]; then
+  chmod +x build/bin/main
+  # Create symlink at root for easier access
+  ln -sf build/bin/main main
+  echo "✅ Whisper.cpp built successfully: build/bin/main"
+elif [ -f "build/bin/whisper-cli" ]; then
+  chmod +x build/bin/whisper-cli
+  ln -sf build/bin/whisper-cli main
+  echo "✅ Whisper.cpp built successfully: build/bin/whisper-cli"
+elif [ -f "bin/main" ]; then
   chmod +x bin/main
+  ln -sf bin/main main
   echo "✅ Whisper.cpp built successfully: bin/main"
-elif [ -f "bin/whisper-cli" ]; then
-  # Create symlink for compatibility
-  ln -sf bin/whisper-cli main
-  chmod +x bin/whisper-cli
-  echo "✅ Whisper.cpp built successfully: bin/whisper-cli"
 elif [ -f "main" ]; then
   chmod +x main
   echo "✅ Whisper.cpp built successfully: main"
 else
   echo "❌ Failed to build whisper.cpp binary"
-  ls -la
-  ls -la bin/ || echo "bin/ directory not found"
+  echo "Checking build directories..."
+  ls -la build/bin/ 2>/dev/null || echo "build/bin/ not found"
+  ls -la bin/ 2>/dev/null || echo "bin/ not found"
+  ls -la | grep main || echo "No main binary in root"
   exit 1
 fi
 

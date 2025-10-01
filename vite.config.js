@@ -72,7 +72,7 @@ export default defineConfig({
     // Production build: Use Render backend, Development: Use localhost
     'import.meta.env.VITE_TRANSCRIPTION_WS': JSON.stringify(
       process.env.NODE_ENV === 'production'
-        ? 'wss://meetingflow-transcription.onrender.com'
+        ? 'wss://meetingflow-app.onrender.com'
         : process.env.VITE_TRANSCRIPTION_WS || 'ws://localhost:3001'
     ),
   },

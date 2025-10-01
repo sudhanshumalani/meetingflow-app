@@ -65,8 +65,38 @@ const server = app.listen(PORT, () => {
   console.log('=================================================');
 });
 
-// WebSocket server
-const wss = new WebSocket.Server({ server });
+// WebSocket server with origin verification
+const wss = new WebSocket.Server({
+  server,
+  verifyClient: (info) => {
+    const origin = info.origin || info.req.headers.origin;
+    console.log(`🔍 WebSocket connection attempt from origin: ${origin || 'none'}`);
+    console.log(`Headers:`, info.req.headers);
+
+    // Allow connections with no origin (direct connections, mobile apps)
+    if (!origin) {
+      console.log('✅ Allowing connection with no origin');
+      return true;
+    }
+
+    // Check if origin is in allowed list
+    const isAllowed = allowedOrigins.some(allowed => {
+      // Remove trailing slashes for comparison
+      const normalizedOrigin = origin.replace(/\/$/, '');
+      const normalizedAllowed = allowed.replace(/\/$/, '');
+      return normalizedOrigin === normalizedAllowed || normalizedOrigin.startsWith(normalizedAllowed);
+    });
+
+    if (isAllowed) {
+      console.log(`✅ Allowing connection from: ${origin}`);
+      return true;
+    }
+
+    console.log(`❌ Rejecting connection from: ${origin}`);
+    console.log(`Allowed origins:`, allowedOrigins);
+    return false;
+  }
+});
 
 wss.on('connection', async (ws, req) => {
   const sessionId = uuidv4();

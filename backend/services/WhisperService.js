@@ -103,19 +103,18 @@ class WhisperService {
 
   runWhisper(audioPath, modelPath) {
     return new Promise((resolve, reject) => {
+      // REMOVED -nt and -np flags to see ALL output including errors!
       const args = [
         '-m', modelPath,
         '-f', audioPath,
         '-l', 'en',
-        '--no-timestamps',
-        '-nt',  // No timestamps in output
-        '-np'   // No prints except results
+        '--no-timestamps'
       ];
 
       console.log(`Running: ${this.whisperBinary} ${args.join(' ')}`);
 
       const whisperProcess = spawn(this.whisperBinary, args, {
-        cwd: path.dirname(this.whisperBinary),  // Set working directory to binary location
+        cwd: path.dirname(this.whisperBinary),
         windowsHide: true
       });
 
@@ -136,9 +135,17 @@ class WhisperService {
       });
 
       whisperProcess.on('close', (code) => {
+        // ENHANCED LOGGING - Always log full output
+        console.log('=== WHISPER FULL OUTPUT ===');
+        console.log('Exit code:', code);
+        console.log('--- stdout ---');
+        console.log(stdout);
+        console.log('--- stderr ---');
+        console.log(stderr);
+        console.log('=== END OUTPUT ===');
+
         if (code === 0) {
           // Extract transcript from stdout
-          // Whisper.cpp outputs the transcript after processing info
           const lines = stdout.split('\n');
           const transcriptLines = lines.filter(line => {
             // Filter out progress/info lines, keep only transcript content
@@ -146,15 +153,19 @@ class WhisperService {
                    !line.includes('[') &&
                    !line.includes('whisper_') &&
                    !line.includes('system_info') &&
-                   !line.includes('processing');
+                   !line.includes('processing') &&
+                   !line.includes('main:') &&
+                   !line.includes('sampling') &&
+                   !line.includes('encode');
           });
 
           const transcript = transcriptLines.join(' ').trim();
           resolve(transcript);
         } else {
-          console.error('Whisper process failed with code:', code);
-          console.error('stderr:', stderr);
-          reject(new Error(`Whisper process exited with code ${code}: ${stderr}`));
+          console.error('❌ Whisper process FAILED');
+          // Include BOTH stdout and stderr in error
+          const errorDetails = stderr || stdout || 'No error output';
+          reject(new Error(`Whisper process exited with code ${code}: ${errorDetails}`));
         }
       });
     });

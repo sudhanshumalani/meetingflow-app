@@ -41,7 +41,7 @@ class AudioProcessor {
 
     // Save the raw WebM audio
     await fs.writeFile(webmPath, audioBuffer);
-    console.log(`✓ Saved audio chunk: ${filename}`);
+    console.log(`✓ Saved WebM: ${filename} (${(audioBuffer.length / 1024).toFixed(2)} KB)`);
 
     // Convert to WAV format for Whisper
     await this.convertToWav(webmPath, wavPath);
@@ -52,15 +52,28 @@ class AudioProcessor {
     return wavPath;
   }
 
-  convertToWav(inputPath, outputPath) {
+  async convertToWav(inputPath, outputPath) {
     return new Promise((resolve, reject) => {
       ffmpeg(inputPath)
         .toFormat('wav')
-        .audioFrequency(16000) // Whisper expects 16kHz
-        .audioChannels(1)      // Mono audio
-        .on('end', () => {
-          console.log(`✓ Converted to WAV: ${path.basename(outputPath)}`);
-          resolve(outputPath);
+        .audioCodec('pcm_s16le')  // CRITICAL: 16-bit PCM required by whisper.cpp
+        .audioFrequency(16000)    // Whisper expects 16kHz
+        .audioChannels(1)         // Mono audio
+        .on('end', async () => {
+          // Validate the converted file
+          try {
+            const stats = await fs.stat(outputPath);
+            console.log(`✓ Converted to WAV: ${path.basename(outputPath)} (${(stats.size / 1024).toFixed(2)} KB)`);
+
+            if (stats.size < 1000) {
+              reject(new Error(`Converted WAV file too small: ${stats.size} bytes`));
+              return;
+            }
+
+            resolve(outputPath);
+          } catch (error) {
+            reject(new Error(`Failed to validate converted WAV: ${error.message}`));
+          }
         })
         .on('error', (err) => {
           console.error('FFmpeg conversion error:', err);

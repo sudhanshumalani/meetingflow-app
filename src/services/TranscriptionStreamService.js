@@ -318,8 +318,9 @@ class TranscriptionStreamService {
       this.mediaRecorder.stop();
     }
 
+    // Send stop signal to process remaining buffered audio
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'end' }));
+      this.ws.send(JSON.stringify({ type: 'stop' }));
     }
 
     this.isRecording = false;
@@ -328,7 +329,7 @@ class TranscriptionStreamService {
     // Cleanup after a short delay to ensure final transcripts are received
     setTimeout(() => {
       this.cleanup();
-    }, 1000);
+    }, 2000); // Increased to 2s to allow for processing
   }
 
   /**

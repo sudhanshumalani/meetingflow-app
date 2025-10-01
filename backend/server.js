@@ -109,6 +109,8 @@ wss.on('connection', async (ws, req) => {
 
   let audioChunks = [];
   let isInitialized = false;
+  let chunkBuffer = [];
+  let lastProcessTime = Date.now();
 
   // Initialize Whisper service
   try {
@@ -130,42 +132,62 @@ wss.on('connection', async (ws, req) => {
     return;
   }
 
+  // Process buffered chunks every 5 seconds or when recording stops
+  const processBuffer = async () => {
+    if (chunkBuffer.length === 0) return;
+
+    try {
+      // Combine all buffered chunks
+      const totalSize = chunkBuffer.reduce((sum, chunk) => sum + chunk.length, 0);
+      const combinedBuffer = Buffer.concat(chunkBuffer);
+
+      console.log(`📝 Processing ${chunkBuffer.length} chunks (${(totalSize / 1024).toFixed(2)} KB)...`);
+
+      chunkBuffer = []; // Clear buffer
+      lastProcessTime = Date.now();
+
+      const audioPath = await audioProcessor.saveAudio(combinedBuffer);
+      const transcript = await whisperService.transcribe(audioPath);
+
+      if (transcript && transcript.trim().length > 0) {
+        ws.send(JSON.stringify({
+          type: 'transcript',
+          text: transcript,
+          timestamp: Date.now()
+        }));
+        console.log(`✅ Transcript sent: "${transcript.substring(0, 50)}..."`);
+      } else {
+        console.log('⚠️ No speech detected in this segment');
+      }
+
+      await audioProcessor.cleanup(audioPath);
+    } catch (error) {
+      console.error('Processing error:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Transcription failed: ' + error.message
+      }));
+    }
+  };
+
   ws.on('message', async (data) => {
     try {
       const message = JSON.parse(data);
 
       if (message.type === 'audio') {
-        // Receive complete audio recording
+        // Buffer audio chunks
         const audioData = Buffer.from(message.data, 'base64');
-        console.log(`📝 Processing complete audio: ${(audioData.length / 1024).toFixed(2)} KB...`);
+        chunkBuffer.push(audioData);
 
-        try {
-          const audioPath = await audioProcessor.saveAudio(audioData);
-          const transcript = await whisperService.transcribe(audioPath);
-
-          if (transcript && transcript.trim().length > 0) {
-            ws.send(JSON.stringify({
-              type: 'transcript',
-              text: transcript,
-              timestamp: Date.now()
-            }));
-            console.log(`✅ Transcript sent: "${transcript.substring(0, 50)}..."`);
-          } else {
-            ws.send(JSON.stringify({
-              type: 'transcript',
-              text: '(No speech detected)',
-              timestamp: Date.now()
-            }));
-          }
-
-          await audioProcessor.cleanup(audioPath);
-        } catch (error) {
-          console.error('Processing error:', error);
-          ws.send(JSON.stringify({
-            type: 'error',
-            message: 'Transcription failed: ' + error.message
-          }));
+        // Process every 5 seconds of audio
+        const timeSinceLastProcess = Date.now() - lastProcessTime;
+        if (timeSinceLastProcess >= 5000) {
+          await processBuffer();
         }
+      } else if (message.type === 'stop') {
+        // Process remaining buffer when recording stops
+        console.log('🛑 Recording stopped, processing remaining audio...');
+        await processBuffer();
       } else if (message.type === 'ping') {
         // Keep-alive ping
         ws.send(JSON.stringify({

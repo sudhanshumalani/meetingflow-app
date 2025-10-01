@@ -3,12 +3,20 @@ const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const { v4: uuidv4 } = require('uuid');
 
-// Set FFmpeg path directly
-const FFMPEG_PATH = 'C:/ffmpeg/bin/ffmpeg.exe';
-const FFPROBE_PATH = 'C:/ffmpeg/bin/ffprobe.exe';
+// Platform-specific FFmpeg configuration
+const isWindows = process.platform === 'win32';
 
-ffmpeg.setFfmpegPath(FFMPEG_PATH);
-ffmpeg.setFfprobePath(FFPROBE_PATH);
+if (isWindows) {
+  // Windows: Use manually installed FFmpeg
+  const FFMPEG_PATH = 'C:/ffmpeg/bin/ffmpeg.exe';
+  const FFPROBE_PATH = 'C:/ffmpeg/bin/ffprobe.exe';
+  ffmpeg.setFfmpegPath(FFMPEG_PATH);
+  ffmpeg.setFfprobePath(FFPROBE_PATH);
+} else {
+  // Linux/Render: Use system ffmpeg (installed via apt-get or package manager)
+  // fluent-ffmpeg will auto-detect from PATH
+  console.log('Using system ffmpeg from PATH');
+}
 
 class AudioProcessor {
   constructor(sessionId) {

@@ -6,6 +6,11 @@ set -e
 
 echo "🔧 Setting up Whisper.cpp for Render..."
 
+# Install ffmpeg for audio conversion
+echo "📥 Installing ffmpeg..."
+apt-get update -qq && apt-get install -y -qq ffmpeg
+echo "✅ FFmpeg installed"
+
 # Create directories
 mkdir -p models
 

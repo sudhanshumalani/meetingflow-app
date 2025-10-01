@@ -7,12 +7,14 @@ set -e
 echo "🔧 Setting up Whisper.cpp for Render..."
 
 # Create directories
-mkdir -p whisper-bin models
+mkdir -p models
 
-# Build whisper.cpp from source (more reliable than pre-built binaries)
+# Clean up and rebuild whisper.cpp from source
 echo "📥 Cloning whisper.cpp repository..."
+rm -rf whisper-bin
+git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git whisper-bin
 cd whisper-bin
-git clone https://github.com/ggerganov/whisper.cpp.git .
+
 echo "🔨 Building whisper.cpp..."
 make
 

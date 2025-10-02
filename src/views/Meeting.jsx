@@ -49,8 +49,7 @@ import {
 // Note: Data integration now available via n8n in Settings
 import { useAIAnalysis } from '../hooks/useAIAnalysis'
 import { ExportOptionsButton } from '../components/ExportOptions'
-import WhisperTranscription from '../components/WhisperTranscription'
-import MobileDebugPanel from '../components/MobileDebugPanel'
+import AudioRecorder from '../components/AudioRecorder'
 
 // Constants for better maintainability
 const CHAR_LIMITS = {
@@ -134,9 +133,6 @@ export default function Meeting() {
   // AI processing state (uses Claude AI analysis hook)
   const [isAIProcessing, setIsAIProcessing] = useState(false)
   const [aiMode, setAiMode] = useState('auto') // 'auto', 'manual', 'off'
-
-  // Debug panel state
-  const [showDebugPanel, setShowDebugPanel] = useState(false)
 
   // Track if we're currently restoring a meeting to prevent unwanted AI analysis
   const [isRestoringMeeting, setIsRestoringMeeting] = useState(false)
@@ -1726,10 +1722,9 @@ Example notes you might paste:
                     Audio Recording & Transcription
                   </h2>
 
-                  <WhisperTranscription
-                    enabled={true}
+                  <AudioRecorder
                     onTranscriptUpdate={(transcript) => {
-                      console.log('📝 Meeting: Received Whisper transcript:', transcript?.substring(0, 100) + '...')
+                      console.log('📝 Meeting: Received transcript:', transcript?.substring(0, 100) + '...')
                       setAudioTranscript(transcript)
                       // Automatically populate digital notes when we have transcript
                       if (transcript && transcript.length > 50) {
@@ -1738,7 +1733,8 @@ Example notes you might paste:
                           summary: transcript
                         }))
                       }
-
+                    }}
+                    onAutoSave={(transcript, reason) => {
                       // Auto-save for existing meetings
                       if (id !== 'new') {
                         const updatedMeetingData = {
@@ -1747,9 +1743,10 @@ Example notes you might paste:
                           lastAutoSaved: new Date().toISOString()
                         }
                         updateMeeting(updatedMeetingData)
-                        console.log(`✅ Auto-saved Whisper transcript`)
+                        console.log(`✅ Auto-saved transcript (${reason})`)
                       }
                     }}
+                    className="w-full"
                   />
 
                   {/* Transcript Display and Actions */}
@@ -2127,21 +2124,6 @@ Example notes you might paste:
           </div>
         </div>
       )}
-
-      {/* Floating Debug Button */}
-      <button
-        onClick={() => setShowDebugPanel(true)}
-        className="fixed bottom-20 right-4 z-40 bg-purple-600 hover:bg-purple-700 text-white p-4 rounded-full shadow-lg transition-all hover:scale-110 active:scale-95"
-        title="Open Debug Console"
-      >
-        <span className="text-xl">🐛</span>
-      </button>
-
-      {/* Mobile Debug Panel */}
-      <MobileDebugPanel
-        isOpen={showDebugPanel}
-        onClose={() => setShowDebugPanel(false)}
-      />
 
     </PullToRefresh>
   )

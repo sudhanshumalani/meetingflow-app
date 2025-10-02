@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Mic, MicOff, Square, Volume2, Settings, ChevronDown } from 'lucide-react'
-import audioTranscriptionService from '../services/audioTranscriptionService'
+import assemblyAIService from '../services/assemblyAIService'
 
 const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
@@ -10,6 +10,8 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const [error, setError] = useState(null)
   const [permissions, setPermissions] = useState('unknown')
   const [recordingDuration, setRecordingDuration] = useState(0)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [processingProgress, setProcessingProgress] = useState(0)
 
   // Audio source selection for tab/hybrid recording
   const [availableAudioSources] = useState([
@@ -33,12 +35,16 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   useEffect(() => {
     const initService = async () => {
       try {
-        await audioTranscriptionService.initialize()
+        if (!assemblyAIService.isConfigured()) {
+          setError('AssemblyAI API key not configured. Please add VITE_ASSEMBLYAI_API_KEY to your .env file.')
+          console.error('❌ AssemblyAI not configured')
+          return
+        }
         setIsInitialized(true)
-        console.log('🎤 Web Speech API transcription service ready')
+        console.log('🎯 AssemblyAI transcription service ready')
       } catch (error) {
         console.error('Failed to initialize transcription:', error)
-        setError('Failed to initialize audio transcription. Your browser may not support speech recognition.')
+        setError('Failed to initialize audio transcription.')
       }
     }
 
@@ -119,14 +125,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       if (document.hidden && isRecording) {
         console.log('📱 App went to background during recording - auto-saving transcript')
         handleAutoSave('background')
-
-        // Capture current transcript state before potential suspension
-        const currentTranscript = audioTranscriptionService.getCurrentTranscript()
-        if (currentTranscript && currentTranscript.trim()) {
-          persistentTranscriptRef.current = currentTranscript
-          setTranscript(currentTranscript)
-          console.log('📱 Preserved transcript before background:', currentTranscript.substring(0, 50) + '...')
-        }
       } else if (!document.hidden && isRecording) {
         console.log('📱 App returned to foreground during recording')
       }
@@ -168,30 +166,73 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
       // Handle different audio source modes
       if (selectedAudioSource === 'tabAudio') {
-        // Tab Audio Only - Capture browser tab audio
+        // Tab Audio Only - Real-time streaming transcription
         try {
           const displayStream = await navigator.mediaDevices.getDisplayMedia({
             video: true, // Required by Chrome to get audio
             audio: {
               echoCancellation: true,
               noiseSuppression: true,
-              autoGainControl: true
+              autoGainControl: true,
+              sampleRate: 16000
             }
           })
 
           console.log('🖥️ Tab audio stream captured successfully')
-          setTranscript(persistentTranscriptRef.current + '\n[Tab Audio Recording Started - Web Speech API only transcribes microphone input]\n')
-          setError('Note: Tab audio is being recorded, but Web Speech API can only transcribe microphone input. For full tab audio transcription, speak into your microphone while the tab audio plays.')
+          setTranscript(persistentTranscriptRef.current + '\n[Streaming tab audio - real-time transcription]\n')
 
           // Store the stream for cleanup
           window.currentTabStream = displayStream
+
+          // Start real-time streaming transcription for tab audio
+          await assemblyAIService.startTabAudioStreaming(displayStream, {
+            onTranscript: (text, isFinal) => {
+              console.log('🖥️ Tab audio transcript:', {
+                text: text?.substring(0, 50),
+                isFinal,
+                length: text?.length
+              })
+
+              if (isFinal && text.trim()) {
+                persistentTranscriptRef.current += text + ' '
+                setTranscript(persistentTranscriptRef.current)
+                console.log('📱 Final tab transcript added, total length:', persistentTranscriptRef.current.length)
+              } else if (text) {
+                // Show interim text
+                setInterimText(text)
+                setTranscript(persistentTranscriptRef.current)
+              }
+            },
+            onError: (error) => {
+              console.error('❌ Tab audio streaming error:', error)
+              setError(error.message)
+              setIsRecording(false)
+
+              // Stop the tab stream on error
+              if (displayStream) {
+                displayStream.getTracks().forEach(track => track.stop())
+              }
+            },
+            onClose: () => {
+              console.log('🔌 Tab audio streaming connection closed')
+              setIsRecording(false)
+              handleAutoSave('recording_ended')
+
+              // Stop the tab stream when connection closes
+              if (displayStream) {
+                displayStream.getTracks().forEach(track => track.stop())
+              }
+            }
+          })
+
+          console.log('✅ Tab audio real-time streaming started')
         } catch (err) {
           console.error('Failed to capture tab audio:', err)
           setError('Failed to capture tab audio. Make sure you selected "Share audio" when prompted.')
           throw err
         }
       } else if (selectedAudioSource === 'mixed') {
-        // Hybrid Mode - Both microphone and tab audio
+        // Hybrid Mode - Both tab and microphone real-time streaming
         try {
           // First get tab audio
           const displayStream = await navigator.mediaDevices.getDisplayMedia({
@@ -199,81 +240,139 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             audio: {
               echoCancellation: true,
               noiseSuppression: true,
-              autoGainControl: true
+              autoGainControl: true,
+              sampleRate: 16000
             }
           })
 
-          console.log('🎙️ Hybrid mode: Tab audio captured, starting microphone transcription')
+          console.log('🎙️ Hybrid mode: Tab audio captured')
           window.currentTabStream = displayStream
 
-          // Then start microphone transcription
-          await audioTranscriptionService.startLiveTranscription({
-            onTranscript: (result) => {
-              const newText = result.text
-              if (result.isFinal && newText.trim()) {
-                persistentTranscriptRef.current += newText + ' '
+          // Start real-time tab audio streaming
+          await assemblyAIService.startTabAudioStreaming(displayStream, {
+            onTranscript: (text, isFinal) => {
+              console.log('🖥️ [Hybrid] Tab transcript:', { text: text?.substring(0, 30), isFinal })
+
+              if (isFinal && text.trim()) {
+                // Prefix with [Tab] to distinguish from mic
+                persistentTranscriptRef.current += `[Tab] ${text} `
                 setTranscript(persistentTranscriptRef.current)
-              } else {
-                setInterimText(newText)
+              } else if (text) {
+                setInterimText(`[Tab] ${text}`)
                 setTranscript(persistentTranscriptRef.current)
               }
-            },
-            onEnd: (result) => {
-              if (result.text && result.text.trim()) {
-                persistentTranscriptRef.current += result.text + ' '
-              }
-              setTranscript(persistentTranscriptRef.current)
-              setIsRecording(false)
-              handleAutoSave('recording_ended')
             },
             onError: (error) => {
-              setError(error.message)
-              setIsRecording(false)
+              console.error('❌ Hybrid tab audio error:', error)
+              setError(`Tab audio: ${error.message}`)
+            },
+            onClose: () => {
+              console.log('🔌 Hybrid tab audio connection closed')
             }
           })
+
+          // Then get microphone access and start real-time transcription
+          const micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              sampleRate: 16000
+            }
+          })
+
+          setTranscript(persistentTranscriptRef.current + '\n[Hybrid Mode: Streaming both tab + mic audio]\n')
+
+          // Note: This creates a second WebSocket connection
+          // Both tab and mic audio stream simultaneously to AssemblyAI
+          await assemblyAIService.startRealtimeTranscription(micStream, {
+            onTranscript: (text, isFinal) => {
+              console.log('🎙️ [Hybrid] Mic transcript:', { text: text?.substring(0, 30), isFinal })
+
+              if (isFinal && text.trim()) {
+                // Prefix with [Mic] to distinguish from tab
+                persistentTranscriptRef.current += `[Mic] ${text} `
+                setTranscript(persistentTranscriptRef.current)
+              } else if (text) {
+                setInterimText(`[Mic] ${text}`)
+                setTranscript(persistentTranscriptRef.current)
+              }
+            },
+            onError: (error) => {
+              console.error('❌ Hybrid mode microphone error:', error)
+              setError(`Microphone: ${error.message}`)
+              setIsRecording(false)
+
+              // Stop the mic stream on error
+              if (micStream) {
+                micStream.getTracks().forEach(track => track.stop())
+              }
+            },
+            onClose: () => {
+              console.log('🔌 Hybrid mode microphone connection closed')
+
+              // Stop the mic stream when connection closes
+              if (micStream) {
+                micStream.getTracks().forEach(track => track.stop())
+              }
+            }
+          })
+
+          console.log('✅ Hybrid mode fully initialized: Tab streaming + Mic streaming')
         } catch (err) {
           console.error('Failed to start hybrid mode:', err)
           setError('Failed to start hybrid mode. Make sure you granted both screen sharing and microphone permissions.')
           throw err
         }
       } else {
-        // Microphone Only - Standard Web Speech API
-        await audioTranscriptionService.startLiveTranscription({
-          onTranscript: (result) => {
-            const newText = result.text
-            console.log('🎤 Transcript debug:', {
-              text: newText,
-              isFinal: result.isFinal,
-              length: newText?.length,
+        // Microphone Only - AssemblyAI Real-time Streaming
+        const micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 16000
+          }
+        })
+
+        await assemblyAIService.startRealtimeTranscription(micStream, {
+          onTranscript: (text, isFinal) => {
+            console.log('🎤 AssemblyAI transcript:', {
+              text: text?.substring(0, 50),
+              isFinal,
+              length: text?.length,
               persistentLength: persistentTranscriptRef.current.length
             })
 
-            if (result.isFinal && newText.trim()) {
-              persistentTranscriptRef.current += newText + ' '
+            if (isFinal && text.trim()) {
+              persistentTranscriptRef.current += text + ' '
               setTranscript(persistentTranscriptRef.current)
               console.log('📱 Final transcript added, total length:', persistentTranscriptRef.current.length)
-            } else {
+            } else if (text) {
               // Show interim text alongside persistent content
-              setInterimText(newText)
+              setInterimText(text)
               setTranscript(persistentTranscriptRef.current)
-
-              // Mobile safety: If we have substantial interim text, save it periodically
-              if (newText && newText.length > 20) {
-                console.log('📱 Interim text safety backup:', newText.substring(0, 30) + '...')
-              }
             }
-          },
-          onEnd: (result) => {
-            if (result.text && result.text.trim()) {
-              persistentTranscriptRef.current += result.text + ' '
-            }
-            setTranscript(persistentTranscriptRef.current)
-            setIsRecording(false)
-            handleAutoSave('recording_ended')
           },
           onError: (error) => {
+            console.error('❌ AssemblyAI error:', error)
             setError(error.message)
             setIsRecording(false)
+
+            // Stop the mic stream on error
+            if (micStream) {
+              micStream.getTracks().forEach(track => track.stop())
+            }
+          },
+          onClose: () => {
+            console.log('🔌 AssemblyAI connection closed')
+            setIsRecording(false)
+            handleAutoSave('recording_ended')
+
+            // Stop the mic stream when connection closes
+            if (micStream) {
+              micStream.getTracks().forEach(track => track.stop())
+            }
           }
         })
       }
@@ -302,24 +401,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     try {
       handleAutoSave('stop')
 
-      // Capture any remaining interim text before stopping (critical for mobile)
-      const currentServiceTranscript = audioTranscriptionService.getCurrentTranscript()
-      if (currentServiceTranscript && currentServiceTranscript.trim()) {
-        console.log('📱 Capturing remaining transcript from service:', currentServiceTranscript.substring(0, 50) + '...')
-        // APPEND instead of overwrite to preserve previous transcript sessions
-        if (!persistentTranscriptRef.current.includes(currentServiceTranscript.trim())) {
-          persistentTranscriptRef.current += currentServiceTranscript + ' '
-        }
-      }
-
-      // Stop Web Speech API if we're using microphone or hybrid mode
-      if (selectedAudioSource === 'microphone' || selectedAudioSource === 'mixed') {
-        const finalTranscript = audioTranscriptionService.stopLiveTranscription()
-        if (finalTranscript && finalTranscript.trim()) {
-          persistentTranscriptRef.current += finalTranscript + ' '
-          console.log('📱 Added final transcript from stop:', finalTranscript.substring(0, 30) + '...')
-        }
-      }
+      // Stop AssemblyAI real-time transcription for all modes
+      // This handles microphone, tab audio, and hybrid mode
+      assemblyAIService.stopRealtimeTranscription()
 
       // Stop tab audio stream if it exists
       if (window.currentTabStream) {
@@ -371,7 +455,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     setInterimText('')
     persistentTranscriptRef.current = ''
     lastSavedTranscriptRef.current = ''
-    audioTranscriptionService.reset()
 
     console.log('🧹 All transcript storage cleared - starting fresh')
 
@@ -496,17 +579,18 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
           {selectedAudioSource === 'tabAudio' && (
             <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded text-xs">
-              <div className="text-blue-800 font-medium mb-2">📺 Tab Audio Capture</div>
+              <div className="text-blue-800 font-medium mb-2">📺 Tab Audio Real-Time Streaming</div>
               <div className="text-blue-700 space-y-1">
-                <div>• Use microphone mode for live transcription</div>
-                <div>• Tab audio mode is for future enhancement</div>
+                <div>• Select a browser tab (YouTube, Zoom, Meet, etc.)</div>
+                <div>• Real-time transcription (~300ms latency)</div>
+                <div>• See transcripts as the meeting happens</div>
               </div>
             </div>
           )}
 
           {selectedAudioSource === 'mixed' && (
             <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded text-xs text-purple-800">
-              🎙️ <strong>Hybrid Mode:</strong> Use microphone mode for live transcription. Full hybrid support coming soon.
+              🎙️ <strong>Hybrid Mode:</strong> Real-time transcription for BOTH tab audio + microphone simultaneously. Transcripts labeled [Tab] and [Mic].
             </div>
           )}
         </div>
@@ -588,8 +672,31 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         </div>
       )}
 
+      {/* Processing Indicator */}
+      {isProcessing && (
+        <div className="bg-purple-50 rounded-lg border border-purple-200 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-purple-700 font-medium text-sm">
+              🔄 Transcribing Tab Audio...
+            </div>
+            <span className="text-purple-600 text-xs font-mono">
+              {Math.round(processingProgress)}%
+            </span>
+          </div>
+          <div className="w-full bg-purple-200 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-purple-600 h-full transition-all duration-300 ease-out"
+              style={{ width: `${processingProgress}%` }}
+            />
+          </div>
+          <p className="text-xs text-purple-600 mt-2">
+            Please wait while we process your recording...
+          </p>
+        </div>
+      )}
+
       {/* Recording Status when no transcript */}
-      {!transcript && isRecording && (
+      {!transcript && isRecording && !isProcessing && (
         <div className="bg-blue-50 rounded-lg border border-blue-200 p-4 text-center">
           <div className="text-blue-600 mb-1">
             🎤 Recording Audio...
@@ -616,7 +723,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       {/* Info */}
       <div className="text-center space-y-1">
         <p className="text-xs text-gray-500">
-          🎤 Web Speech API • Persistent transcript accumulation • 📱 Mobile optimized
+          🎯 AssemblyAI Real-time • Persistent transcript accumulation • 📱 Mobile optimized
         </p>
         <p className="text-xs text-gray-400">
           Transcripts accumulate across sessions - works reliably across all devices

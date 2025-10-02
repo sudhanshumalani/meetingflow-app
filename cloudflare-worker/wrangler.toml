@@ -1,0 +1,9 @@
+name = "assemblyai-token-proxy"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# This worker will be deployed at:
+# https://assemblyai-token-proxy.YOUR-USERNAME.workers.dev
+
+# Environment variables (secrets) are set via CLI:
+# npx wrangler secret put ASSEMBLYAI_API_KEY

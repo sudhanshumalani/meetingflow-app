@@ -75,9 +75,27 @@ class TranscriptionStreamService {
           reject(error);
         };
 
-        this.ws.onclose = () => {
-          console.log('WebSocket closed');
-          this.notifyStatus('Disconnected from transcription service');
+        this.ws.onclose = (event) => {
+          console.log('WebSocket closed', event);
+
+          // If we're still recording, try to reconnect
+          if (this.isRecording && this.reconnectAttempts < this.maxReconnectAttempts) {
+            this.reconnectAttempts++;
+            console.log(`🔄 Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
+            this.notifyStatus(`Reconnecting (attempt ${this.reconnectAttempts})...`);
+
+            setTimeout(() => {
+              this.connect().catch(err => {
+                console.error('Reconnect failed:', err);
+                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                  this.notifyError('Connection lost - max reconnect attempts reached');
+                  this.cleanup();
+                }
+              });
+            }, 2000); // Wait 2s before reconnecting
+          } else {
+            this.notifyStatus('Disconnected from transcription service');
+          }
         };
       } catch (error) {
         reject(error);
@@ -282,12 +300,17 @@ class TranscriptionStreamService {
       console.log(`✓ Recording started: ${mode}`);
       this.notifyStatus(`Recording (${mode})`);
 
-      // Keep-alive ping every 30 seconds
+      // AGGRESSIVE Keep-alive: Ping every 15 seconds
+      // Cloudflare has 100s timeout, but quick tunnels may be stricter
+      // 15s ensures we stay well under any timeout threshold
       this.keepAliveInterval = setInterval(() => {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify({ type: 'ping' }));
+          console.log('📡 Keep-alive ping sent');
+        } else {
+          console.warn('⚠️ WebSocket not open, cannot send keep-alive');
         }
-      }, 30000);
+      }, 15000); // Reduced from 30s to 15s
 
     } catch (error) {
       console.error('Recording error:', error);
@@ -359,12 +382,14 @@ class TranscriptionStreamService {
     this.isRecording = false;
     this.notifyStatus('Waiting for transcription...');
 
-    // EXTENDED: 3 segments × 15s each = 45s + buffer
-    // Keep connection open for full processing time
-    setTimeout(() => {
+    // DON'T auto-close! Connection stays open to receive all transcripts.
+    // Backend will send 'complete' message when done, or we timeout after 1 hour.
+    // This allows processing very long recordings (up to 1 hour meetings).
+    this.processingTimeout = setTimeout(() => {
+      console.log('⏱️ 1-hour timeout reached - closing connection');
       this.notifyStatus('Processing complete');
       this.cleanup();
-    }, 60000); // Wait 60 seconds (1 minute) for all segments to process
+    }, 3600000); // 1 hour maximum (for very long meetings)
   }
 
   /**
@@ -375,6 +400,12 @@ class TranscriptionStreamService {
     if (this.keepAliveInterval) {
       clearInterval(this.keepAliveInterval);
       this.keepAliveInterval = null;
+    }
+
+    // Clear processing timeout
+    if (this.processingTimeout) {
+      clearTimeout(this.processingTimeout);
+      this.processingTimeout = null;
     }
 
     // Stop audio tracks

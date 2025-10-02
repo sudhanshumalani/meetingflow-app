@@ -47,15 +47,42 @@ const WhisperTranscription = ({ onTranscriptUpdate, enabled = false }) => {
 
   const startRecording = async () => {
     try {
+      console.log('🎙️ START RECORDING BUTTON CLICKED');
+      console.log('📱 Platform:', capabilities?.platform);
+      console.log('🌐 Browser:', capabilities?.browser);
+      console.log('✅ Capabilities:', capabilities);
+
       setError(null);
       setStatus('Starting...');
+
       // DON'T clear transcript - it should accumulate across multiple recordings!
       // If user wants to clear, they can use the Clear button
       // Force microphone mode for web deployment (system-audio requires desktop app)
+      console.log('🔧 Calling service.startRecording("microphone")...');
       await service.startRecording('microphone');
+
+      console.log('✅ Recording started successfully');
       setIsRecording(true);
+      setStatus('Recording');
     } catch (err) {
-      setError(err.message);
+      console.error('❌ Recording failed:', err);
+      console.error('Error details:', {
+        name: err.name,
+        message: err.message,
+        stack: err.stack
+      });
+
+      // Mobile-friendly error messages
+      let friendlyMessage = err.message;
+      if (err.name === 'NotAllowedError' || err.message.includes('permission')) {
+        friendlyMessage = '🚫 Microphone permission denied. Please allow microphone access in your browser settings.';
+      } else if (err.name === 'NotFoundError') {
+        friendlyMessage = '🎤 No microphone found. Please check your device settings.';
+      } else if (err.message.includes('secure context') || err.message.includes('https')) {
+        friendlyMessage = '🔒 Recording requires HTTPS. Please use https:// URL.';
+      }
+
+      setError(friendlyMessage);
       setStatus('Failed to start');
       setIsRecording(false);
     }

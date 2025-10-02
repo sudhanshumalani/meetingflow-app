@@ -113,10 +113,10 @@ export default function Settings() {
                 <p className="text-gray-600 hidden sm:block">Manage your application preferences and integrations</p>
               </div>
             </div>
-            {/* Back/Home button for mobile */}
+            {/* Back/Home button */}
             <button
               onClick={() => navigate('/')}
-              className="xl:hidden flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
               aria-label="Back to Home"
             >
               <svg

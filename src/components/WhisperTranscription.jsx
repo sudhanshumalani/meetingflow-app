@@ -37,10 +37,11 @@ const WhisperTranscription = ({ onTranscriptUpdate, enabled = false }) => {
     });
 
     return () => {
-      if (service.isActive()) {
-        service.stopRecording();
-      }
-      service.cleanup();
+      // ONLY cleanup when component is UNMOUNTING (not on every re-render)
+      // service.isActive() returns true during active recording, so this
+      // was causing recording to stop on every parent re-render!
+      // DO NOT call stopRecording() here - let user control it via button
+      // service.cleanup() will be called when user clicks Stop
     };
   }, [service, onTranscriptUpdate]);
 

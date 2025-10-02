@@ -50,6 +50,7 @@ import {
 import { useAIAnalysis } from '../hooks/useAIAnalysis'
 import { ExportOptionsButton } from '../components/ExportOptions'
 import WhisperTranscription from '../components/WhisperTranscription'
+import MobileDebugPanel from '../components/MobileDebugPanel'
 
 // Constants for better maintainability
 const CHAR_LIMITS = {
@@ -133,6 +134,9 @@ export default function Meeting() {
   // AI processing state (uses Claude AI analysis hook)
   const [isAIProcessing, setIsAIProcessing] = useState(false)
   const [aiMode, setAiMode] = useState('auto') // 'auto', 'manual', 'off'
+
+  // Debug panel state
+  const [showDebugPanel, setShowDebugPanel] = useState(false)
 
   // Track if we're currently restoring a meeting to prevent unwanted AI analysis
   const [isRestoringMeeting, setIsRestoringMeeting] = useState(false)
@@ -2123,6 +2127,21 @@ Example notes you might paste:
           </div>
         </div>
       )}
+
+      {/* Floating Debug Button */}
+      <button
+        onClick={() => setShowDebugPanel(true)}
+        className="fixed bottom-20 right-4 z-40 bg-purple-600 hover:bg-purple-700 text-white p-4 rounded-full shadow-lg transition-all hover:scale-110 active:scale-95"
+        title="Open Debug Console"
+      >
+        <span className="text-xl">🐛</span>
+      </button>
+
+      {/* Mobile Debug Panel */}
+      <MobileDebugPanel
+        isOpen={showDebugPanel}
+        onClose={() => setShowDebugPanel(false)}
+      />
 
     </PullToRefresh>
   )

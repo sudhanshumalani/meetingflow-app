@@ -56,37 +56,59 @@ class TranscriptionStreamService {
   connect() {
     return new Promise((resolve, reject) => {
       try {
+        console.log('🔌 WHISPER: Attempting to connect to backend:', this.backendUrl);
+        console.log('🔌 WHISPER: Device info:', {
+          platform: navigator.platform,
+          userAgent: navigator.userAgent,
+          online: navigator.onLine
+        });
+
         this.ws = new WebSocket(this.backendUrl);
 
         this.ws.onopen = () => {
-          console.log('✓ Connected to transcription service');
+          console.log('✅ WHISPER: Successfully connected to transcription service');
+          console.log('✅ WHISPER: WebSocket readyState:', this.ws.readyState);
           this.reconnectAttempts = 0;
           this.notifyStatus('Connected to transcription service');
           resolve();
         };
 
         this.ws.onmessage = (event) => {
+          console.log('📨 WHISPER: Received message from server:', event.data?.substring(0, 100));
           this.handleMessage(event.data);
         };
 
         this.ws.onerror = (error) => {
-          console.error('WebSocket error:', error);
-          this.notifyError('Connection error: ' + error.message);
+          console.error('❌ WHISPER: WebSocket error occurred');
+          console.error('❌ WHISPER: Error details:', {
+            type: error.type,
+            target: error.target,
+            readyState: this.ws?.readyState,
+            url: this.backendUrl
+          });
+          this.notifyError('Connection error - check network/server');
           reject(error);
         };
 
         this.ws.onclose = (event) => {
-          console.log('WebSocket closed', event);
+          console.log('🔌 WHISPER: WebSocket connection closed');
+          console.log('🔌 WHISPER: Close event details:', {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+            isRecording: this.isRecording,
+            reconnectAttempts: this.reconnectAttempts
+          });
 
           // If we're still recording, try to reconnect
           if (this.isRecording && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
-            console.log(`🔄 Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
+            console.log(`🔄 WHISPER: Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
             this.notifyStatus(`Reconnecting (attempt ${this.reconnectAttempts})...`);
 
             setTimeout(() => {
               this.connect().catch(err => {
-                console.error('Reconnect failed:', err);
+                console.error('❌ WHISPER: Reconnect failed:', err);
                 if (this.reconnectAttempts >= this.maxReconnectAttempts) {
                   this.notifyError('Connection lost - max reconnect attempts reached');
                   this.cleanup();
@@ -98,6 +120,7 @@ class TranscriptionStreamService {
           }
         };
       } catch (error) {
+        console.error('❌ WHISPER: Failed to create WebSocket connection:', error);
         reject(error);
       }
     });
@@ -217,27 +240,36 @@ class TranscriptionStreamService {
         mode = DeviceDetector.getRecommendedMode();
       }
 
-      console.log(`Starting recording in ${mode} mode...`);
+      console.log(`🎙️ WHISPER: Starting recording in ${mode} mode...`);
+      console.log(`🎙️ WHISPER: Backend URL: ${this.backendUrl}`);
+      console.log(`🎙️ WHISPER: Device capabilities:`, DeviceDetector.getCapabilities());
 
       // Connect to backend
+      console.log('🎙️ WHISPER: Step 1/4 - Connecting to backend...');
       await this.connect();
 
       // Enable iOS background support (must be called BEFORE media capture)
+      console.log('🎙️ WHISPER: Step 2/4 - Initializing iOS background support...');
       await this.initializeiOSBackgroundSupport();
 
       // Capture audio based on mode
+      console.log('🎙️ WHISPER: Step 3/4 - Capturing audio stream...');
       if (mode === 'system-audio') {
         this.stream = await this.captureSystemAudio();
       } else {
         this.stream = await this.captureMicrophone();
       }
+      console.log('✅ WHISPER: Audio stream captured successfully');
 
       // Create MediaRecorder with best available codec
+      console.log('🎙️ WHISPER: Step 4/4 - Creating MediaRecorder...');
       const mimeType = this.getBestMimeType();
+      console.log('🎙️ WHISPER: Using MIME type:', mimeType);
       this.mediaRecorder = new MediaRecorder(this.stream, {
         mimeType,
         audioBitsPerSecond: 128000
       });
+      console.log('✅ WHISPER: MediaRecorder created successfully');
 
       // Collect chunks for proper WebM assembly
       this.audioChunks = [];
@@ -310,7 +342,8 @@ class TranscriptionStreamService {
 
       this.isRecording = true;
 
-      console.log(`✓ Recording started: ${mode}`);
+      console.log(`✅ WHISPER: Recording started successfully in ${mode} mode`);
+      console.log(`✅ WHISPER: All systems operational - ready to transcribe`);
       this.notifyStatus(`Recording (${mode})`);
 
       // AGGRESSIVE Keep-alive: Ping every 15 seconds
@@ -326,7 +359,12 @@ class TranscriptionStreamService {
       }, 15000); // Reduced from 30s to 15s
 
     } catch (error) {
-      console.error('Recording error:', error);
+      console.error('❌ WHISPER: Recording failed with error:', error);
+      console.error('❌ WHISPER: Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
       this.cleanup();
       throw error;
     }

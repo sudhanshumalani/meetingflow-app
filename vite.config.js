@@ -69,10 +69,10 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify('1.0.1'), // Bump version for cache bust
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
-    // Production build: Use Render backend, Development: Use localhost
+    // Production build: Use Cloudflare Tunnel to home server, Development: Use localhost
     'import.meta.env.VITE_TRANSCRIPTION_WS': JSON.stringify(
       process.env.NODE_ENV === 'production'
-        ? 'wss://meetingflow-app.onrender.com'
+        ? 'wss://societies-referral-rejected-reprints.trycloudflare.com'
         : process.env.VITE_TRANSCRIPTION_WS || 'ws://localhost:3001'
     ),
   },

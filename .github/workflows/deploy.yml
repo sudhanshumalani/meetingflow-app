@@ -37,6 +37,7 @@ jobs:
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_GOOGLE_CLIENT_SECRET: ${{ secrets.VITE_GOOGLE_CLIENT_SECRET }}
           VITE_ASSEMBLYAI_API_KEY: ${{ secrets.VITE_ASSEMBLYAI_API_KEY }}
+          VITE_ASSEMBLYAI_TOKEN_URL: https://assemblyai-token-proxy.sudhanshu123.workers.dev
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

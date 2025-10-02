@@ -8,7 +8,14 @@
 class AudioStreamProcessor extends AudioWorkletProcessor {
   constructor() {
     super()
-    console.log('🎧 AudioStreamProcessor initialized')
+
+    // AssemblyAI v3 requires 50-1000ms of audio per message
+    // At 16000 Hz: 50ms = 800 samples, 100ms = 1600 samples
+    this.bufferSize = 1600 // 100ms at 16kHz
+    this.buffer = new Float32Array(this.bufferSize)
+    this.bufferIndex = 0
+
+    console.log('🎧 AudioStreamProcessor initialized (buffering 100ms chunks)')
   }
 
   /**
@@ -30,14 +37,25 @@ class AudioStreamProcessor extends AudioWorkletProcessor {
       return true
     }
 
-    // Convert Float32 to Int16 for AssemblyAI
-    const int16Data = this.float32ToInt16(audioData)
+    // Add audio to buffer
+    for (let i = 0; i < audioData.length; i++) {
+      this.buffer[this.bufferIndex++] = audioData[i]
 
-    // Send to main thread via message port
-    this.port.postMessage({
-      type: 'audio',
-      data: int16Data
-    })
+      // When buffer is full, send it
+      if (this.bufferIndex >= this.bufferSize) {
+        // Convert Float32 to Int16 for AssemblyAI
+        const int16Data = this.float32ToInt16(this.buffer.slice(0, this.bufferIndex))
+
+        // Send to main thread via message port
+        this.port.postMessage({
+          type: 'audio',
+          data: int16Data
+        })
+
+        // Reset buffer
+        this.bufferIndex = 0
+      }
+    }
 
     return true // Keep processor alive
   }

@@ -219,20 +219,32 @@ class AssemblyAIService {
         const bufferSize = 4096
         this.processor = this.audioContext.createScriptProcessor(bufferSize, 1, 1)
 
+        // Buffer for accumulating audio chunks (100ms = 1600 samples at 16kHz)
+        this.audioBuffer = new Float32Array(1600)
+        this.audioBufferIndex = 0
+
         this.processor.onaudioprocess = (e) => {
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             const audioData = e.inputBuffer.getChannelData(0)
-            const int16Data = this.float32ToInt16(audioData)
 
-            // Send to AssemblyAI
-            this.ws.send(int16Data)
+            // Add to buffer
+            for (let i = 0; i < audioData.length; i++) {
+              this.audioBuffer[this.audioBufferIndex++] = audioData[i]
+
+              // When buffer is full, send it
+              if (this.audioBufferIndex >= this.audioBuffer.length) {
+                const int16Data = this.float32ToInt16(this.audioBuffer.slice(0, this.audioBufferIndex))
+                this.ws.send(int16Data.buffer)
+                this.audioBufferIndex = 0
+              }
+            }
           }
         }
 
         this.source.connect(this.processor)
         this.processor.connect(this.audioContext.destination)
 
-        console.log('✅ Audio processing pipeline set up (ScriptProcessorNode fallback)')
+        console.log('✅ Audio processing pipeline set up (ScriptProcessorNode fallback, 100ms chunks)')
       }
     } catch (error) {
       console.error('❌ Failed to set up audio processing:', error)

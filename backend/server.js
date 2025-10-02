@@ -181,7 +181,10 @@ wss.on('connection', async (ws, req) => {
 
   ws.on('close', () => {
     console.log(`❌ Client disconnected: ${sessionId}`);
-    audioProcessor.cleanupAll();
+    // Delay cleanup to allow any in-flight transcriptions to complete
+    setTimeout(() => {
+      audioProcessor.cleanupAll();
+    }, 10000); // Wait 10 seconds before cleanup
   });
 
   ws.on('error', (error) => {

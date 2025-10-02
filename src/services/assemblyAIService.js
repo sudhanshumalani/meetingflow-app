@@ -72,9 +72,9 @@ class AssemblyAIService {
     // Fallback: Use API key directly (generates token on-the-fly)
     if (this.apiKey && this.apiKey !== 'your_api_key_here') {
       console.log('🔑 Using API key to generate token...')
-      const response = await fetch('https://api.assemblyai.com/v2/realtime/token', {
-        method: 'POST',
-        headers: { authorization: this.apiKey }
+      const response = await fetch('https://streaming.assemblyai.com/v3/token?expires_in_seconds=600', {
+        method: 'GET',
+        headers: { Authorization: this.apiKey }
       })
 
       if (!response.ok) {
@@ -110,10 +110,10 @@ class AssemblyAIService {
       const auth = await this.getAuthToken()
       const token = auth.token
 
-      // Step 2: Connect to WebSocket
+      // Step 2: Connect to WebSocket (v3 Universal Streaming)
       const sampleRate = 16000
       this.ws = new WebSocket(
-        `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=${sampleRate}&token=${token}`
+        `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&token=${token}`
       )
 
       // Step 3: Set up WebSocket event handlers

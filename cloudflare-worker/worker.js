@@ -26,11 +26,11 @@ export default {
     }
 
     try {
-      // Get temporary token from AssemblyAI
-      const response = await fetch('https://api.assemblyai.com/v2/realtime/token', {
-        method: 'POST',
+      // Get temporary token from AssemblyAI (v3 Universal Streaming)
+      const response = await fetch('https://streaming.assemblyai.com/v3/token?expires_in_seconds=600', {
+        method: 'GET',
         headers: {
-          'authorization': env.ASSEMBLYAI_API_KEY,
+          'Authorization': env.ASSEMBLYAI_API_KEY,
         },
       })
 

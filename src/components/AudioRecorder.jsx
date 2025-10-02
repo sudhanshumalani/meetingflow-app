@@ -166,12 +166,82 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       // Request wake lock to prevent screen from turning off on mobile
       await requestWakeLock()
 
-      // Only start Web Speech API for microphone source
-      if (selectedAudioSource === 'microphone') {
+      // Handle different audio source modes
+      if (selectedAudioSource === 'tabAudio') {
+        // Tab Audio Only - Capture browser tab audio
+        try {
+          const displayStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true, // Required by Chrome to get audio
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            }
+          })
+
+          console.log('🖥️ Tab audio stream captured successfully')
+          setTranscript(persistentTranscriptRef.current + '\n[Tab Audio Recording Started - Web Speech API only transcribes microphone input]\n')
+          setError('Note: Tab audio is being recorded, but Web Speech API can only transcribe microphone input. For full tab audio transcription, speak into your microphone while the tab audio plays.')
+
+          // Store the stream for cleanup
+          window.currentTabStream = displayStream
+        } catch (err) {
+          console.error('Failed to capture tab audio:', err)
+          setError('Failed to capture tab audio. Make sure you selected "Share audio" when prompted.')
+          throw err
+        }
+      } else if (selectedAudioSource === 'mixed') {
+        // Hybrid Mode - Both microphone and tab audio
+        try {
+          // First get tab audio
+          const displayStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            }
+          })
+
+          console.log('🎙️ Hybrid mode: Tab audio captured, starting microphone transcription')
+          window.currentTabStream = displayStream
+
+          // Then start microphone transcription
+          await audioTranscriptionService.startLiveTranscription({
+            onTranscript: (result) => {
+              const newText = result.text
+              if (result.isFinal && newText.trim()) {
+                persistentTranscriptRef.current += newText + ' '
+                setTranscript(persistentTranscriptRef.current)
+              } else {
+                setInterimText(newText)
+                setTranscript(persistentTranscriptRef.current)
+              }
+            },
+            onEnd: (result) => {
+              if (result.text && result.text.trim()) {
+                persistentTranscriptRef.current += result.text + ' '
+              }
+              setTranscript(persistentTranscriptRef.current)
+              setIsRecording(false)
+              handleAutoSave('recording_ended')
+            },
+            onError: (error) => {
+              setError(error.message)
+              setIsRecording(false)
+            }
+          })
+        } catch (err) {
+          console.error('Failed to start hybrid mode:', err)
+          setError('Failed to start hybrid mode. Make sure you granted both screen sharing and microphone permissions.')
+          throw err
+        }
+      } else {
+        // Microphone Only - Standard Web Speech API
         await audioTranscriptionService.startLiveTranscription({
           onTranscript: (result) => {
             const newText = result.text
-            console.log('🎤 Mobile transcript debug:', {
+            console.log('🎤 Transcript debug:', {
               text: newText,
               isFinal: result.isFinal,
               length: newText?.length,
@@ -189,7 +259,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
               // Mobile safety: If we have substantial interim text, save it periodically
               if (newText && newText.length > 20) {
-                console.log('📱 Mobile interim text safety backup:', newText.substring(0, 30) + '...')
+                console.log('📱 Interim text safety backup:', newText.substring(0, 30) + '...')
               }
             }
           },
@@ -206,10 +276,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             setIsRecording(false)
           }
         })
-      } else {
-        // For tab audio and hybrid mode, show placeholder message
-        console.log(`🖥️ Tab/Hybrid audio mode: Recording ${selectedAudioSource} for processing`)
-        setTranscript(persistentTranscriptRef.current || 'Recording tab audio... Please use microphone mode for live transcription.')
       }
 
       setIsRecording(true)
@@ -246,13 +312,22 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         }
       }
 
-      // Only stop Web Speech API if we're using microphone
-      if (selectedAudioSource === 'microphone') {
+      // Stop Web Speech API if we're using microphone or hybrid mode
+      if (selectedAudioSource === 'microphone' || selectedAudioSource === 'mixed') {
         const finalTranscript = audioTranscriptionService.stopLiveTranscription()
         if (finalTranscript && finalTranscript.trim()) {
           persistentTranscriptRef.current += finalTranscript + ' '
           console.log('📱 Added final transcript from stop:', finalTranscript.substring(0, 30) + '...')
         }
+      }
+
+      // Stop tab audio stream if it exists
+      if (window.currentTabStream) {
+        window.currentTabStream.getTracks().forEach(track => {
+          track.stop()
+          console.log('🖥️ Stopped tab audio track:', track.kind)
+        })
+        window.currentTabStream = null
       }
 
       // Ensure we have the best available transcript

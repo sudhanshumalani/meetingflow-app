@@ -245,15 +245,19 @@ class TranscriptionStreamService {
       // Collect audio chunks in array
       this.mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
+          console.log(`📦 Audio chunk received: ${(event.data.size / 1024).toFixed(2)} KB`);
           this.audioChunks.push(event.data);
         }
       };
 
       // Send complete audio blob when recording completes each interval
       this.mediaRecorder.onstop = () => {
+        console.log(`🛑 MediaRecorder stopped. isRecording=${this.isRecording}, chunks=${this.audioChunks.length}, wsOpen=${this.ws?.readyState === WebSocket.OPEN}`);
+
         if (this.audioChunks.length > 0 && this.ws && this.ws.readyState === WebSocket.OPEN) {
           // Create complete valid Blob from all chunks
           const audioBlob = new Blob(this.audioChunks, { type: mimeType });
+          console.log(`📤 Sending audio blob: ${(audioBlob.size / 1024).toFixed(2)} KB`);
 
           // Convert to base64 and send
           const reader = new FileReader();
@@ -263,21 +267,30 @@ class TranscriptionStreamService {
               type: 'audio',
               data: base64Audio
             }));
+            console.log('✅ Audio sent to backend');
           };
           reader.readAsDataURL(audioBlob);
 
           this.audioChunks = []; // Clear for next interval
+        } else if (this.audioChunks.length === 0) {
+          console.log('⚠️ No audio chunks collected');
+        } else if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          console.error('❌ WebSocket not open! Cannot send audio');
         }
 
         // Restart recording if still active (for continuous transcription)
         if (this.isRecording && this.stream && this.stream.active) {
+          console.log('🔄 Restarting MediaRecorder for next 5-second interval');
           this.mediaRecorder.start();
           // Schedule next stop in 5 seconds for interval transcription
           setTimeout(() => {
             if (this.isRecording && this.mediaRecorder.state === 'recording') {
+              console.log('⏱️ 5 seconds elapsed, stopping MediaRecorder');
               this.mediaRecorder.stop();
             }
           }, 5000);
+        } else {
+          console.log('🏁 Recording stopped - not restarting MediaRecorder');
         }
       };
 

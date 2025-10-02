@@ -48,6 +48,8 @@ const WhisperTranscription = ({ onTranscriptUpdate, enabled = false }) => {
     try {
       setError(null);
       setStatus('Starting...');
+      // DON'T clear transcript - it should accumulate across multiple recordings!
+      // If user wants to clear, they can use the Clear button
       // Force microphone mode for web deployment (system-audio requires desktop app)
       await service.startRecording('microphone');
       setIsRecording(true);

@@ -357,12 +357,14 @@ class TranscriptionStreamService {
     }
 
     this.isRecording = false;
-    this.notifyStatus('Recording stopped');
+    this.notifyStatus('Waiting for transcription...');
 
-    // Cleanup after a short delay to ensure final transcripts are received
+    // CRITICAL: Whisper takes 6-14 seconds to process!
+    // Keep connection open longer to receive transcripts
     setTimeout(() => {
+      this.notifyStatus('Processing complete');
       this.cleanup();
-    }, 2000); // Increased to 2s to allow for processing
+    }, 20000); // Wait 20 seconds for Whisper to complete
   }
 
   /**

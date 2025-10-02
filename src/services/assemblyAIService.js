@@ -124,20 +124,29 @@ class AssemblyAIService {
 
       this.ws.onmessage = (message) => {
         const data = JSON.parse(message.data)
+        console.log('📩 AssemblyAI message:', data.type, data)
 
-        if (data.message_type === 'SessionBegins') {
-          console.log('🎬 AssemblyAI: Session started:', data.session_id)
-        } else if (data.message_type === 'PartialTranscript' && data.text) {
-          if (onTranscript) {
-            onTranscript(data.text, false) // Interim result
+        if (data.type === 'Begin') {
+          console.log('🎬 AssemblyAI: Session started:', data.id, 'expires:', data.expires_at)
+        } else if (data.type === 'Turn') {
+          // v3 Universal Streaming: All transcripts come as "Turn" messages
+          const isFinal = data.end_of_turn === true
+          const text = data.transcript || ''
+
+          if (text) {
+            console.log(`📝 AssemblyAI Turn #${data.turn_order}:`, {
+              text: text.substring(0, 50),
+              isFinal,
+              confidence: data.end_of_turn_confidence
+            })
+            if (onTranscript) {
+              onTranscript(text, isFinal)
+            }
           }
-        } else if (data.message_type === 'FinalTranscript' && data.text) {
-          console.log('📝 AssemblyAI: Final transcript:', data.text)
-          if (onTranscript) {
-            onTranscript(data.text, true) // Final result
-          }
-        } else if (data.message_type === 'SessionTerminated') {
-          console.log('🛑 AssemblyAI: Session ended')
+        } else if (data.type === 'Termination') {
+          console.log('🛑 AssemblyAI: Session terminated:', data.reason || 'normal')
+        } else {
+          console.warn('⚠️ Unknown AssemblyAI message type:', data.type, data)
         }
       }
 
@@ -148,8 +157,12 @@ class AssemblyAIService {
         }
       }
 
-      this.ws.onclose = () => {
-        console.log('🔌 AssemblyAI: WebSocket closed')
+      this.ws.onclose = (event) => {
+        console.log('🔌 AssemblyAI: WebSocket closed', {
+          code: event.code,
+          reason: event.reason || 'No reason provided',
+          wasClean: event.wasClean
+        })
         this.isStreaming = false
         if (onClose) onClose()
         this.cleanup()

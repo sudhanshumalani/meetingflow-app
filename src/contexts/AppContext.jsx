@@ -499,7 +499,7 @@ export function AppProvider({ children }) {
         categoriesSize: localStorage.getItem('meetingflow_stakeholder_categories')?.length || 0
       })
     }
-  }, [state.meetings, state.stakeholders, state.stakeholderCategories, state.isLoading])
+  }, [state.meetings, state.stakeholders, state.stakeholderCategories, state.deletedItems, state.isLoading])
 
   // Listen for n8n data updates
   useEffect(() => {

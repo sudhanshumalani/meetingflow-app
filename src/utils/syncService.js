@@ -686,8 +686,24 @@ class SyncService {
       const notDefault = !defaultCategories.has(categoryName)
 
       // Check if this category has been deleted
-      const deletionKey = `stakeholderCategory:${categoryId}`
-      const deletion = deletionMap.get(deletionKey)
+      // Categories can be deleted by id, key, or name, so check all possible identifiers
+      const possibleDeletionKeys = [
+        `stakeholderCategory:${categoryId}`,
+        category?.key ? `stakeholderCategory:${category.key}` : null,
+        categoryName ? `stakeholderCategory:${categoryName}` : null,
+        category?.id ? `stakeholderCategory:${category.id}` : null
+      ].filter(Boolean)
+
+      let deletion = null
+      let matchedDeletionKey = null
+      for (const key of possibleDeletionKeys) {
+        const foundDeletion = deletionMap.get(key)
+        if (foundDeletion) {
+          deletion = foundDeletion
+          matchedDeletionKey = key
+          break
+        }
+      }
 
       if (deletion) {
         // Item was deleted - check if deletion is newer than the category
@@ -695,12 +711,12 @@ class SyncService {
         const deletionTimestamp = new Date(deletion.deletedAt)
 
         if (deletionTimestamp > categoryTimestamp) {
-          console.log(`🗑️ Excluding deleted category: ${categoryName || categoryId} (deleted: ${deletion.deletedAt})`)
+          console.log(`🗑️ Excluding deleted category: ${categoryName || categoryId} (deleted: ${deletion.deletedAt}, matched by: ${matchedDeletionKey})`)
           return // Skip this category - it was deleted after last modification
         }
         console.log(`⚰️ Resurrecting category: ${categoryName || categoryId} (modified after deletion)`)
         // Remove the deletion record since the item was modified after deletion
-        deletionMap.delete(deletionKey)
+        deletionMap.delete(matchedDeletionKey)
       }
 
       console.log('🔍 Processing category', index, ':', {

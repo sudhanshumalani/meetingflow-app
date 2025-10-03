@@ -143,7 +143,7 @@ function appReducer(state, action) {
         ...state,
         stakeholders: state.stakeholders.map(stakeholder =>
           stakeholder.id === action.payload.id
-            ? { ...stakeholder, ...action.payload }
+            ? { ...stakeholder, ...action.payload, updatedAt: new Date().toISOString() }
             : stakeholder
         )
       }

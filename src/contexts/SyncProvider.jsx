@@ -31,15 +31,17 @@ export function SyncProvider({ children }) {
       const appData = {
         meetings: app.meetings,
         stakeholders: app.stakeholders,
-        stakeholderCategories: app.stakeholderCategories
+        stakeholderCategories: app.stakeholderCategories,
+        deletedItems: app.deletedItems
       }
 
-      // Only sync if we have actual data
-      if (appData.meetings.length > 0 || appData.stakeholders.length > 0 || appData.stakeholderCategories.length > 0) {
+      // Only sync if we have actual data or deletions
+      if (appData.meetings.length > 0 || appData.stakeholders.length > 0 || appData.stakeholderCategories.length > 0 || appData.deletedItems.length > 0) {
         console.log('🔄 Auto-syncing app data to cloud...', {
           meetings: appData.meetings.length,
           stakeholders: appData.stakeholders.length,
-          categories: appData.stakeholderCategories.length
+          categories: appData.stakeholderCategories.length,
+          deletedItems: appData.deletedItems.length
         })
 
         await sync.syncToCloud(appData)
@@ -47,7 +49,7 @@ export function SyncProvider({ children }) {
     } catch (error) {
       console.log('Auto-sync failed (will retry):', error.message)
     }
-  }, [app.meetings, app.stakeholders, app.stakeholderCategories, app.isLoading, sync.isConfigured, sync.canSync, sync.syncToCloud])
+  }, [app.meetings, app.stakeholders, app.stakeholderCategories, app.deletedItems, app.isLoading, sync.isConfigured, sync.canSync, sync.syncToCloud])
 
   /**
    * Auto-sync data when app state changes

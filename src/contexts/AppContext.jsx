@@ -127,10 +127,12 @@ function appReducer(state, action) {
       }
     
     case 'ADD_STAKEHOLDER':
+      const timestamp = new Date().toISOString()
       const newStakeholder = {
         id: uuidv4(),
         ...action.payload,
-        createdAt: new Date().toISOString()
+        createdAt: timestamp,
+        updatedAt: timestamp // Ensure all stakeholders have updatedAt from creation
       }
       return {
         ...state,

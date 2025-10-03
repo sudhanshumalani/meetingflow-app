@@ -2,7 +2,6 @@ import { createContext, useContext, useReducer, useEffect, useRef, useCallback }
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
 import n8nService from '../utils/n8nService'
-import { STAKEHOLDER_CATEGORIES as DEFAULT_CATEGORIES } from '../utils/stakeholderManager'
 
 const AppContext = createContext()
 
@@ -193,28 +192,36 @@ function appReducer(state, action) {
     case 'DELETE_STAKEHOLDER_CATEGORY':
       const categoryToDelete = action.payload
       const deletedCategory = state.stakeholderCategories.find(category =>
-        category.key === categoryToDelete || category.id === categoryToDelete
+        category.key === categoryToDelete || category.id === categoryToDelete || category.name === categoryToDelete
       )
-      // Also update any stakeholders using this category to use a default category
-      const updatedStakeholders = state.stakeholders.map(stakeholder =>
-        stakeholder.category === categoryToDelete
-          ? { ...stakeholder, category: 'external' } // fallback to external category
+      // Also update any stakeholders using this category to remove the category reference
+      const updatedStakeholders = state.stakeholders.map(stakeholder => {
+        // Check if stakeholder references this category by any identifier
+        const referencesCategory = stakeholder.category === categoryToDelete ||
+                                   stakeholder.category === deletedCategory?.key ||
+                                   stakeholder.category === deletedCategory?.id
+        return referencesCategory
+          ? { ...stakeholder, category: null, updatedAt: new Date().toISOString() }
           : stakeholder
-      )
+      })
       return {
         ...state,
         stakeholderCategories: state.stakeholderCategories.filter(category =>
-          category.key !== categoryToDelete && category.id !== categoryToDelete
+          category.key !== categoryToDelete && category.id !== categoryToDelete && category.name !== categoryToDelete
         ),
         stakeholders: updatedStakeholders,
         deletedItems: [
           ...state.deletedItems,
           {
             type: 'stakeholderCategory',
-            id: categoryToDelete,
+            // Store ALL possible identifiers for robust deletion matching
+            id: deletedCategory?.id || categoryToDelete,
+            key: deletedCategory?.key || null,
+            name: deletedCategory?.name || deletedCategory?.label || null,
             deletedAt: new Date().toISOString(),
             deletedBy: `device_${navigator.userAgent.slice(0, 50)}`,
             originalItem: deletedCategory ? {
+              id: deletedCategory.id,
               name: deletedCategory.name || deletedCategory.label,
               key: deletedCategory.key
             } : null
@@ -562,19 +569,8 @@ export function AppProvider({ children }) {
         localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
         deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
 
-        // Only use defaults for true first-time setup (when no categories exist anywhere)
-        if (!localCategories.length) {
-          // Check if this is first-time setup by looking for any existing app data
-          const hasExistingData = meetings.length > 0 || localStakeholders.length > 0
-          if (!hasExistingData) {
-            console.log('🔍 DEBUG: First-time setup detected, loading default categories')
-            localCategories = Object.values(DEFAULT_CATEGORIES)
-          } else {
-            console.log('🔍 DEBUG: Existing app data found but no categories - this may be a sync issue, loading defaults temporarily')
-            // Load defaults temporarily, sync will override if needed
-            localCategories = Object.values(DEFAULT_CATEGORIES)
-          }
-        }
+        // No default categories - user must create their own
+        console.log('🔍 DEBUG: Loaded categories from localStorage:', localCategories.length)
 
         console.log('🔍 DEBUG: Initial load from localStorage:', {
           meetings: meetings.length,

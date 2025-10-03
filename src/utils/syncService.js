@@ -657,36 +657,20 @@ class SyncService {
     merged.stakeholders = Array.from(stakeholderMap.values())
 
     // Merge stakeholder categories by name, combining from both sources
-    // Filter out default/predefined categories that come with new app installations
-    const defaultCategories = new Set([
-      'Leadership',
-      'Engineering',
-      'Product',
-      'Marketing',
-      'Sales',
-      'Finance',
-      'Operations',
-      'HR',
-      'Legal',
-      'General'
-    ])
-
+    // No default categories - keep all user-created categories
     const allCategories = [...(safeLocalData.stakeholderCategories || []), ...(safeCloudData.stakeholderCategories || [])]
     const categoryMap = new Map()
 
-    console.log('🔍 Default categories filter:', Array.from(defaultCategories))
-    console.log('🔍 All categories to process:', allCategories.map(c => ({ name: c?.name, label: c?.label })))
+    console.log('🔍 All categories to process:', allCategories.map(c => ({ name: c?.name, label: c?.label, id: c?.id })))
 
     allCategories.forEach((category, index) => {
       // Use 'name' if available, otherwise fall back to 'label' for N8N categories
       const categoryName = category?.name || category?.label
-      const categoryId = category?.id || categoryName // Use ID if available, otherwise use name as identifier
+      const categoryId = category?.id || categoryName
       const hasName = !!categoryName
       const notInMap = !categoryMap.has(categoryName)
-      const notDefault = !defaultCategories.has(categoryName)
 
-      // Check if this category has been deleted
-      // Categories can be deleted by id, key, or name, so check all possible identifiers
+      // Check if this category has been deleted - check all possible identifiers
       const possibleDeletionKeys = [
         `stakeholderCategory:${categoryId}`,
         category?.key ? `stakeholderCategory:${category.key}` : null,
@@ -694,14 +678,33 @@ class SyncService {
         category?.id ? `stakeholderCategory:${category.id}` : null
       ].filter(Boolean)
 
+      // Also check if deletion tombstone has matching identifiers
       let deletion = null
       let matchedDeletionKey = null
+
+      // First try matching by the tombstone keys
       for (const key of possibleDeletionKeys) {
         const foundDeletion = deletionMap.get(key)
         if (foundDeletion) {
           deletion = foundDeletion
           matchedDeletionKey = key
           break
+        }
+      }
+
+      // Also check if any deletion tombstone matches this category's properties
+      if (!deletion) {
+        for (const [key, del] of deletionMap.entries()) {
+          if (del.type === 'stakeholderCategory') {
+            if (del.id === category.id ||
+                del.key === category.key ||
+                del.name === categoryName ||
+                del.name === category.label) {
+              deletion = del
+              matchedDeletionKey = key
+              break
+            }
+          }
         }
       }
 
@@ -719,27 +722,11 @@ class SyncService {
         deletionMap.delete(matchedDeletionKey)
       }
 
-      console.log('🔍 Processing category', index, ':', {
-        name: category?.name,
-        label: category?.label,
-        categoryName: categoryName, // The name we're actually using
-        categoryId: categoryId,
-        key: category?.key,
-        hasName,
-        notInMap,
-        notDefault,
-        isDefaultMatch: categoryName ? defaultCategories.has(categoryName) : false,
-        categoryStructure: Object.keys(category || {}),
-        fullCategory: category
-      })
-
-      // Check if this is a legitimate user category vs a default category
-      const isUserCategory = category?.id || category?.createdAt || category?.updatedAt || category?.stakeholderCount > 0
-      const shouldInclude = hasName && notInMap && (notDefault || isUserCategory)
+      // Keep all categories that have a name and aren't already in the map
+      const shouldInclude = hasName && notInMap
 
       if (shouldInclude) {
-        const categoryType = isUserCategory && defaultCategories.has(categoryName) ? 'user-created with default name' : 'custom'
-        console.log(`✅ Adding ${categoryType} category to merge:`, categoryName)
+        console.log(`✅ Adding category to merge:`, categoryName)
         // Ensure the category has a 'name' property for consistency
         const normalizedCategory = {
           ...category,
@@ -748,13 +735,9 @@ class SyncService {
         categoryMap.set(categoryName, normalizedCategory)
       } else {
         console.log('❌ Skipping category:', categoryName || 'unnamed', {
-          reason: !hasName ? 'no name/label property' :
-                  !notInMap ? 'already in map' :
-                  (!notDefault && !isUserCategory) ? `is default without user data (matches: ${categoryName})` : 'unknown',
+          reason: !hasName ? 'no name/label property' : 'already in map',
           hasName,
-          notInMap,
-          notDefault,
-          isUserCategory
+          notInMap
         })
       }
     })
@@ -763,10 +746,40 @@ class SyncService {
 
     console.log('🔍 Category merge details:', {
       totalInputCategories: allCategories.length,
-      filteredOutDefaults: allCategories.filter(c => defaultCategories.has(c?.name)).length,
       finalMergedCategories: merged.stakeholderCategories.length,
       categoryNames: merged.stakeholderCategories.map(c => c.name)
     })
+
+    // Clean up orphaned category references in stakeholders
+    // Build a set of valid category identifiers (id, key, name)
+    const validCategoryIds = new Set()
+    merged.stakeholderCategories.forEach(cat => {
+      if (cat.id) validCategoryIds.add(cat.id)
+      if (cat.key) validCategoryIds.add(cat.key)
+      if (cat.name) validCategoryIds.add(cat.name)
+      if (cat.label) validCategoryIds.add(cat.label)
+    })
+
+    console.log('🔍 Valid category identifiers:', Array.from(validCategoryIds))
+
+    // Check each stakeholder for orphaned category references
+    let orphanedReferencesFixed = 0
+    merged.stakeholders = merged.stakeholders.map(stakeholder => {
+      if (stakeholder.category && !validCategoryIds.has(stakeholder.category)) {
+        console.log(`🧹 Cleaning orphaned category reference in stakeholder ${stakeholder.name}: ${stakeholder.category}`)
+        orphanedReferencesFixed++
+        return {
+          ...stakeholder,
+          category: null,
+          updatedAt: new Date().toISOString()
+        }
+      }
+      return stakeholder
+    })
+
+    if (orphanedReferencesFixed > 0) {
+      console.log(`✅ Fixed ${orphanedReferencesFixed} orphaned category references`)
+    }
 
     // Final assignment of cleaned deletion records (after all resurrection checks)
     merged.deletedItems = Array.from(deletionMap.values())

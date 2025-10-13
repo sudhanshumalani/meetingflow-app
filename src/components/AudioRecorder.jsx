@@ -39,6 +39,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const [expectedSpeakers, setExpectedSpeakers] = useState(null) // Auto-detect if null
   const [isProcessingSpeakers, setIsProcessingSpeakers] = useState(false)
   const [speakerData, setSpeakerData] = useState(null)
+  const accumulatedUtterancesRef = useRef([]) // Store all speaker utterances across sessions
 
   // Initialize service on mount
   useEffect(() => {
@@ -229,9 +230,17 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
               })
 
               if (isFinal && text.trim()) {
-                persistentTranscriptRef.current += text + ' '
-                setTranscript(persistentTranscriptRef.current)
-                console.log('📱 Final tab transcript added, total length:', persistentTranscriptRef.current.length)
+                if (enableSpeakerDiarization) {
+                  // During speaker mode, just show the transcript without persisting
+                  // The speaker processing will handle persistence after stop
+                  const tempTranscript = persistentTranscriptRef.current + text + ' '
+                  setTranscript(tempTranscript)
+                } else {
+                  // Normal mode: persist immediately
+                  persistentTranscriptRef.current += text + ' '
+                  setTranscript(persistentTranscriptRef.current)
+                  console.log('📱 Final tab transcript added, total length:', persistentTranscriptRef.current.length)
+                }
               } else if (text) {
                 // Show interim text
                 setInterimText(text)
@@ -314,9 +323,15 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
               console.log('🖥️ [Hybrid] Tab transcript:', { text: text?.substring(0, 30), isFinal })
 
               if (isFinal && text.trim()) {
-                // Prefix with [Tab] to distinguish from mic
-                persistentTranscriptRef.current += `[Tab] ${text} `
-                setTranscript(persistentTranscriptRef.current)
+                if (enableSpeakerDiarization) {
+                  // During speaker mode, just show without persisting
+                  const tempTranscript = persistentTranscriptRef.current + `[Tab] ${text} `
+                  setTranscript(tempTranscript)
+                } else {
+                  // Normal mode: persist with [Tab] prefix
+                  persistentTranscriptRef.current += `[Tab] ${text} `
+                  setTranscript(persistentTranscriptRef.current)
+                }
               } else if (text) {
                 setInterimText(`[Tab] ${text}`)
                 setTranscript(persistentTranscriptRef.current)
@@ -350,9 +365,15 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
               console.log('🎙️ [Hybrid] Mic transcript:', { text: text?.substring(0, 30), isFinal })
 
               if (isFinal && text.trim()) {
-                // Prefix with [Mic] to distinguish from tab
-                persistentTranscriptRef.current += `[Mic] ${text} `
-                setTranscript(persistentTranscriptRef.current)
+                if (enableSpeakerDiarization) {
+                  // During speaker mode, just show without persisting
+                  const tempTranscript = persistentTranscriptRef.current + `[Mic] ${text} `
+                  setTranscript(tempTranscript)
+                } else {
+                  // Normal mode: persist with [Mic] prefix
+                  persistentTranscriptRef.current += `[Mic] ${text} `
+                  setTranscript(persistentTranscriptRef.current)
+                }
               } else if (text) {
                 setInterimText(`[Mic] ${text}`)
                 setTranscript(persistentTranscriptRef.current)
@@ -407,10 +428,14 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             },
             {
               // Real-time transcript (no speakers, instant feedback)
+              // Note: When speaker diarization is enabled, we show real-time preview
+              // but don't persist it - speaker processing will provide the final transcript
               onRealtimeTranscript: (text, isFinal) => {
                 if (isFinal && text.trim()) {
-                  persistentTranscriptRef.current += text + ' '
-                  setTranscript(persistentTranscriptRef.current)
+                  // During speaker mode, just show the transcript without persisting
+                  // The speaker processing will handle persistence after stop
+                  const tempTranscript = persistentTranscriptRef.current + text + ' '
+                  setTranscript(tempTranscript)
                 } else if (text) {
                   setInterimText(text)
                 }
@@ -419,8 +444,29 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
               // Speaker diarization result (after recording stops)
               onSpeakerTranscript: (data) => {
                 console.log('✅ Received speaker data:', data)
-                setSpeakerData(data)
-                setTranscript(data.text) // Update with final text
+
+                // Accumulate speaker utterances across sessions
+                if (data.utterances && data.utterances.length > 0) {
+                  accumulatedUtterancesRef.current = [...accumulatedUtterancesRef.current, ...data.utterances]
+
+                  // Create merged speaker data with all accumulated utterances
+                  const mergedSpeakerData = {
+                    ...data,
+                    utterances: accumulatedUtterancesRef.current,
+                    text: accumulatedUtterancesRef.current.map(u => u.text).join(' ')
+                  }
+
+                  console.log('📝 Accumulated utterances:', accumulatedUtterancesRef.current.length)
+                  setSpeakerData(mergedSpeakerData)
+                  setTranscript(mergedSpeakerData.text)
+                  persistentTranscriptRef.current = mergedSpeakerData.text
+                } else {
+                  // Fallback if no utterances (shouldn't happen but be safe)
+                  persistentTranscriptRef.current += ' ' + data.text
+                  setTranscript(persistentTranscriptRef.current)
+                  setSpeakerData(data)
+                }
+
                 setIsProcessingSpeakers(false)
               },
 
@@ -537,14 +583,39 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
                 })
 
                 console.log('✅ Speaker diarization complete:', speakerData)
-                setSpeakerData(speakerData)
-                setTranscript(speakerData.text)
-                setIsProcessingSpeakers(false)
 
-                // Update parent
-                if (onTranscriptUpdate) {
-                  onTranscriptUpdate(speakerData.text, speakerData)
+                // Accumulate speaker utterances across sessions
+                if (speakerData.utterances && speakerData.utterances.length > 0) {
+                  accumulatedUtterancesRef.current = [...accumulatedUtterancesRef.current, ...speakerData.utterances]
+
+                  // Create merged speaker data with all accumulated utterances
+                  const mergedSpeakerData = {
+                    ...speakerData,
+                    utterances: accumulatedUtterancesRef.current,
+                    text: accumulatedUtterancesRef.current.map(u => u.text).join(' ')
+                  }
+
+                  console.log('📝 Accumulated utterances:', accumulatedUtterancesRef.current.length)
+                  setSpeakerData(mergedSpeakerData)
+                  setTranscript(mergedSpeakerData.text)
+                  persistentTranscriptRef.current = mergedSpeakerData.text
+
+                  // Update parent with accumulated data
+                  if (onTranscriptUpdate) {
+                    onTranscriptUpdate(mergedSpeakerData.text, mergedSpeakerData)
+                  }
+                } else {
+                  // Fallback if no utterances
+                  persistentTranscriptRef.current += ' ' + speakerData.text
+                  setTranscript(persistentTranscriptRef.current)
+                  setSpeakerData(speakerData)
+
+                  if (onTranscriptUpdate) {
+                    onTranscriptUpdate(persistentTranscriptRef.current, speakerData)
+                  }
                 }
+
+                setIsProcessingSpeakers(false)
               } catch (error) {
                 console.error('❌ Speaker diarization failed:', error)
                 setError('Speaker identification failed. Showing plain transcript.')
@@ -630,11 +701,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     setInterimText('')
     persistentTranscriptRef.current = ''
     lastSavedTranscriptRef.current = ''
+    accumulatedUtterancesRef.current = []
+    setSpeakerData(null)
 
     console.log('🧹 All transcript storage cleared - starting fresh')
 
     if (onTranscriptUpdate) {
-      onTranscriptUpdate('')
+      onTranscriptUpdate('', null)
     }
   }
 

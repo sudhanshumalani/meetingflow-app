@@ -41,10 +41,25 @@ export function SyncProvider({ children }) {
           meetings: appData.meetings.length,
           stakeholders: appData.stakeholders.length,
           categories: appData.stakeholderCategories.length,
-          deletedItems: appData.deletedItems.length
+          deletedItems: appData.deletedItems.length,
+          deletionDetails: appData.deletedItems.map(d => `${d.type}:${d.id}`)
         })
 
-        await sync.syncToCloud(appData)
+        const result = await sync.syncToCloud(appData)
+
+        // Validate sync success, especially for deletions
+        if (result.success) {
+          console.log('✅ AUTO-SYNC COMPLETED SUCCESSFULLY')
+          if (appData.deletedItems.length > 0) {
+            console.log('✅ DELETION SYNC CONFIRMED IN AUTO-SYNC:',
+              appData.deletedItems.map(d => `${d.type}:${d.id}`)
+            )
+          }
+        } else if (result.queued) {
+          console.log('📴 Sync queued - device is offline')
+        }
+      } else {
+        console.log('⏸️ Auto-sync skipped - no data to sync')
       }
     } catch (error) {
       console.log('Auto-sync failed (will retry):', error.message)
@@ -52,16 +67,88 @@ export function SyncProvider({ children }) {
   }, [app.meetings, app.stakeholders, app.stakeholderCategories, app.deletedItems, app.isLoading, sync.isConfigured, sync.canSync, sync.syncToCloud])
 
   /**
-   * Auto-sync data when app state changes
+   * Auto-sync data when app state changes (debounced)
    */
   useEffect(() => {
     // Debounce sync operations to avoid excessive calls
     const timeoutId = setTimeout(() => {
       handleDataChange()
-    }, 2000) // 2 second delay
+    }, 500) // 500ms delay (reduced from 2000ms for faster sync)
 
     return () => clearTimeout(timeoutId)
   }, [handleDataChange])
+
+  /**
+   * IMMEDIATE sync for deletions (no debounce)
+   * Critical: Ensures deletions are synced immediately without waiting
+   */
+  useEffect(() => {
+    // Skip if not configured or offline
+    if (!sync.isConfigured || !sync.canSync) {
+      console.log('⏸️ Deletion sync skipped - sync not configured or offline')
+      return
+    }
+
+    // Skip during initial load
+    if (app.isLoading) {
+      return
+    }
+
+    // Only trigger if we have deletions
+    if (app.deletedItems.length > 0) {
+      console.log('🚨 IMMEDIATE DELETION SYNC TRIGGERED:', {
+        deletedItemsCount: app.deletedItems.length,
+        deletedItems: app.deletedItems.map(d => `${d.type}:${d.id}`)
+      })
+
+      const appData = {
+        meetings: app.meetings,
+        stakeholders: app.stakeholders,
+        stakeholderCategories: app.stakeholderCategories,
+        deletedItems: app.deletedItems
+      }
+
+      sync.syncToCloud(appData)
+        .then(result => {
+          if (result.success) {
+            console.log('✅ DELETION SYNC CONFIRMED - deletions uploaded to cloud')
+          }
+        })
+        .catch(err => {
+          console.error('❌ IMMEDIATE DELETION SYNC FAILED:', err)
+        })
+    }
+  }, [app.deletedItems.length, sync.isConfigured, sync.canSync, app.isLoading])
+
+  /**
+   * Emergency sync before app closes (safety net)
+   * Ensures pending deletions are synced before user closes the app
+   */
+  useEffect(() => {
+    const handleBeforeUnload = async (e) => {
+      if (app.deletedItems.length > 0 && sync.canSync) {
+        console.log('⚠️ APP CLOSING WITH PENDING DELETIONS - forcing emergency sync')
+
+        const appData = {
+          meetings: app.meetings,
+          stakeholders: app.stakeholders,
+          stakeholderCategories: app.stakeholderCategories,
+          deletedItems: app.deletedItems
+        }
+
+        // Attempt synchronous sync before close
+        try {
+          await sync.syncToCloud(appData)
+          console.log('✅ Emergency sync completed')
+        } catch (error) {
+          console.error('❌ Emergency sync failed:', error)
+        }
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [app.deletedItems, app.meetings, app.stakeholders, app.stakeholderCategories, sync])
 
   /**
    * Handle sync from cloud with app data update
@@ -195,8 +282,17 @@ export function SyncProvider({ children }) {
       const appData = {
         meetings: app.meetings,
         stakeholders: app.stakeholders,
-        stakeholderCategories: app.stakeholderCategories
+        stakeholderCategories: app.stakeholderCategories,
+        deletedItems: app.deletedItems
       }
+
+      console.log('🔄 FORCE SYNC TO CLOUD triggered:', {
+        meetings: appData.meetings.length,
+        stakeholders: appData.stakeholders.length,
+        categories: appData.stakeholderCategories.length,
+        deletedItems: appData.deletedItems.length,
+        deletionDetails: appData.deletedItems.map(d => `${d.type}:${d.id}`)
+      })
 
       return await sync.syncToCloud(appData)
     },

@@ -121,12 +121,22 @@ class SyncService {
       const savedConfig = await localforage.getItem('sync_config')
       if (savedConfig) {
         this.syncConfig = savedConfig
-        console.log('🔧 Loaded sync config:', savedConfig.provider)
+        console.log('🔧 Loaded sync config:', {
+          provider: savedConfig.provider,
+          enabled: savedConfig.enabled,
+          autoSync: savedConfig.autoSync,
+          syncInterval: (savedConfig.syncInterval || 300000) / 60000 + ' minutes'
+        })
 
         // Start auto-sync if enabled
         if (savedConfig.autoSync) {
+          console.log('🚀 Auto-sync is ENABLED - starting auto-sync interval...')
           this.startAutoSync()
+        } else {
+          console.warn('⚠️ Auto-sync is DISABLED in config - will not start auto-sync interval')
         }
+      } else {
+        console.log('ℹ️ No sync config found - sync not configured yet')
       }
     } catch (error) {
       console.error('❌ Failed to load sync config:', error)
@@ -326,7 +336,9 @@ class SyncService {
         dataSize: localDataSize,
         meetings: localMeetings,
         stakeholders: localStakeholders,
-        categories: localCategories
+        categories: localCategories,
+        deletedItems: data.deletedItems?.length || 0,
+        deletionDetails: data.deletedItems?.map(d => `${d.type}:${d.id}`) || []
       })
 
       const result = await this.uploadData('app_data', syncPayload)
@@ -812,16 +824,23 @@ class SyncService {
 
     this.autoSyncInterval = setInterval(async () => {
       try {
+        console.log('⏰ AUTO-SYNC INTERVAL TRIGGERED (runs every', interval / 60000, 'minutes)')
         const localData = await this.getLocalData()
         if (localData) {
-          await this.syncToCloud(localData)
+          console.log('📤 Auto-sync interval uploading data:', {
+            meetings: localData.data.meetings?.length || 0,
+            stakeholders: localData.data.stakeholders?.length || 0,
+            categories: localData.data.stakeholderCategories?.length || 0,
+            deletedItems: localData.data.deletedItems?.length || 0
+          })
+          await this.syncToCloud(localData.data)
         }
       } catch (error) {
-        console.log('Auto-sync failed (will retry next interval):', error.message)
+        console.error('❌ Auto-sync interval failed (will retry next interval):', error.message)
       }
     }, interval)
 
-    console.log('⏰ Auto-sync started with', interval / 60000, 'minute intervals')
+    console.log('⏰ Auto-sync STARTED with', interval / 60000, 'minute intervals')
   }
 
   /**
@@ -883,6 +902,8 @@ class SyncService {
         meetingsCount: meetings.length,
         stakeholdersCount: stakeholders.length,
         categoriesCount: stakeholderCategories.length,
+        deletedItemsCount: deletedItems.length,
+        deletedItemsDetails: deletedItems.map(d => `${d.type}:${d.id} (deleted: ${d.deletedAt})`),
         stakeholdersSample: stakeholders.slice(0, 2)
       })
 

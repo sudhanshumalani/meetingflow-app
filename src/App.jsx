@@ -8,6 +8,7 @@ import Meeting from './views/Meeting'
 import Settings from './views/Settings'
 import SimpleMeetingNotes from './components/SimpleMeetingNotes'
 import GoogleAuthCallback from './components/GoogleAuthCallback'
+import SpeakerDiarizationTest from './views/SpeakerDiarizationTest'
 import ErrorBoundary, { ErrorToast } from './components/ErrorBoundary'
 import LoadingSpinner from './components/LoadingSpinner'
 import accessibility, { a11y } from './utils/accessibility'
@@ -209,6 +210,7 @@ function AppContent() {
             <Route path="/meeting/:id" element={<Meeting />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/test-notes" element={<SimpleMeetingNotes />} />
+            <Route path="/test-speaker-diarization" element={<SpeakerDiarizationTest />} />
             <Route path="/auth/google/callback" element={<GoogleAuthCallback />} />
             {/* Catch-all route for any unmatched paths - redirect to home */}
             <Route path="*" element={<Home />} />

@@ -61,92 +61,109 @@ export class ClaudeProvider {
   buildMeetingPrompt(text, context = {}) {
     const { meetingType = 'general', stakeholder = null, date = null } = context
 
-    return `You are an expert meeting notes analyst. Transform the following meeting transcript into comprehensive, structured meeting notes.
+    return `You are a professional meeting notes assistant that generates comprehensive, well-structured meeting documentation similar to leading AI note-taking tools like Fireflies, Otter, and Granola.
+
+When provided with a meeting transcript or recording, generate meeting notes with the following structure:
+
+## MEETING HEADER
+- **Meeting Title:** [Extract or generate descriptive title]
+- **Date & Time:** ${date || '[Meeting date and duration]'}
+- **Attendees:** [List all participants with their roles if mentioned]
+- **Meeting Type:** ${meetingType || '[Identify: Team Sync, Sales Call, 1-on-1, Interview, Project Review, etc.]'}
+
+## EXECUTIVE SUMMARY
+Write a 2-3 sentence overview capturing the meeting's purpose and main outcome. This should give someone who wasn't present a quick understanding of what was accomplished.
+
+## KEY DISCUSSION POINTS
+Organize the main topics discussed into 3-5 themed sections with descriptive headers. Make sure you are capturing all the key topics discussed. Be thorough with identifying the main themes here.
+Under each header, include:
+- Brief bullet points of what was discussed (2-3 bullets per section)
+- Important context or details mentioned
+- Any data, metrics, or specific examples shared
+
+Format as:
+### [Topic Header 1]
+- Key point discussed
+- Supporting details or context
+- Relevant metrics or examples mentioned
+
+### [Topic Header 2]
+- Main discussion point
+- Important clarification or detail
+- Outcome or conclusion reached
+
+## DECISIONS MADE
+List all concrete decisions reached during the meeting:
+- [Decision 1]: [Brief context and rationale if provided]
+- [Decision 2]: [What was decided and by whom]
+- [Decision 3]: [Include any conditions or dependencies]
+
+## ACTION ITEMS
+Format each action item with owner, deadline, and clear description:
+
+| Action Item | Owner | Due Date | Priority | Notes |
+|------------|-------|----------|----------|--------|
+| [Specific, measurable task] | @[Name] | [Date or timeframe] | High/Medium/Low | [Any dependencies or context] |
+| [Clear deliverable] | @[Name] | [Specific date] | High/Medium/Low | [Additional details] |
+
+## OPEN QUESTIONS & FOLLOW-UPS
+- [ ] [Unresolved question that needs further discussion]
+- [ ] [Topic to revisit in next meeting]
+- [ ] [Information needed from external source]
+
+## NEXT STEPS
+Provide a brief 2-3 sentence summary of immediate next steps and when the team will reconvene or check in on progress.
+
+### FORMATTING GUIDELINES:
+1. Use clear, professional language - no jargon unless industry-specific
+2. Keep bullet points concise (under 2 lines each)
+3. Bold important names, dates, and metrics for scanning
+4. Ensure action items are SMART (Specific, Measurable, Assignable, Relevant, Time-bound)
+5. Use active voice and present tense for current states, past tense for decisions made
+6. Organize information hierarchically - most important first
+7. Include speaker attribution only when critical for context
+8. If working from a transcript with timestamps, you may reference them for key moments: [00:15:30]
+
+### STYLE NOTES:
+- Write in third person for main content
+- Be objective and factual - avoid interpretive language unless quoting
+- Preserve technical terminology and product names exactly as spoken
+- Flag any unclear audio or ambiguous decisions with [unclear] or [to be confirmed]
+- If the meeting type is identified (sales, interview, standup), adjust the template emphasis accordingly:
+  - Sales calls: Focus on customer needs, objections, next steps
+  - Interviews: Highlight candidate responses, technical assessments, culture fit
+  - Standups: Emphasize blockers, progress updates, dependencies
+  - 1-on-1s: Career development, feedback, personal goals
 
 **Meeting Context:**
-- Type: ${meetingType}
-- Date: ${date || 'Not specified'}
-- Primary Stakeholder: ${stakeholder || 'Not specified'}
+- Stakeholder: ${stakeholder || 'Not specified'}
 
 **Raw Meeting Notes/Transcript:**
 """
 ${text}
 """
 
-**ANALYSIS REQUIREMENTS:**
-
-1. **IDENTIFY PEOPLE & CONTEXT**
-   - Extract each person's background, current role, and relevant experience
-   - Include specific details, timelines, and quantifiable information
-
-2. **ORGANIZE BY LOGICAL THEMES**
-   - Group related topics under clear, descriptive headers
-   - Use bullet points and sub-bullets for hierarchical information
-   - Bold key terms and proper nouns for easy scanning
-
-3. **CAPTURE STRATEGIC INSIGHTS**
-   - Extract lessons learned, challenges identified, and solutions proposed
-   - Include specific methodologies, frameworks, and best practices mentioned
-   - Note any data points, metrics, or measurable outcomes
-
-4. **HIGHLIGHT ACTIONABLE INFORMATION**
-   - Identify collaboration opportunities and potential partnerships
-   - Extract concrete next steps with responsible parties
-   - Note key contacts, referrals, and recommended resources
-
-5. **MAINTAIN PROFESSIONAL ACCURACY**
-   - Use precise terminology and proper names
-   - Include relevant context that adds meaning
-   - Preserve nuanced distinctions and qualifications
-
-**Response Format (JSON):**
+**IMPORTANT:** Return your response as valid JSON with this structure:
 {
-  "summary": "Brief overview capturing strategic context and main outcomes",
-  "peopleAndContext": [
-    {
-      "name": "Person Name",
-      "background": "Current role, experience, relevant details with specifics",
-      "relevance": "Why they matter to the discussion"
-    }
-  ],
-  "thematicSections": [
-    {
-      "sectionTitle": "Clear, descriptive header that captures essence",
-      "content": [
-        "Specific detail with context and quantifiable information",
-        "Key insight or methodology mentioned",
-        "Strategic consideration or challenge identified"
-      ]
-    }
-  ],
-  "strategicInsights": [
-    "Lesson learned with specific context",
-    "Best practice or framework mentioned",
-    "Challenge identified with proposed solution"
-  ],
+  "summary": "2-3 sentence executive summary",
+  "keyDiscussionPoints": ["Array of strings with ### headers and bullet points in markdown format"],
+  "decisionsMade": ["Array of decision strings"],
   "actionItems": [
     {
-      "task": "Specific action with responsible party named",
-      "assignee": "Name or 'Unassigned'",
+      "task": "Specific action item",
+      "assignee": "Name or Unassigned",
+      "dueDate": "Date or timeframe or null",
       "priority": "high|medium|low",
-      "dueDate": "Date mentioned or null",
-      "type": "next_step|collaboration|follow_up|research",
-      "confidence": 0.9
+      "notes": "Dependencies or context"
     }
   ],
-  "keyContacts": [
-    {
-      "name": "Contact name",
-      "role": "Their position/relevance",
-      "connection": "How they relate to discussed opportunities"
-    }
-  ],
+  "openQuestions": ["Array of unresolved questions"],
+  "nextSteps": "Brief summary of immediate next steps",
   "sentiment": "positive|neutral|negative",
-  "confidence": 0.95,
-  "processingNotes": "Analysis notes about structure and strategic value"
+  "confidence": 0.95
 }
 
-Generate meeting notes that capture both strategic insights and tactical details, making them immediately useful for follow-up actions and future reference. Return only valid JSON without any markdown formatting.`
+Generate the notes in clean format that can be easily copied to Notion, Confluence, or shared via email. The notes should be scannable, with the most critical information immediately visible. Return only valid JSON without any markdown code blocks.`
   }
 
   async analyze(text, context = {}) {
@@ -216,11 +233,11 @@ Generate meeting notes that capture both strategic insights and tactical details
     // Fallback text parser for non-JSON responses
     const result = {
       summary: '',
-      peopleAndContext: [],
-      thematicSections: [],
-      strategicInsights: [],
+      keyDiscussionPoints: [],
+      decisionsMade: [],
       actionItems: [],
-      keyContacts: [],
+      openQuestions: [],
+      nextSteps: '',
       sentiment: 'neutral',
       confidence: 0.7
     }
@@ -231,14 +248,23 @@ Generate meeting notes that capture both strategic insights and tactical details
     for (const line of lines) {
       const lowerLine = line.toLowerCase().trim()
 
-      if (lowerLine.includes('summary') || lowerLine.includes('overview')) {
+      if (lowerLine.includes('summary') || lowerLine.includes('executive summary')) {
         currentSection = 'summary'
         continue
       } else if (lowerLine.includes('discussion') || lowerLine.includes('key points')) {
         currentSection = 'discussion'
         continue
+      } else if (lowerLine.includes('decisions made') || lowerLine.includes('decision')) {
+        currentSection = 'decisions'
+        continue
       } else if (lowerLine.includes('action') || lowerLine.includes('task')) {
         currentSection = 'actions'
+        continue
+      } else if (lowerLine.includes('open questions') || lowerLine.includes('follow-up')) {
+        currentSection = 'questions'
+        continue
+      } else if (lowerLine.includes('next steps')) {
+        currentSection = 'nextSteps'
         continue
       }
 
@@ -255,6 +281,11 @@ Generate meeting notes that capture both strategic insights and tactical details
         if (cleanLine.length > 10) {
           result.keyDiscussionPoints.push(cleanLine)
         }
+      } else if (currentSection === 'decisions') {
+        const cleanLine = line.replace(/^[-•*]\s*/, '').trim()
+        if (cleanLine.length > 10) {
+          result.decisionsMade.push(cleanLine)
+        }
       } else if (currentSection === 'actions') {
         const cleanLine = line.replace(/^[-•*]\s*/, '').trim()
         if (cleanLine.length > 10) {
@@ -263,9 +294,17 @@ Generate meeting notes that capture both strategic insights and tactical details
             assignee: this.extractAssignee(cleanLine) || 'Unassigned',
             priority: this.determinePriority(cleanLine),
             dueDate: this.extractDueDate(cleanLine),
+            notes: '',
             confidence: 0.7
           })
         }
+      } else if (currentSection === 'questions') {
+        const cleanLine = line.replace(/^[-•*\[\]\s]*/, '').trim()
+        if (cleanLine.length > 10) {
+          result.openQuestions.push(cleanLine)
+        }
+      } else if (currentSection === 'nextSteps') {
+        result.nextSteps += (result.nextSteps ? ' ' : '') + line.replace(/^[-•*]\s*/, '').trim()
       }
     }
 

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Mic, MicOff, Square, Volume2, Settings, ChevronDown, Users, Loader2 } from 'lucide-react'
+import { Mic, MicOff, Square, Volume2, Settings, ChevronDown } from 'lucide-react'
 import assemblyAIService from '../services/assemblyAIService'
-import assemblyAISpeakerService from '../services/assemblyAISpeakerService'
 
 const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
@@ -28,17 +27,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const lastSavedTranscriptRef = useRef('')
   const lastSentTranscriptRef = useRef('')
   const persistentTranscriptRef = useRef('') // Stores accumulated transcript across sessions
-  const mediaRecorderRef = useRef(null) // For speaker diarization recording
-  const recordedChunksRef = useRef([]) // For speaker diarization audio chunks
 
   // Mobile lifecycle management
   const [wakeLock, setWakeLock] = useState(null)
-
-  // Speaker diarization state
-  const [enableSpeakerDiarization, setEnableSpeakerDiarization] = useState(false) // OFF by default for safety
-  const [expectedSpeakers, setExpectedSpeakers] = useState(null) // Auto-detect if null
-  const [isProcessingSpeakers, setIsProcessingSpeakers] = useState(false)
-  const [speakerData, setSpeakerData] = useState(null)
 
   // Initialize service on mount
   useEffect(() => {
@@ -72,10 +63,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     if (currentTranscript && onTranscriptUpdate && currentTranscript !== lastSentTranscriptRef.current) {
       console.log('🎤 AudioRecorder: Auto-updating parent with transcript:', currentTranscript.substring(0, 100) + '...')
       lastSentTranscriptRef.current = currentTranscript
-      // Backward compatible: send both transcript and speaker data (if available)
-      onTranscriptUpdate(currentTranscript, speakerData)
+      onTranscriptUpdate(currentTranscript)
     }
-  }, [transcript, speakerData, onTranscriptUpdate])
+  }, [transcript, onTranscriptUpdate])
 
   // Auto-save functionality for processed audio
   const handleAutoSave = (reason = 'auto') => {
@@ -176,7 +166,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
       // Handle different audio source modes
       if (selectedAudioSource === 'tabAudio') {
-        // Tab Audio Only - Real-time streaming transcription (with optional speaker diarization)
+        // Tab Audio Only - Real-time streaming transcription
         try {
           const displayStream = await navigator.mediaDevices.getDisplayMedia({
             video: true, // Required by Chrome to get audio
@@ -193,31 +183,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
           // Store the stream for cleanup
           window.currentTabStream = displayStream
-
-          // If speaker diarization enabled, also record the audio
-          if (enableSpeakerDiarization) {
-            console.log('🎙️ Tab audio: Starting recording for speaker diarization')
-            recordedChunksRef.current = []
-
-            const audioTrack = displayStream.getAudioTracks()[0]
-            if (audioTrack) {
-              const audioStream = new MediaStream([audioTrack])
-              const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                ? 'audio/webm;codecs=opus'
-                : 'audio/webm'
-
-              mediaRecorderRef.current = new MediaRecorder(audioStream, { mimeType, audioBitsPerSecond: 128000 })
-
-              mediaRecorderRef.current.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                  recordedChunksRef.current.push(event.data)
-                }
-              }
-
-              mediaRecorderRef.current.start(1000)
-              console.log('✅ Tab audio recording started for speaker processing')
-            }
-          }
 
           // Start real-time streaming transcription for tab audio
           await assemblyAIService.startTabAudioStreaming(displayStream, {
@@ -282,31 +247,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
           console.log('🎙️ Hybrid mode: Tab audio captured')
           window.currentTabStream = displayStream
-
-          // If speaker diarization enabled, also record the tab audio
-          if (enableSpeakerDiarization) {
-            console.log('🎙️ Hybrid mode: Starting recording for speaker diarization')
-            recordedChunksRef.current = []
-
-            const audioTrack = displayStream.getAudioTracks()[0]
-            if (audioTrack) {
-              const audioStream = new MediaStream([audioTrack])
-              const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                ? 'audio/webm;codecs=opus'
-                : 'audio/webm'
-
-              mediaRecorderRef.current = new MediaRecorder(audioStream, { mimeType, audioBitsPerSecond: 128000 })
-
-              mediaRecorderRef.current.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                  recordedChunksRef.current.push(event.data)
-                }
-              }
-
-              mediaRecorderRef.current.start(1000)
-              console.log('✅ Hybrid mode recording started for speaker processing (tab audio)')
-            }
-          }
 
           // Start real-time tab audio streaming
           await assemblyAIService.startTabAudioStreaming(displayStream, {
@@ -385,7 +325,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           throw err
         }
       } else {
-        // Microphone Only - Choose between speaker mode or regular mode
+        // Microphone Only - AssemblyAI Real-time Streaming
         const micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
@@ -395,94 +335,46 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           }
         })
 
-        // Use hybrid mode with speaker diarization if enabled
-        if (enableSpeakerDiarization) {
-          console.log('🎙️ Starting with speaker diarization enabled')
+        await assemblyAIService.startRealtimeTranscription(micStream, {
+          onTranscript: (text, isFinal) => {
+            console.log('🎤 AssemblyAI transcript:', {
+              text: text?.substring(0, 50),
+              isFinal,
+              length: text?.length,
+              persistentLength: persistentTranscriptRef.current.length
+            })
 
-          await assemblyAISpeakerService.startHybridTranscription(
-            micStream,
-            {
-              speakers_expected: expectedSpeakers,
-              enable_speaker_labels: true
-            },
-            {
-              // Real-time transcript (no speakers, instant feedback)
-              onRealtimeTranscript: (text, isFinal) => {
-                if (isFinal && text.trim()) {
-                  persistentTranscriptRef.current += text + ' '
-                  setTranscript(persistentTranscriptRef.current)
-                } else if (text) {
-                  setInterimText(text)
-                }
-              },
-
-              // Speaker diarization result (after recording stops)
-              onSpeakerTranscript: (data) => {
-                console.log('✅ Received speaker data:', data)
-                setSpeakerData(data)
-                setTranscript(data.text) // Update with final text
-                setIsProcessingSpeakers(false)
-              },
-
-              onError: (error) => {
-                console.error('❌ Speaker diarization error:', error)
-                setError(error.message)
-                setIsRecording(false)
-                setIsProcessingSpeakers(false)
-
-                if (micStream) {
-                  micStream.getTracks().forEach(track => track.stop())
-                }
-              },
-
-              onClose: () => {
-                console.log('🔌 Speaker diarization connection closed')
-              }
+            if (isFinal && text.trim()) {
+              persistentTranscriptRef.current += text + ' '
+              setTranscript(persistentTranscriptRef.current)
+              console.log('📱 Final transcript added, total length:', persistentTranscriptRef.current.length)
+            } else if (text) {
+              // Show interim text alongside persistent content
+              setInterimText(text)
+              setTranscript(persistentTranscriptRef.current)
             }
-          )
-        } else {
-          // Regular real-time transcription (no speakers)
-          await assemblyAIService.startRealtimeTranscription(micStream, {
-            onTranscript: (text, isFinal) => {
-              console.log('🎤 AssemblyAI transcript:', {
-                text: text?.substring(0, 50),
-                isFinal,
-                length: text?.length,
-                persistentLength: persistentTranscriptRef.current.length
-              })
+          },
+          onError: (error) => {
+            console.error('❌ AssemblyAI error:', error)
+            setError(error.message)
+            setIsRecording(false)
 
-              if (isFinal && text.trim()) {
-                persistentTranscriptRef.current += text + ' '
-                setTranscript(persistentTranscriptRef.current)
-                console.log('📱 Final transcript added, total length:', persistentTranscriptRef.current.length)
-              } else if (text) {
-                // Show interim text alongside persistent content
-                setInterimText(text)
-                setTranscript(persistentTranscriptRef.current)
-              }
-            },
-            onError: (error) => {
-              console.error('❌ AssemblyAI error:', error)
-              setError(error.message)
-              setIsRecording(false)
-
-              // Stop the mic stream on error
-              if (micStream) {
-                micStream.getTracks().forEach(track => track.stop())
-              }
-            },
-            onClose: () => {
-              console.log('🔌 AssemblyAI connection closed')
-              setIsRecording(false)
-              handleAutoSave('recording_ended')
-
-              // Stop the mic stream when connection closes
-              if (micStream) {
-                micStream.getTracks().forEach(track => track.stop())
-              }
+            // Stop the mic stream on error
+            if (micStream) {
+              micStream.getTracks().forEach(track => track.stop())
             }
-          })
-        }
+          },
+          onClose: () => {
+            console.log('🔌 AssemblyAI connection closed')
+            setIsRecording(false)
+            handleAutoSave('recording_ended')
+
+            // Stop the mic stream when connection closes
+            if (micStream) {
+              micStream.getTracks().forEach(track => track.stop())
+            }
+          }
+        })
       }
 
       setIsRecording(true)
@@ -509,57 +401,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     try {
       handleAutoSave('stop')
 
-      // If speaker diarization is enabled, trigger processing
-      if (enableSpeakerDiarization) {
-        console.log('🛑 Stopping with speaker diarization processing...')
-        setIsProcessingSpeakers(true)
-
-        if (selectedAudioSource === 'microphone') {
-          // Microphone mode uses hybrid service
-          await assemblyAISpeakerService.stopHybridTranscription()
-        } else {
-          // Tab audio or hybrid mode - stop MediaRecorder and process
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-            mediaRecorderRef.current.stop()
-
-            // Wait a bit for onstop to process
-            mediaRecorderRef.current.onstop = async () => {
-              try {
-                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                  ? 'audio/webm;codecs=opus'
-                  : 'audio/webm'
-                const audioBlob = new Blob(recordedChunksRef.current, { type: mimeType })
-                console.log(`📦 Recorded audio blob: ${(audioBlob.size / 1024 / 1024).toFixed(2)} MB`)
-
-                // Process with speaker diarization
-                const speakerData = await assemblyAISpeakerService.transcribeWithSpeakers(audioBlob, {
-                  speakers_expected: expectedSpeakers
-                })
-
-                console.log('✅ Speaker diarization complete:', speakerData)
-                setSpeakerData(speakerData)
-                setTranscript(speakerData.text)
-                setIsProcessingSpeakers(false)
-
-                // Update parent
-                if (onTranscriptUpdate) {
-                  onTranscriptUpdate(speakerData.text, speakerData)
-                }
-              } catch (error) {
-                console.error('❌ Speaker diarization failed:', error)
-                setError('Speaker identification failed. Showing plain transcript.')
-                setIsProcessingSpeakers(false)
-              }
-            }
-          }
-
-          // Stop regular real-time transcription
-          assemblyAIService.stopRealtimeTranscription()
-        }
-      } else {
-        // No speaker diarization - just stop regular transcription
-        assemblyAIService.stopRealtimeTranscription()
-      }
+      // Stop AssemblyAI real-time transcription for all modes
+      // This handles microphone, tab audio, and hybrid mode
+      assemblyAIService.stopRealtimeTranscription()
 
       // Stop tab audio stream if it exists
       if (window.currentTabStream) {
@@ -570,12 +414,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         window.currentTabStream = null
       }
 
-      // Ensure we have the best available transcript (unless speaker processing is happening)
-      if (!isProcessingSpeakers) {
-        const bestTranscript = persistentTranscriptRef.current || transcript || interimText
-        setTranscript(bestTranscript)
-      }
-
+      // Ensure we have the best available transcript
+      const bestTranscript = persistentTranscriptRef.current || transcript || interimText
+      setTranscript(bestTranscript)
       setIsRecording(false)
 
       // Release wake lock
@@ -586,34 +427,18 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         timerRef.current = null
       }
 
-      // Clean up MediaRecorder if not processing speakers
-      if (!enableSpeakerDiarization && mediaRecorderRef.current) {
-        if (mediaRecorderRef.current.state !== 'inactive') {
-          mediaRecorderRef.current.stop()
-        }
-        mediaRecorderRef.current = null
-        recordedChunksRef.current = []
-      }
-
       console.log('🛑 Recording stopped - transcript preserved:', {
-        length: transcript.length,
-        words: transcript.split(' ').filter(w => w.trim()).length,
-        preview: transcript.substring(0, 50) + '...',
-        speakerMode: enableSpeakerDiarization
+        length: bestTranscript.length,
+        words: bestTranscript.split(' ').filter(w => w.trim()).length,
+        preview: bestTranscript.substring(0, 50) + '...'
       })
     } catch (error) {
       console.error('Failed to stop recording:', error)
       setError(error.message)
       handleAutoSave('stop_error')
-      setIsProcessingSpeakers(false)
 
       // Always try to release wake lock even on error
       await releaseWakeLock()
-
-      // Clean up MediaRecorder
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop()
-      }
     }
   }
 
@@ -770,83 +595,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           )}
         </div>
 
-        {/* Speaker Diarization Settings (all audio modes) */}
-        <div className="mb-4 p-3 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-green-600" />
-                <label className="text-sm font-medium text-gray-900">
-                  Speaker Identification
-                </label>
-                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
-                  NEW
-                </span>
-              </div>
-              <button
-                onClick={() => setEnableSpeakerDiarization(!enableSpeakerDiarization)}
-                disabled={isRecording}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  enableSpeakerDiarization ? 'bg-green-600' : 'bg-gray-300'
-                } ${isRecording ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                title="Toggle speaker identification"
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    enableSpeakerDiarization ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-
-            {enableSpeakerDiarization && (
-              <div className="space-y-2">
-                <p className="text-xs text-gray-600 mb-2">
-                  💡 Identifies who said what after recording. Processing takes 10-30 seconds.
-                </p>
-
-                <div>
-                  <label className="text-xs text-gray-700 block mb-1">
-                    Expected Number of Speakers (optional)
-                  </label>
-                  <select
-                    value={expectedSpeakers || ''}
-                    onChange={(e) => setExpectedSpeakers(e.target.value ? parseInt(e.target.value) : null)}
-                    disabled={isRecording}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500 disabled:opacity-50"
-                  >
-                    <option value="">Auto-detect</option>
-                    <option value="2">2 speakers</option>
-                    <option value="3">3 speakers</option>
-                    <option value="4">4 speakers</option>
-                    <option value="5">5 speakers</option>
-                    <option value="6">6+ speakers</option>
-                  </select>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Hint improves accuracy if you know the number
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {!enableSpeakerDiarization && (
-              <p className="text-xs text-gray-600">
-                Enable to identify different speakers in your recording
-              </p>
-            )}
-
-            {/* Info for different modes */}
-            {enableSpeakerDiarization && selectedAudioSource === 'tabAudio' && (
-              <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
-                💡 Perfect for Zoom/Teams calls! Records tab audio and identifies speakers after recording.
-              </div>
-            )}
-            {enableSpeakerDiarization && selectedAudioSource === 'mixed' && (
-              <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded text-xs text-purple-700">
-                💡 Hybrid mode with speakers! Records tab audio (Zoom/Teams) and identifies speakers. Your mic provides real-time feedback.
-              </div>
-            )}
-          </div>
-
         {/* Main Recording Button */}
         <div className="flex items-center justify-center mb-4">
           <button
@@ -947,24 +695,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         </div>
       )}
 
-      {/* Speaker Processing Indicator */}
-      {isProcessingSpeakers && (
-        <div className="bg-green-50 rounded-lg border border-green-200 p-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2 text-green-700 font-medium text-sm">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Identifying Speakers...</span>
-            </div>
-          </div>
-          <div className="w-full bg-green-200 rounded-full h-2 overflow-hidden">
-            <div className="bg-green-600 h-full animate-pulse" style={{ width: '60%' }} />
-          </div>
-          <p className="text-xs text-green-700 mt-2">
-            Processing speaker diarization. This takes 10-30 seconds...
-          </p>
-        </div>
-      )}
-
       {/* Recording Status when no transcript */}
       {!transcript && isRecording && !isProcessing && (
         <div className="bg-blue-50 rounded-lg border border-blue-200 p-4 text-center">
@@ -994,7 +724,6 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       <div className="text-center space-y-1">
         <p className="text-xs text-gray-500">
           🎯 AssemblyAI Real-time • Persistent transcript accumulation • 📱 Mobile optimized
-          {enableSpeakerDiarization && ' • 👥 Speaker identification enabled'}
         </p>
         <p className="text-xs text-gray-400">
           Transcripts accumulate across sessions - works reliably across all devices

@@ -50,6 +50,7 @@ import {
 import { useAIAnalysis } from '../hooks/useAIAnalysis'
 import { ExportOptionsButton } from '../components/ExportOptions'
 import AudioRecorder from '../components/AudioRecorder'
+import SpeakerTranscriptView from '../components/SpeakerTranscriptView'
 
 // Constants for better maintainability
 const CHAR_LIMITS = {
@@ -110,6 +111,7 @@ export default function Meeting() {
   
   // Audio transcription state
   const [audioTranscript, setAudioTranscript] = useState('')
+  const [speakerData, setSpeakerData] = useState(null) // Speaker diarization data
 
   // Debug: Monitor audioTranscript state changes
   useEffect(() => {
@@ -280,6 +282,17 @@ export default function Meeting() {
             setAudioTranscript(meeting.audioTranscript)
             hasAudioTranscript = true
             console.log('✅ Audio transcript restored from meeting')
+          }
+
+          // Restore speaker data
+          if (meeting.originalInputs.speakerData) {
+            console.log('👥 RESTORING speaker data from originalInputs:', meeting.originalInputs.speakerData.speakers_detected, 'speakers')
+            setSpeakerData(meeting.originalInputs.speakerData)
+            console.log('✅ Speaker data restored from originalInputs')
+          } else if (meeting.speakerData) {
+            console.log('👥 RESTORING speaker data from meeting:', meeting.speakerData.speakers_detected, 'speakers')
+            setSpeakerData(meeting.speakerData)
+            console.log('✅ Speaker data restored from meeting')
           }
 
           // Determine which mode to switch to (priority: manual text > OCR > audio)
@@ -650,6 +663,7 @@ export default function Meeting() {
         ...formData,
         digitalNotes,
         audioTranscript,
+        speakerData, // Add speaker diarization data
         aiResult,
         originalInputs: {
           manualText: manualText || null,
@@ -665,6 +679,7 @@ export default function Meeting() {
           })),
           ocrResults: ocrResult,
           audioTranscript: audioTranscript || null,
+          speakerData: speakerData || null, // Add to originalInputs too
           extractedText: extractedText || null
         },
         notes: Object.values(digitalNotes).map((content, index) => ({
@@ -683,7 +698,7 @@ export default function Meeting() {
         uploadedFiles: uploadedFiles.map(f => f.name),
         lastSaved: new Date().toISOString(),
         status: 'completed'
-      }), [formData, digitalNotes, audioTranscript, aiResult, manualText, uploadedFiles, uploadedImageUrls, ocrResult, extractedText])
+      }), [formData, digitalNotes, audioTranscript, speakerData, aiResult, manualText, uploadedFiles, uploadedImageUrls, ocrResult, extractedText])
 
   // Save functionality
   const handleSave = async () => {
@@ -741,6 +756,20 @@ export default function Meeting() {
 
   // Export functionality now handled via n8n integration
   // See ExportOptionsButton component for export options
+
+  // Helper function to format transcript with speaker labels
+  const formatTranscriptForAI = () => {
+    // If we have speaker data, format with speaker labels
+    if (speakerData && speakerData.utterances && speakerData.utterances.length > 0) {
+      const speakerLabels = speakerData.speakerLabels || {}
+      return speakerData.utterances.map(utterance => {
+        const speakerName = speakerLabels[utterance.speaker] || `Speaker ${utterance.speaker}`
+        return `[${speakerName}]: ${utterance.text}`
+      }).join('\n\n')
+    }
+    // Otherwise return plain transcript
+    return audioTranscript
+  }
 
   // Enhanced function to copy content to digital notes
   const handleCopyToDigitalNotes = () => {
@@ -1723,9 +1752,13 @@ Example notes you might paste:
                   </h2>
 
                   <AudioRecorder
-                    onTranscriptUpdate={(transcript) => {
+                    onTranscriptUpdate={(transcript, speakers = null) => {
                       console.log('📝 Meeting: Received transcript:', transcript?.substring(0, 100) + '...')
+                      console.log('👥 Meeting: Received speaker data:', speakers ? `${speakers.speakers_detected} speakers` : 'none')
                       setAudioTranscript(transcript)
+                      if (speakers) {
+                        setSpeakerData(speakers)
+                      }
                       // Automatically populate digital notes when we have transcript
                       if (transcript && transcript.length > 50) {
                         setDigitalNotes(prev => ({
@@ -1751,54 +1784,95 @@ Example notes you might paste:
 
                   {/* Transcript Display and Actions */}
                   {audioTranscript && audioTranscript.trim() && (
-                    <div className="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                      <div className="flex items-center justify-between mb-3">
-                        <h3 className="font-medium text-gray-900 flex items-center gap-2">
-                          📝 Meeting Transcript
-                          <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
-                            {audioTranscript.split(' ').filter(word => word.trim()).length} words
-                          </span>
-                        </h3>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => {
-                              // Process transcript with AI using standardized method
-                              if (audioTranscript.length > 100) {
-                                handleAIAnalysis(audioTranscript)
-                              }
-                            }}
-                            disabled={isAnalyzing || audioTranscript.length < 100}
-                            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                          >
-                            <Sparkles className="w-3 h-3" />
-                            {isAnalyzing ? 'Processing...' : 'AI Analysis'}
-                          </button>
-                          <button
-                            onClick={handleCopyToDigitalNotes}
-                            className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-1"
-                          >
-                            <Edit3 className="w-3 h-3" />
-                            Edit Notes
-                          </button>
+                    speakerData ? (
+                      // Display speaker-identified transcript
+                      <div className="mt-6">
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="font-medium text-gray-900 flex items-center gap-2">
+                            📝 Meeting Transcript
+                          </h3>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                // Process transcript with AI - use formatted version with speakers if available
+                                const transcriptToAnalyze = formatTranscriptForAI()
+                                if (transcriptToAnalyze && transcriptToAnalyze.length > 100) {
+                                  handleAIAnalysis(transcriptToAnalyze)
+                                }
+                              }}
+                              disabled={isAnalyzing}
+                              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors disabled:opacity-50"
+                            >
+                              <Sparkles className="w-4 h-4" />
+                              <span>{isAnalyzing ? 'Analyzing...' : 'AI Analyze'}</span>
+                            </button>
+                            <button
+                              onClick={() => handleCopyToDigitalNotes()}
+                              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                              <span>Edit Notes</span>
+                            </button>
+                          </div>
+                        </div>
+                        <SpeakerTranscriptView
+                          speakerData={speakerData}
+                          onUpdateSpeakers={setSpeakerData}
+                        />
+                      </div>
+                    ) : (
+                      // Display plain transcript (legacy mode)
+                      <div className="mt-6">
+                        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                          <div className="flex items-center justify-between mb-3">
+                            <h3 className="font-medium text-gray-900 flex items-center gap-2">
+                              📝 Meeting Transcript
+                              <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                                {audioTranscript.split(' ').filter(word => word.trim()).length} words
+                              </span>
+                            </h3>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  // Process transcript with AI using standardized method
+                                  if (audioTranscript.length > 100) {
+                                    handleAIAnalysis(audioTranscript)
+                                  }
+                                }}
+                                disabled={isAnalyzing || audioTranscript.length < 100}
+                                className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                              >
+                                <Sparkles className="w-3 h-3" />
+                                {isAnalyzing ? 'Processing...' : 'AI Analysis'}
+                              </button>
+                              <button
+                                onClick={handleCopyToDigitalNotes}
+                                className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-1"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                                Edit Notes
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="max-h-60 overflow-y-auto text-sm text-gray-700 leading-relaxed bg-white rounded p-3 border">
+                            <pre className="whitespace-pre-wrap font-sans">
+                              {audioTranscript}
+                            </pre>
+                          </div>
+
+                          <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                            <span>
+                              Word count: {audioTranscript.split(' ').filter(word => word.trim()).length} |
+                              Characters: {audioTranscript.length}
+                            </span>
+                            <span>
+                              💡 Click "AI Analysis" to organize this transcript
+                            </span>
+                          </div>
                         </div>
                       </div>
-
-                      <div className="max-h-60 overflow-y-auto text-sm text-gray-700 leading-relaxed bg-white rounded p-3 border">
-                        <pre className="whitespace-pre-wrap font-sans">
-                          {audioTranscript}
-                        </pre>
-                      </div>
-
-                      <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                        <span>
-                          Word count: {audioTranscript.split(' ').filter(word => word.trim()).length} |
-                          Characters: {audioTranscript.length}
-                        </span>
-                        <span>
-                          💡 Click "AI Analysis" to organize this transcript
-                        </span>
-                      </div>
-                    </div>
+                    )
                   )}
 
                   {/* Transcript Placeholder - Show when no transcript available */}

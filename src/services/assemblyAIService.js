@@ -8,6 +8,8 @@ class AssemblyAIService {
   constructor() {
     this.tokenUrl = import.meta.env.VITE_ASSEMBLYAI_TOKEN_URL
     this.apiKey = import.meta.env.VITE_ASSEMBLYAI_API_KEY
+
+    // For backward compatibility (single connection mode)
     this.ws = null
     this.isStreaming = false
     this.audioContext = null
@@ -16,7 +18,46 @@ class AssemblyAIService {
     this.mediaRecorder = null
     this.recordedChunks = []
 
+    // Track multiple concurrent connections (for hybrid mode)
+    this.connections = new Map()
+
     console.log('🎯 AssemblyAI Service initialized')
+  }
+
+  /**
+   * Create a new independent connection instance
+   * This allows multiple concurrent streaming connections without interference
+   */
+  createIndependentConnection() {
+    const connectionId = `conn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const connection = {
+      id: connectionId,
+      ws: null,
+      audioContext: null,
+      processor: null,
+      source: null,
+      isStreaming: false,
+      audioBuffer: null,
+      audioBufferIndex: 0
+    }
+    this.connections.set(connectionId, connection)
+    console.log(`🆕 Created independent connection: ${connectionId}`)
+    return connectionId
+  }
+
+  /**
+   * Get connection by ID
+   */
+  getConnection(connectionId) {
+    return this.connections.get(connectionId)
+  }
+
+  /**
+   * Remove connection from tracking
+   */
+  removeConnection(connectionId) {
+    this.connections.delete(connectionId)
+    console.log(`🗑️ Removed connection: ${connectionId}`)
   }
 
   /**
@@ -87,6 +128,225 @@ class AssemblyAIService {
     }
 
     throw new Error('No authentication method configured')
+  }
+
+  /**
+   * Start real-time streaming with independent connection (for hybrid mode)
+   * @param {string} connectionId - Connection ID from createIndependentConnection()
+   * @param {MediaStream} audioStream - Audio stream
+   * @param {Object} callbacks - { onTranscript, onError, onClose }
+   */
+  async startRealtimeTranscriptionWithConnection(connectionId, audioStream, callbacks = {}) {
+    if (!this.isConfigured()) {
+      const error = new Error('AssemblyAI API key not configured')
+      if (callbacks.onError) callbacks.onError(error)
+      throw error
+    }
+
+    const conn = this.getConnection(connectionId)
+    if (!conn) {
+      throw new Error(`Connection ${connectionId} not found`)
+    }
+
+    const { onTranscript, onError, onClose } = callbacks
+
+    try {
+      console.log(`🎙️ AssemblyAI [${connectionId}]: Starting real-time transcription...`)
+
+      // Step 1: Get authentication token
+      const auth = await this.getAuthToken()
+      const token = auth.token
+
+      // Step 2: Connect to WebSocket (v3 Universal Streaming)
+      const sampleRate = 16000
+      conn.ws = new WebSocket(
+        `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&token=${token}`
+      )
+
+      // Step 3: Set up WebSocket event handlers
+      conn.ws.onopen = () => {
+        console.log(`🔌 AssemblyAI [${connectionId}]: WebSocket connected`)
+        conn.isStreaming = true
+      }
+
+      conn.ws.onmessage = (message) => {
+        const data = JSON.parse(message.data)
+        console.log(`📩 AssemblyAI [${connectionId}] message:`, data.type)
+
+        if (data.type === 'Begin') {
+          console.log(`🎬 AssemblyAI [${connectionId}]: Session started:`, data.id, 'expires:', data.expires_at)
+        } else if (data.type === 'Turn') {
+          const isFinal = data.end_of_turn === true
+          const text = data.transcript || ''
+
+          if (text) {
+            console.log(`📝 AssemblyAI [${connectionId}] Turn #${data.turn_order}:`, {
+              text: text.substring(0, 50),
+              isFinal,
+              confidence: data.end_of_turn_confidence
+            })
+            if (onTranscript) {
+              onTranscript(text, isFinal)
+            }
+          }
+        } else if (data.type === 'Termination') {
+          console.log(`🛑 AssemblyAI [${connectionId}]: Session terminated:`, data.reason || 'normal')
+        }
+      }
+
+      conn.ws.onerror = (error) => {
+        console.error(`❌ AssemblyAI [${connectionId}] WebSocket error:`, error)
+        if (onError) {
+          onError(new Error('WebSocket connection error'))
+        }
+      }
+
+      conn.ws.onclose = (event) => {
+        console.log(`🔌 AssemblyAI [${connectionId}]: WebSocket closed`, {
+          code: event.code,
+          reason: event.reason || 'No reason provided',
+          wasClean: event.wasClean
+        })
+        conn.isStreaming = false
+        if (onClose) onClose()
+        this.cleanupConnection(connectionId)
+      }
+
+      // Step 4: Set up audio processing
+      await this.setupAudioProcessingForConnection(connectionId, audioStream, sampleRate)
+
+      console.log(`✅ AssemblyAI [${connectionId}]: Real-time transcription started`)
+
+      // Return connection ID for cleanup
+      return connectionId
+    } catch (error) {
+      console.error(`❌ AssemblyAI [${connectionId}]: Failed to start:`, error)
+      this.cleanupConnection(connectionId)
+      if (onError) onError(error)
+      throw error
+    }
+  }
+
+  /**
+   * Set up audio processing for a specific connection
+   */
+  async setupAudioProcessingForConnection(connectionId, stream, targetSampleRate) {
+    const conn = this.getConnection(connectionId)
+    if (!conn) throw new Error(`Connection ${connectionId} not found`)
+
+    try {
+      // Create audio context with target sample rate
+      conn.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+        sampleRate: targetSampleRate
+      })
+
+      conn.source = conn.audioContext.createMediaStreamSource(stream)
+
+      // Try to use AudioWorklet (modern approach)
+      try {
+        await conn.audioContext.audioWorklet.addModule('/meetingflow-app/audio-processor.js')
+
+        conn.processor = new AudioWorkletNode(conn.audioContext, 'audio-stream-processor')
+
+        // Listen for audio data from the worklet
+        conn.processor.port.onmessage = (event) => {
+          if (event.data.type === 'audio' && conn.ws && conn.ws.readyState === WebSocket.OPEN) {
+            const int16Data = event.data.data
+            conn.ws.send(int16Data.buffer)
+          }
+        }
+
+        conn.source.connect(conn.processor)
+        conn.processor.connect(conn.audioContext.destination)
+
+        console.log(`✅ [${connectionId}] Audio processing pipeline set up (AudioWorklet)`)
+      } catch (workletError) {
+        // Fallback to ScriptProcessorNode
+        console.warn(`⚠️ [${connectionId}] AudioWorklet not available, using ScriptProcessorNode`)
+
+        const bufferSize = 4096
+        conn.processor = conn.audioContext.createScriptProcessor(bufferSize, 1, 1)
+
+        // Buffer for accumulating audio chunks
+        conn.audioBuffer = new Float32Array(1600)
+        conn.audioBufferIndex = 0
+
+        conn.processor.onaudioprocess = (e) => {
+          if (conn.ws && conn.ws.readyState === WebSocket.OPEN) {
+            const audioData = e.inputBuffer.getChannelData(0)
+
+            for (let i = 0; i < audioData.length; i++) {
+              conn.audioBuffer[conn.audioBufferIndex++] = audioData[i]
+
+              if (conn.audioBufferIndex >= conn.audioBuffer.length) {
+                const int16Data = this.float32ToInt16(conn.audioBuffer.slice(0, conn.audioBufferIndex))
+                conn.ws.send(int16Data.buffer)
+                conn.audioBufferIndex = 0
+              }
+            }
+          }
+        }
+
+        conn.source.connect(conn.processor)
+        conn.processor.connect(conn.audioContext.destination)
+
+        console.log(`✅ [${connectionId}] Audio processing pipeline set up (ScriptProcessorNode)`)
+      }
+    } catch (error) {
+      console.error(`❌ [${connectionId}] Failed to set up audio processing:`, error)
+      throw error
+    }
+  }
+
+  /**
+   * Stop a specific connection
+   */
+  stopConnection(connectionId) {
+    const conn = this.getConnection(connectionId)
+    if (!conn) return
+
+    console.log(`🛑 [${connectionId}] Stopping connection...`)
+
+    if (conn.ws && conn.ws.readyState === WebSocket.OPEN) {
+      conn.ws.send(JSON.stringify({ terminate_session: true }))
+      setTimeout(() => {
+        if (conn.ws) conn.ws.close()
+      }, 100)
+    }
+
+    this.cleanupConnection(connectionId)
+  }
+
+  /**
+   * Cleanup a specific connection
+   */
+  cleanupConnection(connectionId) {
+    const conn = this.getConnection(connectionId)
+    if (!conn) return
+
+    console.log(`🧹 [${connectionId}] Cleaning up resources...`)
+
+    if (conn.processor) {
+      conn.processor.disconnect()
+      conn.processor = null
+    }
+
+    if (conn.source) {
+      conn.source.disconnect()
+      conn.source = null
+    }
+
+    if (conn.audioContext && conn.audioContext.state !== 'closed') {
+      conn.audioContext.close()
+      conn.audioContext = null
+    }
+
+    if (conn.ws) {
+      conn.ws = null
+    }
+
+    conn.isStreaming = false
+    this.removeConnection(connectionId)
   }
 
   /**

@@ -41,6 +41,11 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const [speakerData, setSpeakerData] = useState(null)
   const accumulatedUtterancesRef = useRef([]) // Store all speaker utterances across sessions
 
+  // Hybrid mode connection tracking
+  const tabConnectionIdRef = useRef(null) // Track tab audio connection ID
+  const micConnectionIdRef = useRef(null) // Track microphone connection ID
+  const mergeAudioContextRef = useRef(null) // Audio context for merging streams
+
   // Initialize service on mount
   useEffect(() => {
     const initService = async () => {
@@ -292,33 +297,86 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           console.log('🎙️ Hybrid mode: Tab audio captured')
           window.currentTabStream = displayStream
 
-          // If speaker diarization enabled, also record the tab audio
-          if (enableSpeakerDiarization) {
-            console.log('🎙️ Hybrid mode: Starting recording for speaker diarization')
-            recordedChunksRef.current = []
+          // Then get microphone access
+          const micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              sampleRate: 16000
+            }
+          })
 
-            const audioTrack = displayStream.getAudioTracks()[0]
-            if (audioTrack) {
-              const audioStream = new MediaStream([audioTrack])
+          console.log('🎙️ Hybrid mode: Microphone captured')
+
+          // If speaker diarization enabled, merge and record BOTH streams
+          if (enableSpeakerDiarization) {
+            console.log('🎙️ Hybrid mode: Merging tab + mic audio for speaker diarization')
+
+            // Ensure previous MediaRecorder is fully stopped
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+              console.warn('⚠️ Previous MediaRecorder still active, stopping it first...')
+              mediaRecorderRef.current.stop()
+              await new Promise(resolve => setTimeout(resolve, 200)) // Wait for cleanup
+            }
+
+            // Clear recorded chunks for fresh start
+            recordedChunksRef.current = []
+            console.log('🧹 Recording state cleared, ready for fresh recording')
+
+            // Create audio context for merging streams
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+            mergeAudioContextRef.current = audioContext
+
+            // Create sources from both streams
+            const tabAudioTrack = displayStream.getAudioTracks()[0]
+            const micAudioTrack = micStream.getAudioTracks()[0]
+
+            if (tabAudioTrack && micAudioTrack) {
+              const tabSource = audioContext.createMediaStreamSource(new MediaStream([tabAudioTrack]))
+              const micSource = audioContext.createMediaStreamSource(new MediaStream([micAudioTrack]))
+
+              // Create destination for merged audio
+              const destination = audioContext.createMediaStreamDestination()
+
+              // Connect both sources to destination (this merges them)
+              tabSource.connect(destination)
+              micSource.connect(destination)
+
+              console.log('🔀 Hybrid mode: Audio streams merged (tab + mic)')
+
+              // Record the merged stream
+              const mergedStream = destination.stream
               const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
                 ? 'audio/webm;codecs=opus'
                 : 'audio/webm'
 
-              mediaRecorderRef.current = new MediaRecorder(audioStream, { mimeType, audioBitsPerSecond: 128000 })
+              mediaRecorderRef.current = new MediaRecorder(mergedStream, { mimeType, audioBitsPerSecond: 128000 })
 
               mediaRecorderRef.current.ondataavailable = (event) => {
                 if (event.data.size > 0) {
                   recordedChunksRef.current.push(event.data)
+                  console.log(`📦 Hybrid recording chunk: ${(event.data.size / 1024).toFixed(2)} KB`)
                 }
               }
 
               mediaRecorderRef.current.start(1000)
-              console.log('✅ Hybrid mode recording started for speaker processing (tab audio)')
+              console.log('✅ Hybrid mode recording started for speaker processing (tab + mic merged)')
+            } else {
+              console.warn('⚠️ Missing audio tracks, speaker diarization may not work correctly')
             }
           }
 
-          // Start real-time tab audio streaming
-          await assemblyAIService.startTabAudioStreaming(displayStream, {
+          // Create independent connections for real-time streaming (no interference)
+          tabConnectionIdRef.current = assemblyAIService.createIndependentConnection()
+          micConnectionIdRef.current = assemblyAIService.createIndependentConnection()
+
+          console.log(`🔗 Created independent connections: Tab=${tabConnectionIdRef.current}, Mic=${micConnectionIdRef.current}`)
+
+          setTranscript(persistentTranscriptRef.current + '\n[Hybrid Mode: Streaming both tab + mic audio]\n')
+
+          // Start real-time tab audio streaming (using independent connection)
+          await assemblyAIService.startRealtimeTranscriptionWithConnection(tabConnectionIdRef.current, displayStream, {
             onTranscript: (text, isFinal) => {
               console.log('🖥️ [Hybrid] Tab transcript:', { text: text?.substring(0, 30), isFinal })
 
@@ -346,21 +404,8 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             }
           })
 
-          // Then get microphone access and start real-time transcription
-          const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-              sampleRate: 16000
-            }
-          })
-
-          setTranscript(persistentTranscriptRef.current + '\n[Hybrid Mode: Streaming both tab + mic audio]\n')
-
-          // Note: This creates a second WebSocket connection
-          // Both tab and mic audio stream simultaneously to AssemblyAI
-          await assemblyAIService.startRealtimeTranscription(micStream, {
+          // Start real-time microphone streaming (using independent connection)
+          await assemblyAIService.startRealtimeTranscriptionWithConnection(micConnectionIdRef.current, micStream, {
             onTranscript: (text, isFinal) => {
               console.log('🎙️ [Hybrid] Mic transcript:', { text: text?.substring(0, 30), isFinal })
 
@@ -574,10 +619,29 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
                 const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
                   ? 'audio/webm;codecs=opus'
                   : 'audio/webm'
+
+                // Validate we have recorded chunks
+                if (!recordedChunksRef.current || recordedChunksRef.current.length === 0) {
+                  console.error('❌ No recorded chunks available - recording may have been too short')
+                  setError('Recording failed: No audio data captured. Please record for at least 2 seconds.')
+                  setIsProcessingSpeakers(false)
+                  return
+                }
+
                 const audioBlob = new Blob(recordedChunksRef.current, { type: mimeType })
-                console.log(`📦 Recorded audio blob: ${(audioBlob.size / 1024 / 1024).toFixed(2)} MB`)
+                console.log(`📦 Recorded audio blob: ${(audioBlob.size / 1024 / 1024).toFixed(2)} MB (${recordedChunksRef.current.length} chunks)`)
+
+                // Validate blob size
+                if (audioBlob.size < 1000) { // Less than 1KB is suspicious
+                  console.error('❌ Audio blob too small:', audioBlob.size, 'bytes')
+                  setError('Recording failed: Audio file too small. Please record for at least 2 seconds.')
+                  setIsProcessingSpeakers(false)
+                  recordedChunksRef.current = [] // Clear for next recording
+                  return
+                }
 
                 // Process with speaker diarization
+                console.log('🎯 Processing speaker diarization with', audioBlob.size, 'bytes of audio data')
                 const speakerData = await assemblyAISpeakerService.transcribeWithSpeakers(audioBlob, {
                   speakers_expected: expectedSpeakers
                 })
@@ -615,21 +679,63 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
                   }
                 }
 
+                // Clear recorded chunks after successful processing
+                recordedChunksRef.current = []
+                console.log('✅ Recording chunks cleared, ready for next session')
+
                 setIsProcessingSpeakers(false)
               } catch (error) {
                 console.error('❌ Speaker diarization failed:', error)
                 setError('Speaker identification failed. Showing plain transcript.')
                 setIsProcessingSpeakers(false)
+                // Clear chunks even on error to prevent retry with bad data
+                recordedChunksRef.current = []
               }
             }
           }
 
-          // Stop regular real-time transcription
-          assemblyAIService.stopRealtimeTranscription()
+          // Stop independent connections if in hybrid mode
+          if (selectedAudioSource === 'mixed') {
+            if (tabConnectionIdRef.current) {
+              assemblyAIService.stopConnection(tabConnectionIdRef.current)
+              tabConnectionIdRef.current = null
+            }
+            if (micConnectionIdRef.current) {
+              assemblyAIService.stopConnection(micConnectionIdRef.current)
+              micConnectionIdRef.current = null
+            }
+          } else {
+            // Stop regular singleton connection for tab audio
+            assemblyAIService.stopRealtimeTranscription()
+          }
         }
       } else {
-        // No speaker diarization - just stop regular transcription
-        assemblyAIService.stopRealtimeTranscription()
+        // No speaker diarization - stop connections
+        if (selectedAudioSource === 'mixed') {
+          // Stop independent connections
+          if (tabConnectionIdRef.current) {
+            assemblyAIService.stopConnection(tabConnectionIdRef.current)
+            tabConnectionIdRef.current = null
+          }
+          if (micConnectionIdRef.current) {
+            assemblyAIService.stopConnection(micConnectionIdRef.current)
+            micConnectionIdRef.current = null
+          }
+        } else {
+          // Stop regular singleton connection
+          assemblyAIService.stopRealtimeTranscription()
+        }
+      }
+
+      // Cleanup merge audio context if it exists
+      if (mergeAudioContextRef.current) {
+        try {
+          await mergeAudioContextRef.current.close()
+          mergeAudioContextRef.current = null
+          console.log('🧹 Merge audio context cleaned up')
+        } catch (error) {
+          console.warn('⚠️ Failed to close merge audio context:', error)
+        }
       }
 
       // Stop tab audio stream if it exists

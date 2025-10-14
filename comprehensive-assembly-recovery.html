@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comprehensive Assembly AI Recovery</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="max-w-6xl mx-auto p-6">
+    <!-- Header -->
+    <div class="bg-red-50 border-2 border-red-200 rounded-lg p-8 mb-6">
+      <h1 class="text-3xl font-bold text-red-900 mb-4">🔄 Comprehensive Assembly AI Recovery</h1>
+      <p class="text-red-800 mb-2">
+        This tool will scan ALL your Assembly AI transcripts (both pre-recorded and streaming) and help you recover them.
+      </p>
+      <div class="bg-white rounded p-4 mt-4 text-sm">
+        <div class="font-bold mb-2">What this does:</div>
+        <ul class="list-disc list-inside space-y-1 text-gray-700">
+          <li>Lists ALL transcripts from your Assembly AI account</li>
+          <li>Shows pre-recorded audio AND streaming transcripts</li>
+          <li>Displays date, duration, word count for each</li>
+          <li>Lets you select which ones to recover</li>
+          <li>Converts them to proper MeetingFlow format</li>
+          <li>Generates import script for your app</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- API Key Input -->
+    <div class="bg-white rounded-lg shadow-lg p-8 mb-6">
+      <div class="mb-6">
+        <label class="block text-sm font-medium text-gray-700 mb-2">
+          Assembly AI API Key
+        </label>
+        <input
+          type="password"
+          id="apiKey"
+          value="95b4727b94534ba492e273b2af713159"
+          class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+        />
+        <p class="text-xs text-gray-500 mt-1">From your .env file</p>
+      </div>
+
+      <div class="mb-6">
+        <label class="block text-sm font-medium text-gray-700 mb-2">
+          Recovery Options
+        </label>
+        <div class="space-y-2">
+          <label class="flex items-center">
+            <input type="radio" name="dateRange" value="all" checked class="mr-2">
+            <span>All available transcripts (recommended)</span>
+          </label>
+          <label class="flex items-center">
+            <input type="radio" name="dateRange" value="30days" class="mr-2">
+            <span>Last 30 days only</span>
+          </label>
+          <label class="flex items-center">
+            <input type="radio" name="dateRange" value="7days" class="mr-2">
+            <span>Last 7 days only</span>
+          </label>
+        </div>
+      </div>
+
+      <button
+        onclick="scanAllTranscripts()"
+        class="w-full bg-blue-600 text-white py-4 px-6 rounded-lg hover:bg-blue-700 transition-colors font-bold text-xl"
+      >
+        🔍 SCAN ALL ASSEMBLY AI TRANSCRIPTS
+      </button>
+    </div>
+
+    <!-- Progress -->
+    <div id="progress" class="hidden mb-6">
+      <div class="bg-white rounded-lg shadow p-6">
+        <div class="flex items-center space-x-3 mb-4">
+          <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+          <span class="text-gray-700 font-medium text-lg">Scanning Assembly AI...</span>
+        </div>
+        <div id="progressLog" class="text-sm text-gray-600 space-y-1 max-h-96 overflow-y-auto bg-gray-50 p-4 rounded"></div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="hidden">
+      <div class="bg-white rounded-lg shadow-lg p-8">
+        <h2 class="text-2xl font-bold mb-6">Found Transcripts</h2>
+
+        <div id="transcriptList" class="space-y-3 mb-6 max-h-96 overflow-y-auto"></div>
+
+        <div class="border-t pt-6">
+          <div class="flex justify-between items-center mb-4">
+            <div>
+              <span class="text-lg font-bold">Selected: </span>
+              <span id="selectedCount" class="text-blue-600 text-lg">0</span>
+              <span class="text-gray-600"> transcripts</span>
+            </div>
+            <div class="space-x-3">
+              <button onclick="selectAll()" class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
+                Select All
+              </button>
+              <button onclick="selectNone()" class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
+                Clear Selection
+              </button>
+            </div>
+          </div>
+
+          <button
+            onclick="recoverSelected()"
+            class="w-full bg-green-600 text-white py-4 px-6 rounded-lg hover:bg-green-700 transition-colors font-bold text-xl"
+          >
+            ✅ RECOVER SELECTED MEETINGS
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recovery Results -->
+    <div id="recoveryResults" class="hidden mt-6"></div>
+  </div>
+
+  <script>
+    let allTranscripts = []
+    let selectedTranscripts = new Set()
+
+    function log(message, type = 'info') {
+      const logDiv = document.getElementById('progressLog')
+      if (!logDiv) return
+      const line = document.createElement('div')
+      line.textContent = message
+      line.className = type === 'error' ? 'text-red-600 font-medium' :
+                       type === 'success' ? 'text-green-600 font-medium' :
+                       type === 'warning' ? 'text-yellow-600' : 'text-gray-700'
+      logDiv.appendChild(line)
+      logDiv.scrollTop = logDiv.scrollHeight
+      console.log(message)
+    }
+
+    async function scanAllTranscripts() {
+      const apiKey = document.getElementById('apiKey').value.trim()
+      if (!apiKey) {
+        alert('Please enter your Assembly AI API key')
+        return
+      }
+
+      document.getElementById('progress').classList.remove('hidden')
+      document.getElementById('results').classList.add('hidden')
+      document.getElementById('recoveryResults').classList.add('hidden')
+      document.getElementById('progressLog').innerHTML = ''
+
+      allTranscripts = []
+
+      log('🔍 Starting comprehensive scan of Assembly AI account...', 'info')
+      log('This will find ALL transcripts (pre-recorded + streaming)', 'info')
+      log('')
+
+      try {
+        // Assembly AI list endpoint - fetches all transcripts with pagination
+        let url = 'https://api.assemblyai.com/v2/transcript'
+        let page = 1
+        let hasMore = true
+
+        while (hasMore) {
+          log(`📄 Fetching page ${page}...`)
+
+          const response = await fetch(url, {
+            headers: { 'authorization': apiKey }
+          })
+
+          if (!response.ok) {
+            throw new Error(`API Error: ${response.status} ${response.statusText}`)
+          }
+
+          const data = await response.json()
+
+          const transcripts = data.transcripts || []
+          log(`  Found ${transcripts.length} transcripts on page ${page}`, 'success')
+
+          // Filter by date range if selected
+          const dateRange = document.querySelector('input[name="dateRange"]:checked').value
+          const cutoffDate = getCutoffDate(dateRange)
+
+          const filteredTranscripts = transcripts.filter(t => {
+            if (dateRange === 'all') return true
+            const transcriptDate = new Date(t.created)
+            return transcriptDate >= cutoffDate
+          })
+
+          log(`  ${filteredTranscripts.length} transcripts match date filter`)
+
+          allTranscripts.push(...filteredTranscripts)
+
+          // Check for pagination
+          if (data.page_details) {
+            const { current_url, next_url, prev_url } = data.page_details
+            if (next_url) {
+              url = next_url
+              page++
+            } else {
+              hasMore = false
+            }
+          } else {
+            hasMore = false
+          }
+
+          // Safety limit
+          if (page > 50) {
+            log('⚠️ Reached page limit (50 pages)', 'warning')
+            break
+          }
+        }
+
+        log('')
+        log(`✅ SCAN COMPLETE!`, 'success')
+        log(`📊 Total transcripts found: ${allTranscripts.length}`, 'success')
+        log('')
+
+        // Categorize transcripts
+        const completed = allTranscripts.filter(t => t.status === 'completed')
+        const processing = allTranscripts.filter(t => t.status === 'processing' || t.status === 'queued')
+        const errors = allTranscripts.filter(t => t.status === 'error')
+
+        log(`  ✅ Completed: ${completed.length}`)
+        log(`  ⏳ Processing: ${processing.length}`)
+        log(`  ❌ Errors: ${errors.length}`)
+
+        if (completed.length === 0) {
+          showNoTranscripts()
+        } else {
+          displayTranscripts(completed)
+        }
+
+      } catch (error) {
+        log(`❌ ERROR: ${error.message}`, 'error')
+        log('', 'error')
+        log('Possible issues:', 'error')
+        log('  - API key is invalid', 'error')
+        log('  - Network connection problem', 'error')
+        log('  - Assembly AI service issue', 'error')
+        alert(`Error scanning transcripts: ${error.message}`)
+      } finally {
+        document.getElementById('progress').classList.add('hidden')
+      }
+    }
+
+    function getCutoffDate(dateRange) {
+      const now = new Date()
+      switch(dateRange) {
+        case '7days':
+          return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        case '30days':
+          return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+        default:
+          return new Date(0) // Beginning of time
+      }
+    }
+
+    function showNoTranscripts() {
+      document.getElementById('results').classList.remove('hidden')
+      document.getElementById('results').innerHTML = `
+        <div class="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-8">
+          <h3 class="text-xl font-bold text-yellow-900 mb-4">⚠️ No Completed Transcripts Found</h3>
+          <p class="text-yellow-800 mb-4">
+            No completed transcripts were found in your Assembly AI account.
+          </p>
+          <div class="bg-white rounded p-4">
+            <p class="font-medium mb-2">This could mean:</p>
+            <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
+              <li>No audio has been uploaded to Assembly AI</li>
+              <li>Transcripts were deleted from Assembly AI servers</li>
+              <li>Transcripts are outside the retention period (usually 30-60 days)</li>
+              <li>API key belongs to a different account</li>
+            </ul>
+          </div>
+        </div>
+      `
+    }
+
+    function displayTranscripts(transcripts) {
+      document.getElementById('results').classList.remove('hidden')
+
+      // Sort by creation date (newest first)
+      transcripts.sort((a, b) => new Date(b.created) - new Date(a.created))
+
+      const listDiv = document.getElementById('transcriptList')
+      listDiv.innerHTML = ''
+
+      transcripts.forEach((transcript, index) => {
+        const date = new Date(transcript.created).toLocaleString()
+        const duration = transcript.audio_duration ? Math.round(transcript.audio_duration) : 0
+        const wordCount = transcript.words?.length || (transcript.text?.split(' ').length) || 0
+
+        const div = document.createElement('div')
+        div.className = 'border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors'
+        div.innerHTML = `
+          <div class="flex items-start space-x-4">
+            <input
+              type="checkbox"
+              id="transcript-${transcript.id}"
+              class="mt-1 w-5 h-5 cursor-pointer"
+              onchange="toggleSelection('${transcript.id}')"
+            >
+            <div class="flex-1">
+              <div class="flex justify-between items-start mb-2">
+                <div>
+                  <div class="font-medium text-gray-900">Transcript ${index + 1}</div>
+                  <div class="text-xs text-gray-500 font-mono">${transcript.id}</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-sm font-medium text-gray-700">${date}</div>
+                  <div class="text-xs text-gray-500">${duration}s duration</div>
+                </div>
+              </div>
+              <div class="flex gap-4 text-sm text-gray-600">
+                <span>📝 ${wordCount.toLocaleString()} words</span>
+                <span>🎤 ${transcript.audio_channels || 1} channel(s)</span>
+                ${transcript.speaker_labels ? '<span>👥 Speaker diarization</span>' : ''}
+              </div>
+            </div>
+          </div>
+        `
+        listDiv.appendChild(div)
+      })
+
+      updateSelectedCount()
+    }
+
+    function toggleSelection(transcriptId) {
+      if (selectedTranscripts.has(transcriptId)) {
+        selectedTranscripts.delete(transcriptId)
+      } else {
+        selectedTranscripts.add(transcriptId)
+      }
+      updateSelectedCount()
+    }
+
+    function selectAll() {
+      allTranscripts.forEach(t => {
+        selectedTranscripts.add(t.id)
+        const checkbox = document.getElementById(`transcript-${t.id}`)
+        if (checkbox) checkbox.checked = true
+      })
+      updateSelectedCount()
+    }
+
+    function selectNone() {
+      selectedTranscripts.clear()
+      allTranscripts.forEach(t => {
+        const checkbox = document.getElementById(`transcript-${t.id}`)
+        if (checkbox) checkbox.checked = false
+      })
+      updateSelectedCount()
+    }
+
+    function updateSelectedCount() {
+      document.getElementById('selectedCount').textContent = selectedTranscripts.size
+    }
+
+    async function recoverSelected() {
+      if (selectedTranscripts.size === 0) {
+        alert('Please select at least one transcript to recover')
+        return
+      }
+
+      if (!confirm(`Recover ${selectedTranscripts.size} transcript(s)?\n\nThis will download the full transcript data from Assembly AI.`)) {
+        return
+      }
+
+      const apiKey = document.getElementById('apiKey').value.trim()
+
+      document.getElementById('progress').classList.remove('hidden')
+      document.getElementById('progressLog').innerHTML = ''
+
+      log(`🔄 Starting recovery of ${selectedTranscripts.size} transcripts...`, 'success')
+      log('')
+
+      const recoveredMeetings = []
+      const errors = []
+      let processed = 0
+
+      for (const transcriptId of selectedTranscripts) {
+        processed++
+        log(`[${processed}/${selectedTranscripts.size}] Processing ${transcriptId}...`)
+
+        try {
+          // Fetch full transcript details
+          const response = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
+            headers: { authorization: apiKey }
+          })
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`)
+          }
+
+          const transcript = await response.json()
+
+          if (transcript.status !== 'completed') {
+            log(`  ⏭️ Skipped (status: ${transcript.status})`, 'warning')
+            continue
+          }
+
+          const meeting = convertTranscriptToMeeting(transcript)
+          recoveredMeetings.push(meeting)
+
+          log(`  ✅ Recovered: ${meeting.wordCount} words, ${meeting.speakerCount} speakers`, 'success')
+
+        } catch (error) {
+          log(`  ❌ Failed: ${error.message}`, 'error')
+          errors.push({ transcriptId, error: error.message })
+        }
+      }
+
+      log('')
+      log(`🎉 RECOVERY COMPLETE!`, 'success')
+      log(`  ✅ Successful: ${recoveredMeetings.length}`, 'success')
+      log(`  ❌ Failed: ${errors.length}`, 'error')
+
+      document.getElementById('progress').classList.add('hidden')
+
+      if (recoveredMeetings.length > 0) {
+        showRecoveryResults(recoveredMeetings, errors)
+      } else {
+        alert('No transcripts were recovered. Check the log for errors.')
+      }
+    }
+
+    function convertTranscriptToMeeting(transcript) {
+      const now = new Date().toISOString()
+      const createdDate = new Date(transcript.created)
+
+      const speakers = new Set()
+      if (transcript.utterances) {
+        transcript.utterances.forEach(u => speakers.add(u.speaker))
+      }
+
+      let formattedTranscript = ''
+      if (transcript.utterances && transcript.utterances.length > 0) {
+        formattedTranscript = transcript.utterances.map(u =>
+          `[Speaker ${u.speaker}]: ${u.text}`
+        ).join('\n\n')
+      } else {
+        formattedTranscript = transcript.text || ''
+      }
+
+      return {
+        id: generateUUID(),
+        title: `Meeting - ${createdDate.toLocaleDateString()} ${createdDate.toLocaleTimeString()}`,
+        description: `Recovered from Assembly AI (ID: ${transcript.id})`,
+        date: createdDate.toISOString().split('T')[0],
+        audioTranscript: formattedTranscript,
+        transcript: formattedTranscript,
+        duration: transcript.audio_duration ? Math.round(transcript.audio_duration) : null,
+        wordCount: transcript.text ? transcript.text.split(' ').length : 0,
+        speakerCount: speakers.size,
+        confidence: transcript.confidence,
+        createdAt: transcript.created,
+        updatedAt: now,
+        lastSaved: now,
+        originalInputs: {
+          audioTranscript: formattedTranscript,
+          manualText: '',
+          ocrText: ''
+        },
+        utterances: transcript.utterances || [],
+        words: transcript.words || [],
+        speakerData: transcript.utterances ? {
+          utterances: transcript.utterances,
+          speakers_detected: speakers.size
+        } : null,
+        metadata: {
+          recovered: true,
+          recoveredAt: now,
+          assemblyAIId: transcript.id,
+          originalStatus: transcript.status,
+          speakerLabels: Array.from(speakers).map(s => `Speaker ${s}`),
+          audioUrl: transcript.audio_url
+        }
+      }
+    }
+
+    function showRecoveryResults(meetings, errors) {
+      const resultsDiv = document.getElementById('recoveryResults')
+      resultsDiv.classList.remove('hidden')
+
+      const script = generateImportScript(meetings)
+
+      resultsDiv.innerHTML = `
+        <div class="bg-white rounded-lg shadow-lg p-8">
+          <div class="bg-green-50 border-2 border-green-300 rounded-lg p-6 mb-6">
+            <h3 class="text-2xl font-bold text-green-900 mb-4">✅ Successfully Recovered ${meetings.length} Meetings!</h3>
+            <div class="space-y-2">
+              ${meetings.map((m, i) => `
+                <div class="bg-white rounded p-3 border border-green-200">
+                  <div class="font-medium text-gray-900">${i + 1}. ${m.title}</div>
+                  <div class="text-sm text-gray-600">
+                    ${m.wordCount} words • ${m.speakerCount} speakers • ${m.duration}s • ${m.date}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          ${errors.length > 0 ? `
+            <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+              <h4 class="font-bold text-red-900 mb-2">⚠️ ${errors.length} Failed</h4>
+              ${errors.map(e => `
+                <div class="text-sm text-red-700">• ${e.transcriptId}: ${e.error}</div>
+              `).join('')}
+            </div>
+          ` : ''}
+
+          <div class="bg-blue-50 border-2 border-blue-300 rounded-lg p-6">
+            <h3 class="text-xl font-bold text-blue-900 mb-4">📋 Import Script</h3>
+            <p class="text-sm text-blue-800 mb-3">
+              Copy this script and paste it in your MeetingFlow app console (F12):
+            </p>
+            <textarea
+              id="importScript"
+              readonly
+              class="w-full h-64 p-4 font-mono text-xs bg-white border-2 border-blue-200 rounded mb-4"
+            >${script}</textarea>
+            <div class="flex gap-3">
+              <button
+                onclick="copyImportScript()"
+                class="flex-1 bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 font-bold"
+              >
+                📋 Copy to Clipboard
+              </button>
+              <button
+                onclick="downloadImportScript()"
+                class="flex-1 bg-green-600 text-white py-3 px-6 rounded-lg hover:bg-green-700 font-bold"
+              >
+                💾 Download Script
+              </button>
+            </div>
+          </div>
+
+          <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mt-6">
+            <p class="text-sm text-yellow-700 font-medium mb-2">📝 Next Steps:</p>
+            <ol class="list-decimal list-inside space-y-1 text-sm text-yellow-700">
+              <li>Copy the script above (or download it)</li>
+              <li>Open your app: <a href="https://sudhanshumalani.github.io/meetingflow-app" target="_blank" class="text-blue-600 underline font-medium">MeetingFlow App</a></li>
+              <li>Press F12 to open browser console</li>
+              <li>Paste the script and press Enter</li>
+              <li>Wait for confirmation message</li>
+              <li>Refresh the page (F5)</li>
+              <li>Your meetings will appear!</li>
+            </ol>
+          </div>
+        </div>
+      `
+
+      // Scroll to results
+      resultsDiv.scrollIntoView({ behavior: 'smooth' })
+    }
+
+    function generateImportScript(meetings) {
+      return `// IMPORT RECOVERED MEETINGS FROM ASSEMBLY AI
+// Generated: ${new Date().toISOString()}
+// Meetings: ${meetings.length}
+
+(function() {
+  console.log('🔄 Importing ${meetings.length} recovered meetings from Assembly AI...')
+
+  const recoveredMeetings = ${JSON.stringify(meetings, null, 2)}
+
+  // Get existing meetings
+  const existingMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+  console.log('Current meetings in app:', existingMeetings.length)
+
+  // Check for duplicates by Assembly AI ID
+  const existingAssemblyIds = new Set(
+    existingMeetings
+      .filter(m => m.metadata?.assemblyAIId)
+      .map(m => m.metadata.assemblyAIId)
+  )
+
+  let imported = 0
+  let skipped = 0
+
+  recoveredMeetings.forEach(meeting => {
+    if (existingAssemblyIds.has(meeting.metadata.assemblyAIId)) {
+      console.log('⏭️ Skipping duplicate:', meeting.metadata.assemblyAIId)
+      skipped++
+    } else {
+      existingMeetings.unshift(meeting)
+      console.log('✅ Imported:', meeting.title, '(' + meeting.wordCount + ' words)')
+      imported++
+    }
+  })
+
+  // Save to localStorage
+  localStorage.setItem('meetingflow_meetings', JSON.stringify(existingMeetings))
+
+  console.log('')
+  console.log('📊 IMPORT COMPLETE!')
+  console.log('  ✅ Imported:', imported)
+  console.log('  ⏭️ Skipped (duplicates):', skipped)
+  console.log('  📝 Total meetings now:', existingMeetings.length)
+  console.log('')
+  console.log('🔄 Please refresh the page (F5) to see your recovered meetings!')
+
+  // Trigger storage event
+  window.dispatchEvent(new CustomEvent('meetingflow-storage-updated', {
+    detail: {
+      source: 'assembly-ai-recovery',
+      operation: 'import',
+      imported: imported,
+      skipped: skipped
+    }
+  }))
+
+  alert(\`✅ IMPORT COMPLETE!\\n\\n✅ Imported: \${imported} meetings\\n⏭️ Skipped: \${skipped} duplicates\\n📝 Total: \${existingMeetings.length} meetings\\n\\n🔄 Refresh the page (F5) to see them!\`)
+})()
+`
+    }
+
+    function copyImportScript() {
+      const textarea = document.getElementById('importScript')
+      textarea.select()
+      document.execCommand('copy')
+      alert('✅ Script copied to clipboard!\n\nNow:\n1. Open your app\n2. Press F12\n3. Paste in console\n4. Press Enter\n5. Refresh (F5)')
+    }
+
+    function downloadImportScript() {
+      const script = document.getElementById('importScript').value
+      const blob = new Blob([script], { type: 'text/javascript' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `meetingflow-recovery-${Date.now()}.js`
+      a.click()
+      URL.revokeObjectURL(url)
+      alert('✅ Script downloaded!\n\nYou can also copy and paste it directly into your app console.')
+    }
+
+    function generateUUID() {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8)
+        return v.toString(16)
+      })
+    }
+  </script>
+</body>
+</html>

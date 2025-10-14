@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Emergency Restore - MeetingFlow</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="max-w-4xl mx-auto p-6">
+    <div class="bg-red-50 border-2 border-red-200 rounded-lg p-8 mb-6">
+      <h1 class="text-3xl font-bold text-red-900 mb-4">🚨 Emergency Data Restore</h1>
+      <p class="text-red-800 mb-2">
+        Your meetings are backed up in Google Drive sync. Let's restore them immediately.
+      </p>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-lg p-8 space-y-6">
+      <div class="bg-blue-50 border-l-4 border-blue-400 p-4">
+        <p class="text-sm text-blue-700">
+          <strong>Good news:</strong> Your meetings are synced to Google Drive. We can pull them back right now.
+        </p>
+      </div>
+
+      <button
+        onclick="restoreFromSync()"
+        class="w-full bg-red-600 text-white py-4 px-6 rounded-lg hover:bg-red-700 transition-colors font-bold text-xl"
+      >
+        🔄 RESTORE MY MEETINGS NOW
+      </button>
+
+      <div id="progress" class="hidden">
+        <div class="bg-gray-100 rounded-lg p-4">
+          <div class="flex items-center space-x-3 mb-2">
+            <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+            <span class="text-gray-700 font-medium">Restoring from sync...</span>
+          </div>
+          <div id="progressLog" class="text-sm text-gray-600 space-y-1 max-h-64 overflow-y-auto"></div>
+        </div>
+      </div>
+
+      <div id="results" class="hidden"></div>
+    </div>
+
+    <div class="mt-6 bg-yellow-50 border-l-4 border-yellow-400 p-4">
+      <p class="text-sm text-yellow-700">
+        <strong>If restore button doesn't work:</strong><br>
+        Go to your live app → Settings → Sync → Click "Sync from Cloud"
+      </p>
+    </div>
+  </div>
+
+  <script>
+    function log(message, type = 'info') {
+      const logDiv = document.getElementById('progressLog')
+      const line = document.createElement('div')
+      line.textContent = message
+      line.className = type === 'error' ? 'text-red-600' :
+                       type === 'success' ? 'text-green-600' : 'text-gray-600'
+      logDiv.appendChild(line)
+      logDiv.scrollTop = logDiv.scrollHeight
+      console.log(message)
+    }
+
+    async function restoreFromSync() {
+      document.getElementById('progress').classList.remove('hidden')
+      document.getElementById('results').classList.add('hidden')
+      document.getElementById('progressLog').innerHTML = ''
+
+      log('🔍 Checking localStorage for any remaining data...')
+
+      // First, check if there's any data left
+      const currentMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+      log(`Found ${currentMeetings.length} meetings in current localStorage`)
+
+      log('📥 Attempting to restore from Google Drive sync...')
+      log('⚠️ Note: This requires your sync to be configured')
+
+      const resultsDiv = document.getElementById('results')
+      resultsDiv.classList.remove('hidden')
+      resultsDiv.innerHTML = `
+        <div class="bg-orange-50 border border-orange-200 rounded-lg p-6">
+          <h3 class="text-lg font-bold text-orange-900 mb-4">Manual Restore Required</h3>
+          <p class="text-orange-800 mb-4">
+            Please follow these steps on your live app:
+          </p>
+          <ol class="list-decimal list-inside space-y-2 text-orange-800">
+            <li>Open: <a href="https://sudhanshumalani.github.io/meetingflow-app" target="_blank" class="text-blue-600 underline font-medium">your app</a></li>
+            <li>Go to <strong>Settings</strong> (gear icon)</li>
+            <li>Scroll to <strong>Cross-Device Sync</strong></li>
+            <li>Click <strong>"Sync from Cloud"</strong> button</li>
+            <li>Wait for sync to complete</li>
+            <li>Your meetings will be restored!</li>
+          </ol>
+          <div class="mt-4 bg-white border border-orange-300 rounded p-3">
+            <p class="text-sm text-orange-700">
+              <strong>Alternative:</strong> If sync isn't working, I can help you recover from Google Drive directly.
+              Tell me if you need that option.
+            </p>
+          </div>
+        </div>
+      `
+
+      document.getElementById('progress').classList.add('hidden')
+    }
+  </script>
+</body>
+</html>

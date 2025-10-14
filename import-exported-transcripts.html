@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Import Exported Assembly AI Transcripts</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="max-w-6xl mx-auto p-6">
+    <div class="bg-green-50 border-2 border-green-200 rounded-lg p-8 mb-6">
+      <h1 class="text-3xl font-bold text-green-900 mb-4">📥 Import Exported Assembly AI Transcripts</h1>
+      <p class="text-green-800 mb-4">
+        Import streaming transcripts that you've exported from Assembly AI Dashboard.
+      </p>
+      <div class="bg-white rounded p-4 text-sm">
+        <div class="font-bold mb-2">📋 Step-by-Step Instructions:</div>
+        <ol class="list-decimal list-inside space-y-2 text-gray-700">
+          <li>Go to <a href="https://www.assemblyai.com/app/transcripts" target="_blank" class="text-blue-600 underline">Assembly AI Dashboard</a></li>
+          <li>Click the <strong>"Streaming"</strong> tab</li>
+          <li>For each transcript you want to recover:
+            <ul class="list-disc list-inside ml-6 mt-1 space-y-1">
+              <li>Click on the transcript</li>
+              <li>Click the <strong>"Export"</strong> button</li>
+              <li>Choose format: <strong>JSON</strong> (recommended) or TXT</li>
+              <li>Download the file</li>
+            </ul>
+          </li>
+          <li>Upload the exported file(s) below</li>
+          <li>Click "Convert & Import"</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-lg p-8 mb-6">
+      <div class="mb-6">
+        <label class="block text-sm font-medium text-gray-700 mb-2">
+          Upload Exported Transcript Files
+        </label>
+        <input
+          type="file"
+          id="fileInput"
+          multiple
+          accept=".json,.txt,.srt,.vtt"
+          class="w-full px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-400 cursor-pointer"
+        />
+        <p class="text-xs text-gray-500 mt-2">
+          You can select multiple files at once. Supported: JSON, TXT, SRT, VTT
+        </p>
+      </div>
+
+      <div class="mb-6">
+        <label class="block text-sm font-medium text-gray-700 mb-2">
+          Or Paste Exported Content Directly
+        </label>
+        <textarea
+          id="pasteInput"
+          rows="10"
+          placeholder="Paste the exported transcript JSON or text here..."
+          class="w-full px-4 py-2 border border-gray-300 rounded-lg font-mono text-sm"
+        ></textarea>
+      </div>
+
+      <button
+        onclick="processTranscripts()"
+        class="w-full bg-green-600 text-white py-4 px-6 rounded-lg hover:bg-green-700 transition-colors font-bold text-xl"
+      >
+        🔄 CONVERT & IMPORT TO MEETINGFLOW
+      </button>
+    </div>
+
+    <div id="progress" class="hidden mb-6">
+      <div class="bg-white rounded-lg shadow p-6">
+        <div class="flex items-center space-x-3 mb-4">
+          <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+          <span class="text-gray-700 font-medium text-lg">Processing transcripts...</span>
+        </div>
+        <div id="progressLog" class="text-sm text-gray-600 space-y-1 max-h-96 overflow-y-auto bg-gray-50 p-4 rounded"></div>
+      </div>
+    </div>
+
+    <div id="results" class="hidden"></div>
+  </div>
+
+  <script>
+    function log(message, type = 'info') {
+      const logDiv = document.getElementById('progressLog')
+      if (!logDiv) return
+      const line = document.createElement('div')
+      line.textContent = message
+      line.className = type === 'error' ? 'text-red-600 font-medium' :
+                       type === 'success' ? 'text-green-600 font-medium' :
+                       type === 'warning' ? 'text-yellow-600' : 'text-gray-700'
+      logDiv.appendChild(line)
+      logDiv.scrollTop = logDiv.scrollHeight
+      console.log(message)
+    }
+
+    async function processTranscripts() {
+      const fileInput = document.getElementById('fileInput')
+      const pasteInput = document.getElementById('pasteInput').value.trim()
+
+      const files = fileInput.files
+      const hasFiles = files && files.length > 0
+      const hasPasted = pasteInput.length > 0
+
+      if (!hasFiles && !hasPasted) {
+        alert('Please either upload files or paste content')
+        return
+      }
+
+      document.getElementById('progress').classList.remove('hidden')
+      document.getElementById('results').classList.add('hidden')
+      document.getElementById('progressLog').innerHTML = ''
+
+      log('🔄 Starting transcript conversion...', 'info')
+      log('')
+
+      const convertedMeetings = []
+      const errors = []
+
+      // Process uploaded files
+      if (hasFiles) {
+        log(`📁 Processing ${files.length} uploaded file(s)...`)
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i]
+          log(`[${i + 1}/${files.length}] Reading file: ${file.name}`)
+
+          try {
+            const content = await readFile(file)
+            const meeting = convertToMeeting(content, file.name, file.type)
+
+            if (meeting) {
+              convertedMeetings.push(meeting)
+              log(`  ✅ Converted: ${meeting.wordCount} words`, 'success')
+            } else {
+              errors.push({ source: file.name, error: 'Could not parse transcript' })
+              log(`  ❌ Failed to parse`, 'error')
+            }
+          } catch (error) {
+            errors.push({ source: file.name, error: error.message })
+            log(`  ❌ Error: ${error.message}`, 'error')
+          }
+        }
+      }
+
+      // Process pasted content
+      if (hasPasted) {
+        log('📋 Processing pasted content...')
+        try {
+          const meeting = convertToMeeting(pasteInput, 'Pasted Content', 'text/plain')
+          if (meeting) {
+            convertedMeetings.push(meeting)
+            log(`  ✅ Converted: ${meeting.wordCount} words`, 'success')
+          } else {
+            errors.push({ source: 'Pasted Content', error: 'Could not parse transcript' })
+            log(`  ❌ Failed to parse`, 'error')
+          }
+        } catch (error) {
+          errors.push({ source: 'Pasted Content', error: error.message })
+          log(`  ❌ Error: ${error.message}`, 'error')
+        }
+      }
+
+      log('')
+      log(`🎉 CONVERSION COMPLETE!`, 'success')
+      log(`  ✅ Successful: ${convertedMeetings.length}`, 'success')
+      log(`  ❌ Failed: ${errors.length}`, 'error')
+
+      document.getElementById('progress').classList.add('hidden')
+
+      if (convertedMeetings.length > 0) {
+        showResults(convertedMeetings, errors)
+      } else {
+        alert('No transcripts were converted successfully. Check the log for details.')
+      }
+    }
+
+    function readFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = (e) => resolve(e.target.result)
+        reader.onerror = (e) => reject(new Error('Failed to read file'))
+        reader.readAsText(file)
+      })
+    }
+
+    function convertToMeeting(content, fileName, fileType) {
+      const now = new Date().toISOString()
+      let transcriptText = ''
+      let metadata = {}
+      let speakers = new Set()
+      let utterances = []
+
+      try {
+        // Try parsing as JSON first (Assembly AI export format)
+        const json = JSON.parse(content)
+
+        // Assembly AI JSON export format
+        if (json.text) {
+          transcriptText = json.text
+
+          // Check for utterances (speaker diarization)
+          if (json.utterances && Array.isArray(json.utterances)) {
+            utterances = json.utterances
+            utterances.forEach(u => speakers.add(u.speaker))
+
+            // Format with speaker labels
+            transcriptText = utterances.map(u =>
+              `[Speaker ${u.speaker}]: ${u.text}`
+            ).join('\n\n')
+          }
+
+          // Extract metadata
+          metadata = {
+            id: json.id,
+            status: json.status,
+            created: json.created,
+            audio_duration: json.audio_duration,
+            confidence: json.confidence,
+            audio_url: json.audio_url,
+            language_code: json.language_code
+          }
+        }
+        // Plain transcript object
+        else if (json.transcript) {
+          transcriptText = json.transcript
+        }
+        // Array of utterances
+        else if (Array.isArray(json) && json.length > 0 && json[0].text) {
+          utterances = json
+          json.forEach(u => {
+            if (u.speaker) speakers.add(u.speaker)
+          })
+          transcriptText = json.map(u =>
+            u.speaker ? `[Speaker ${u.speaker}]: ${u.text}` : u.text
+          ).join('\n\n')
+        }
+        // Unknown JSON format
+        else {
+          console.warn('Unknown JSON format, trying to extract text')
+          transcriptText = JSON.stringify(json, null, 2)
+        }
+
+      } catch (jsonError) {
+        // Not JSON, treat as plain text
+        transcriptText = content
+
+        // Try to detect speaker labels in text
+        const speakerPattern = /\[Speaker (\w+)\]:/g
+        let match
+        while ((match = speakerPattern.exec(content)) !== null) {
+          speakers.add(match[1])
+        }
+      }
+
+      // Ensure we have some transcript text
+      if (!transcriptText || transcriptText.trim().length === 0) {
+        return null
+      }
+
+      const wordCount = transcriptText.split(/\s+/).filter(w => w.length > 0).length
+      const createdDate = metadata.created ? new Date(metadata.created) : new Date()
+
+      return {
+        id: generateUUID(),
+        title: `Meeting - ${createdDate.toLocaleDateString()} ${createdDate.toLocaleTimeString()}`,
+        description: `Imported from Assembly AI export: ${fileName}`,
+        date: createdDate.toISOString().split('T')[0],
+        audioTranscript: transcriptText,
+        transcript: transcriptText,
+        duration: metadata.audio_duration ? Math.round(metadata.audio_duration) : null,
+        wordCount: wordCount,
+        speakerCount: speakers.size,
+        confidence: metadata.confidence,
+        createdAt: metadata.created || now,
+        updatedAt: now,
+        lastSaved: now,
+        originalInputs: {
+          audioTranscript: transcriptText,
+          manualText: '',
+          ocrText: ''
+        },
+        utterances: utterances,
+        speakerData: utterances.length > 0 ? {
+          utterances: utterances,
+          speakers_detected: speakers.size
+        } : null,
+        metadata: {
+          recovered: true,
+          recoveredAt: now,
+          importedFrom: 'assembly-ai-export',
+          originalFileName: fileName,
+          assemblyAIId: metadata.id,
+          originalStatus: metadata.status,
+          speakerLabels: Array.from(speakers).map(s => `Speaker ${s}`),
+          audioUrl: metadata.audio_url
+        }
+      }
+    }
+
+    function showResults(meetings, errors) {
+      const resultsDiv = document.getElementById('results')
+      resultsDiv.classList.remove('hidden')
+
+      const script = generateImportScript(meetings)
+
+      resultsDiv.innerHTML = `
+        <div class="bg-white rounded-lg shadow-lg p-8">
+          <div class="bg-green-50 border-2 border-green-300 rounded-lg p-6 mb-6">
+            <h3 class="text-2xl font-bold text-green-900 mb-4">✅ Successfully Converted ${meetings.length} Meetings!</h3>
+            <div class="space-y-2 max-h-96 overflow-y-auto">
+              ${meetings.map((m, i) => `
+                <div class="bg-white rounded p-3 border border-green-200">
+                  <div class="font-medium text-gray-900">${i + 1}. ${m.title}</div>
+                  <div class="text-sm text-gray-600">
+                    ${m.wordCount} words • ${m.speakerCount} speakers • ${m.duration ? m.duration + 's' : 'duration unknown'}
+                  </div>
+                  <div class="text-xs text-gray-500 mt-1">From: ${m.metadata.originalFileName}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          ${errors.length > 0 ? `
+            <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+              <h4 class="font-bold text-red-900 mb-2">⚠️ ${errors.length} Failed</h4>
+              <div class="space-y-1 max-h-64 overflow-y-auto">
+                ${errors.map(e => `
+                  <div class="text-sm text-red-700">• ${e.source}: ${e.error}</div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          <div class="bg-blue-50 border-2 border-blue-300 rounded-lg p-6">
+            <h3 class="text-xl font-bold text-blue-900 mb-4">📋 Import Script</h3>
+            <p class="text-sm text-blue-800 mb-3">
+              Copy this script and paste it in your MeetingFlow app console (F12):
+            </p>
+            <textarea
+              id="importScript"
+              readonly
+              class="w-full h-64 p-4 font-mono text-xs bg-white border-2 border-blue-200 rounded mb-4"
+            >${script}</textarea>
+            <div class="flex gap-3">
+              <button
+                onclick="copyImportScript()"
+                class="flex-1 bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 font-bold"
+              >
+                📋 Copy to Clipboard
+              </button>
+              <button
+                onclick="downloadImportScript()"
+                class="flex-1 bg-green-600 text-white py-3 px-6 rounded-lg hover:bg-green-700 font-bold"
+              >
+                💾 Download Script
+              </button>
+            </div>
+          </div>
+
+          <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mt-6">
+            <p class="text-sm text-yellow-700 font-medium mb-2">📝 Next Steps:</p>
+            <ol class="list-decimal list-inside space-y-1 text-sm text-yellow-700">
+              <li>Copy the script above</li>
+              <li>Open: <a href="https://sudhanshumalani.github.io/meetingflow-app" target="_blank" class="text-blue-600 underline font-medium">MeetingFlow App</a></li>
+              <li>Press F12 → Console</li>
+              <li>Paste and press Enter</li>
+              <li>Refresh (F5)</li>
+              <li>Your meetings will appear!</li>
+              <li><strong>IMPORTANT:</strong> Go to Settings → Sync to Cloud to back them up!</li>
+            </ol>
+          </div>
+        </div>
+      `
+
+      resultsDiv.scrollIntoView({ behavior: 'smooth' })
+    }
+
+    function generateImportScript(meetings) {
+      return `// IMPORT MEETINGS FROM ASSEMBLY AI EXPORTS
+// Generated: ${new Date().toISOString()}
+// Meetings: ${meetings.length}
+
+(function() {
+  console.log('🔄 Importing ${meetings.length} meetings from Assembly AI exports...')
+
+  const recoveredMeetings = ${JSON.stringify(meetings, null, 2)}
+
+  const existingMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+  console.log('Current meetings in app:', existingMeetings.length)
+
+  // Check for duplicates by Assembly AI ID (if available)
+  const existingAssemblyIds = new Set(
+    existingMeetings
+      .filter(m => m.metadata?.assemblyAIId)
+      .map(m => m.metadata.assemblyAIId)
+  )
+
+  let imported = 0
+  let skipped = 0
+
+  recoveredMeetings.forEach(meeting => {
+    const assemblyId = meeting.metadata?.assemblyAIId
+    if (assemblyId && existingAssemblyIds.has(assemblyId)) {
+      console.log('⏭️ Skipping duplicate:', assemblyId)
+      skipped++
+    } else {
+      existingMeetings.unshift(meeting)
+      console.log('✅ Imported:', meeting.title, '(' + meeting.wordCount + ' words)')
+      imported++
+    }
+  })
+
+  localStorage.setItem('meetingflow_meetings', JSON.stringify(existingMeetings))
+
+  console.log('')
+  console.log('📊 IMPORT COMPLETE!')
+  console.log('  ✅ Imported:', imported)
+  console.log('  ⏭️ Skipped (duplicates):', skipped)
+  console.log('  📝 Total meetings now:', existingMeetings.length)
+
+  window.dispatchEvent(new CustomEvent('meetingflow-storage-updated', {
+    detail: {
+      source: 'assembly-ai-export-import',
+      operation: 'import',
+      imported: imported,
+      skipped: skipped
+    }
+  }))
+
+  alert(\`✅ IMPORT COMPLETE!\\n\\n✅ Imported: \${imported} meetings\\n⏭️ Skipped: \${skipped} duplicates\\n📝 Total: \${existingMeetings.length} meetings\\n\\n🔄 Refresh (F5) to see them!\\n\\n⚠️ IMPORTANT: Sync to cloud to back them up!\`)
+})()
+`
+    }
+
+    function copyImportScript() {
+      const textarea = document.getElementById('importScript')
+      textarea.select()
+      document.execCommand('copy')
+      alert('✅ Script copied!\n\nNow:\n1. Open your app\n2. F12 → Console\n3. Paste & Enter\n4. Refresh (F5)\n5. Sync to cloud!')
+    }
+
+    function downloadImportScript() {
+      const script = document.getElementById('importScript').value
+      const blob = new Blob([script], { type: 'text/javascript' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `meetingflow-import-${Date.now()}.js`
+      a.click()
+      URL.revokeObjectURL(url)
+      alert('✅ Downloaded!')
+    }
+
+    function generateUUID() {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8)
+        return v.toString(16)
+      })
+    }
+  </script>
+</body>
+</html>

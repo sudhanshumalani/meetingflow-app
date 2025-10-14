@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transcript ID Diagnostic Tool</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="max-w-6xl mx-auto p-6">
+    <div class="bg-purple-50 border-2 border-purple-200 rounded-lg p-8 mb-6">
+      <h1 class="text-3xl font-bold text-purple-900 mb-4">🔍 Transcript ID Diagnostic Tool</h1>
+      <p class="text-purple-800">
+        This tool will check what's wrong with your transcript IDs and show detailed error information.
+      </p>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-lg p-8 mb-6">
+      <div class="mb-6">
+        <label class="block text-sm font-medium text-gray-700 mb-2">
+          Assembly AI API Key
+        </label>
+        <input
+          type="password"
+          id="apiKey"
+          value="95b4727b94534ba492e273b2af713159"
+          class="w-full px-4 py-2 border border-gray-300 rounded-lg"
+        />
+      </div>
+
+      <div class="mb-6">
+        <label class="block text-sm font-medium text-gray-700 mb-2">
+          Transcript IDs to Check (one per line)
+        </label>
+        <textarea
+          id="transcriptIds"
+          rows="10"
+          placeholder="c72bec3d-181b-42b9-accb-7c397a8fb528
+1829d4b2-2922-4cfd-b06b-3a5c111d46a7"
+          class="w-full px-4 py-2 border border-gray-300 rounded-lg font-mono text-sm"
+        ></textarea>
+      </div>
+
+      <button
+        onclick="diagnoseTranscripts()"
+        class="w-full bg-purple-600 text-white py-4 px-6 rounded-lg hover:bg-purple-700 transition-colors font-bold text-xl"
+      >
+        🔍 DIAGNOSE TRANSCRIPTS
+      </button>
+    </div>
+
+    <div id="results" class="hidden"></div>
+  </div>
+
+  <script>
+    async function diagnoseTranscripts() {
+      const apiKey = document.getElementById('apiKey').value.trim()
+      const transcriptIdsText = document.getElementById('transcriptIds').value.trim()
+
+      if (!apiKey || !transcriptIdsText) {
+        alert('Please fill in all fields')
+        return
+      }
+
+      const transcriptIds = transcriptIdsText
+        .split('\n')
+        .map(id => id.trim())
+        .filter(id => id.length > 0)
+
+      const resultsDiv = document.getElementById('results')
+      resultsDiv.classList.remove('hidden')
+      resultsDiv.innerHTML = '<div class="bg-white rounded-lg shadow-lg p-8"><p>Checking transcripts...</p></div>'
+
+      const results = []
+
+      for (const id of transcriptIds) {
+        console.log(`Checking: ${id}`)
+
+        try {
+          const response = await fetch(`https://api.assemblyai.com/v2/transcript/${id}`, {
+            headers: { authorization: apiKey }
+          })
+
+          const responseText = await response.text()
+          let responseData
+          try {
+            responseData = JSON.parse(responseText)
+          } catch {
+            responseData = responseText
+          }
+
+          results.push({
+            id: id,
+            status: response.status,
+            statusText: response.statusText,
+            ok: response.ok,
+            headers: Object.fromEntries(response.headers.entries()),
+            body: responseData,
+            error: !response.ok
+          })
+
+        } catch (error) {
+          results.push({
+            id: id,
+            error: true,
+            errorMessage: error.message,
+            errorType: error.name
+          })
+        }
+      }
+
+      displayResults(results)
+    }
+
+    function displayResults(results) {
+      const successCount = results.filter(r => !r.error).length
+      const errorCount = results.filter(r => r.error).length
+
+      let html = `
+        <div class="bg-white rounded-lg shadow-lg p-8">
+          <h2 class="text-2xl font-bold mb-4">Diagnostic Results</h2>
+
+          <div class="grid grid-cols-2 gap-4 mb-6">
+            <div class="bg-green-50 p-4 rounded border border-green-200">
+              <div class="text-3xl font-bold text-green-600">${successCount}</div>
+              <div class="text-sm text-green-800">Accessible</div>
+            </div>
+            <div class="bg-red-50 p-4 rounded border border-red-200">
+              <div class="text-3xl font-bold text-red-600">${errorCount}</div>
+              <div class="text-sm text-red-800">Failed</div>
+            </div>
+          </div>
+
+          <div class="space-y-4">
+      `
+
+      results.forEach((result, index) => {
+        const isError = result.error
+        const bgColor = isError ? 'bg-red-50' : 'bg-green-50'
+        const borderColor = isError ? 'border-red-200' : 'border-green-200'
+
+        html += `
+          <div class="${bgColor} border ${borderColor} rounded-lg p-4">
+            <div class="flex justify-between items-start mb-2">
+              <div class="font-mono text-sm">${result.id}</div>
+              <div class="text-xs ${isError ? 'text-red-700' : 'text-green-700'} font-bold">
+                ${isError ? '❌ FAILED' : '✅ OK'}
+              </div>
+            </div>
+
+            ${isError ? `
+              <div class="text-sm space-y-2">
+                <div><strong>HTTP Status:</strong> ${result.status} ${result.statusText}</div>
+                ${result.body ? `
+                  <div><strong>Error Response:</strong></div>
+                  <pre class="bg-white p-2 rounded text-xs overflow-x-auto">${JSON.stringify(result.body, null, 2)}</pre>
+                ` : ''}
+                ${result.errorMessage ? `
+                  <div><strong>Error:</strong> ${result.errorMessage}</div>
+                ` : ''}
+              </div>
+            ` : `
+              <div class="text-sm space-y-2">
+                <div><strong>Status:</strong> ${result.body.status || 'Unknown'}</div>
+                <div><strong>Created:</strong> ${result.body.created ? new Date(result.body.created).toLocaleString() : 'Unknown'}</div>
+                ${result.body.audio_duration ? `<div><strong>Duration:</strong> ${Math.round(result.body.audio_duration)}s</div>` : ''}
+                ${result.body.text ? `<div><strong>Words:</strong> ${result.body.text.split(' ').length}</div>` : ''}
+                <details class="mt-2">
+                  <summary class="cursor-pointer text-blue-600 hover:text-blue-700">Show full response</summary>
+                  <pre class="bg-white p-2 rounded text-xs mt-2 overflow-x-auto">${JSON.stringify(result.body, null, 2)}</pre>
+                </details>
+              </div>
+            `}
+          </div>
+        `
+      })
+
+      html += `
+          </div>
+
+          ${errorCount > 0 ? `
+            <div class="mt-6 bg-yellow-50 border-l-4 border-yellow-400 p-4">
+              <h3 class="font-bold text-yellow-900 mb-2">🤔 Why are transcripts failing?</h3>
+              <div class="text-sm text-yellow-800 space-y-2">
+                <p><strong>HTTP 400 (Bad Request):</strong> The transcript ID format is invalid or the transcript doesn't exist in Assembly AI's REST API.</p>
+                <p><strong>Possible reasons:</strong></p>
+                <ul class="list-disc list-inside ml-4 space-y-1">
+                  <li>Streaming transcripts may use a different ID format</li>
+                  <li>Streaming transcripts might not be accessible via REST API after the session ends</li>
+                  <li>The IDs might be session IDs, not transcript IDs</li>
+                  <li>Transcripts may have been deleted or expired</li>
+                </ul>
+                <p class="mt-3"><strong>Next steps:</strong></p>
+                <ul class="list-disc list-inside ml-4 space-y-1">
+                  <li>Check Assembly AI dashboard - are these showing as "Streaming" or "Pre-recorded"?</li>
+                  <li>Try copying IDs from the URL when you click on a transcript</li>
+                  <li>Check if there's an "Export" or "Download" option in the dashboard</li>
+                  <li>Contact Assembly AI support about accessing historical streaming transcripts</li>
+                </ul>
+              </div>
+            </div>
+          ` : ''}
+
+          ${successCount > 0 ? `
+            <div class="mt-6 bg-green-50 border-l-4 border-green-400 p-4">
+              <h3 class="font-bold text-green-900 mb-2">✅ Good News!</h3>
+              <p class="text-sm text-green-800">
+                ${successCount} transcript(s) are accessible. You can use manual-transcript-recovery.html with these IDs.
+              </p>
+            </div>
+          ` : ''}
+        </div>
+      `
+
+      document.getElementById('results').innerHTML = html
+    }
+  </script>
+</body>
+</html>

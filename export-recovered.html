@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Export Recovered Meetings</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="max-w-4xl mx-auto p-6">
+    <div class="bg-white rounded-lg shadow-lg p-8">
+      <h1 class="text-3xl font-bold text-gray-900 mb-6">📤 Export Recovered Meetings</h1>
+
+      <div class="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
+        <p class="text-sm text-blue-700">
+          This tool will export your recovered meetings so you can import them into your live app.
+        </p>
+      </div>
+
+      <button
+        onclick="exportMeetings()"
+        class="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors font-medium text-lg mb-4"
+      >
+        📤 Export Recovered Meetings
+      </button>
+
+      <div id="output" class="hidden">
+        <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <h3 class="font-semibold mb-2">Copy this script and paste it in your app console:</h3>
+          <textarea
+            id="scriptOutput"
+            class="w-full h-64 p-3 font-mono text-xs bg-white border border-gray-300 rounded"
+            readonly
+          ></textarea>
+          <button
+            onclick="copyScript()"
+            class="mt-2 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+          >
+            📋 Copy to Clipboard
+          </button>
+        </div>
+
+        <div class="mt-4 bg-yellow-50 border-l-4 border-yellow-400 p-4">
+          <p class="text-sm text-yellow-700">
+            <strong>Next steps:</strong><br>
+            1. Copy the script above<br>
+            2. Open <a href="https://sudhanshumalani.github.io/meetingflow-app" target="_blank" class="text-blue-600 underline">your app</a><br>
+            3. Press F12 to open console<br>
+            4. Paste the script and press Enter<br>
+            5. Refresh the page (F5)
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function exportMeetings() {
+      const meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+
+      if (meetings.length === 0) {
+        alert('No meetings found in localStorage!')
+        return
+      }
+
+      // Filter only recovered meetings
+      const recoveredMeetings = meetings.filter(m => m.metadata?.recovered)
+
+      if (recoveredMeetings.length === 0) {
+        alert('No recovered meetings found! Did the recovery complete successfully?')
+        return
+      }
+
+      // Generate import script
+      const script = `
+// Import recovered meetings
+(function() {
+  console.log('📥 Importing ${recoveredMeetings.length} recovered meetings...')
+
+  const recoveredMeetings = ${JSON.stringify(recoveredMeetings, null, 2)}
+
+  // Get existing meetings
+  const existingMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+
+  // Check for duplicates
+  const existingIds = new Set(existingMeetings.map(m => m.metadata?.assemblyAIId).filter(Boolean))
+
+  let imported = 0
+  let skipped = 0
+
+  recoveredMeetings.forEach(meeting => {
+    if (existingIds.has(meeting.metadata?.assemblyAIId)) {
+      console.log('⏭️ Skipping duplicate:', meeting.metadata.assemblyAIId)
+      skipped++
+    } else {
+      existingMeetings.unshift(meeting)
+      console.log('✅ Imported:', meeting.title, '(' + meeting.wordCount + ' words)')
+      imported++
+    }
+  })
+
+  // Save back to localStorage
+  localStorage.setItem('meetingflow_meetings', JSON.stringify(existingMeetings))
+
+  console.log('📊 Import complete:', { imported, skipped, total: existingMeetings.length })
+  console.log('🔄 Please refresh the page (F5) to see your recovered meetings')
+
+  alert(\`✅ Imported \${imported} meetings!\\n⏭️ Skipped \${skipped} duplicates\\n\\n🔄 Refresh the page to see them.\`)
+})()
+`
+
+      document.getElementById('scriptOutput').value = script
+      document.getElementById('output').classList.remove('hidden')
+
+      console.log('✅ Export script generated!')
+      console.log('Found', recoveredMeetings.length, 'recovered meetings')
+    }
+
+    function copyScript() {
+      const textarea = document.getElementById('scriptOutput')
+      textarea.select()
+      document.execCommand('copy')
+
+      alert('✅ Script copied to clipboard!\n\nNow:\n1. Open your app\n2. Press F12\n3. Paste in console\n4. Press Enter\n5. Refresh page')
+    }
+  </script>
+</body>
+</html>
+`

@@ -58,7 +58,8 @@ function convertToMeeting(transcript, transcriptId) {
     title: `Recovered Meeting - ${new Date().toLocaleDateString()}`,
     description: `Recovered from Assembly AI (ID: ${transcriptId})`,
     date: new Date().toISOString().split('T')[0],
-    transcript: formattedTranscript,
+    audioTranscript: formattedTranscript, // Main field for audio transcript
+    transcript: formattedTranscript, // Backup field
     duration: transcript.audio_duration ? Math.round(transcript.audio_duration) : null,
     wordCount: transcript.text ? transcript.text.split(' ').length : 0,
     speakerCount: speakers.size,
@@ -66,6 +67,11 @@ function convertToMeeting(transcript, transcriptId) {
     createdAt: now,
     updatedAt: now,
     lastSaved: now,
+    originalInputs: {
+      audioTranscript: formattedTranscript, // CRITICAL: This is what Meeting view looks for!
+      manualText: '',
+      ocrText: ''
+    },
     metadata: {
       recovered: true,
       recoveredAt: now,
@@ -80,6 +86,10 @@ function convertToMeeting(transcript, transcriptId) {
   if (transcript.utterances) {
     meeting.utterances = transcript.utterances
     meeting.words = transcript.words
+    meeting.speakerData = {
+      utterances: transcript.utterances,
+      speakers_detected: speakers.size
+    }
   }
 
   return meeting

@@ -156,9 +156,11 @@
 
       try {
         // Assembly AI list endpoint - fetches all transcripts with pagination
-        let url = 'https://api.assemblyai.com/v2/transcript'
+        // Use explicit limit parameter for better pagination
+        let url = 'https://api.assemblyai.com/v2/transcript?limit=100'
         let page = 1
         let hasMore = true
+        let totalFetched = 0
 
         while (hasMore) {
           log(`📄 Fetching page ${page}...`)
@@ -173,8 +175,13 @@
 
           const data = await response.json()
 
+          // Debug: log response structure
+          console.log('API Response:', data)
+          console.log('Page details:', data.page_details)
+
           const transcripts = data.transcripts || []
-          log(`  Found ${transcripts.length} transcripts on page ${page}`, 'success')
+          totalFetched += transcripts.length
+          log(`  Found ${transcripts.length} transcripts on page ${page} (total: ${totalFetched})`, 'success')
 
           // Filter by date range if selected
           const dateRange = document.querySelector('input[name="dateRange"]:checked').value
@@ -190,25 +197,31 @@
 
           allTranscripts.push(...filteredTranscripts)
 
-          // Check for pagination
-          if (data.page_details) {
-            const { current_url, next_url, prev_url } = data.page_details
-            if (next_url) {
-              url = next_url
-              page++
-            } else {
-              hasMore = false
-            }
+          // Check for pagination - Assembly AI uses page_details
+          if (data.page_details && data.page_details.next_url) {
+            url = data.page_details.next_url
+            page++
+            log(`  Next page: ${url}`)
           } else {
+            log(`  No more pages (last page reached)`, 'success')
             hasMore = false
           }
 
-          // Safety limit
-          if (page > 50) {
-            log('⚠️ Reached page limit (50 pages)', 'warning')
+          // Safety limit - prevent infinite loops
+          if (page > 100) {
+            log('⚠️ Reached safety page limit (100 pages = 10,000 transcripts)', 'warning')
             break
           }
+
+          // If we got 0 transcripts, stop
+          if (transcripts.length === 0) {
+            log('  No transcripts on this page, stopping', 'warning')
+            hasMore = false
+          }
         }
+
+        log(`  Total transcripts fetched: ${totalFetched}`)
+        log(`  After date filtering: ${allTranscripts.length}`)
 
         log('')
         log(`✅ SCAN COMPLETE!`, 'success')
@@ -285,10 +298,33 @@
       const listDiv = document.getElementById('transcriptList')
       listDiv.innerHTML = ''
 
+      // Add info message about metadata
+      const infoDiv = document.createElement('div')
+      infoDiv.className = 'bg-blue-50 border-l-4 border-blue-400 p-4 mb-4'
+      infoDiv.innerHTML = `
+        <p class="text-sm text-blue-700">
+          <strong>Note:</strong> Duration and word counts shown here are estimates from Assembly AI's list API.
+          Full accurate details (including transcript text) will be fetched when you recover the selected transcripts.
+        </p>
+      `
+      listDiv.appendChild(infoDiv)
+
       transcripts.forEach((transcript, index) => {
         const date = new Date(transcript.created).toLocaleString()
-        const duration = transcript.audio_duration ? Math.round(transcript.audio_duration) : 0
-        const wordCount = transcript.words?.length || (transcript.text?.split(' ').length) || 0
+
+        // The list API may not include full details, so handle missing data
+        const duration = transcript.audio_duration ? Math.round(transcript.audio_duration) : null
+        const wordCount = transcript.words?.length || (transcript.text?.split(' ').length) || null
+
+        // Status badge
+        let statusBadge = ''
+        if (transcript.status === 'completed') {
+          statusBadge = '<span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">✓ Completed</span>'
+        } else if (transcript.status === 'processing') {
+          statusBadge = '<span class="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">⏳ Processing</span>'
+        } else if (transcript.status === 'error') {
+          statusBadge = '<span class="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">✗ Error</span>'
+        }
 
         const div = document.createElement('div')
         div.className = 'border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors'
@@ -303,17 +339,20 @@
             <div class="flex-1">
               <div class="flex justify-between items-start mb-2">
                 <div>
-                  <div class="font-medium text-gray-900">Transcript ${index + 1}</div>
-                  <div class="text-xs text-gray-500 font-mono">${transcript.id}</div>
+                  <div class="flex items-center gap-2">
+                    <div class="font-medium text-gray-900">Transcript ${index + 1}</div>
+                    ${statusBadge}
+                  </div>
+                  <div class="text-xs text-gray-500 font-mono mt-1">${transcript.id}</div>
                 </div>
                 <div class="text-right">
                   <div class="text-sm font-medium text-gray-700">${date}</div>
-                  <div class="text-xs text-gray-500">${duration}s duration</div>
+                  ${duration !== null ? `<div class="text-xs text-gray-500">${duration}s duration</div>` : '<div class="text-xs text-gray-400 italic">Duration unknown</div>'}
                 </div>
               </div>
               <div class="flex gap-4 text-sm text-gray-600">
-                <span>📝 ${wordCount.toLocaleString()} words</span>
-                <span>🎤 ${transcript.audio_channels || 1} channel(s)</span>
+                ${wordCount !== null ? `<span>📝 ${wordCount.toLocaleString()} words</span>` : '<span class="text-gray-400 italic">📝 Word count unavailable</span>'}
+                <span>🎤 ${transcript.audio_channels || '?'} channel(s)</span>
                 ${transcript.speaker_labels ? '<span>👥 Speaker diarization</span>' : ''}
               </div>
             </div>

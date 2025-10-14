@@ -118,6 +118,23 @@ const AudioRecorderSpeaker = ({ onTranscriptUpdate, className = '', disabled = f
             setSpeakerData(data)
             setIsProcessingSpeakers(false)
 
+            // CRITICAL: Save transcript immediately to localStorage to prevent data loss
+            try {
+              const backupData = {
+                ...data,
+                backedUpAt: new Date().toISOString(),
+                wordCount: data.text?.split(' ').length || 0
+              }
+              localStorage.setItem('latest_transcript_backup', JSON.stringify(backupData))
+              console.log('💾 TRANSCRIPT BACKED UP TO LOCALSTORAGE (fail-safe)', {
+                words: backupData.wordCount,
+                speakers: data.speakers_detected,
+                utterances: data.utterances?.length || 0
+              })
+            } catch (backupError) {
+              console.error('❌ Failed to backup transcript:', backupError)
+            }
+
             // Update parent component if needed
             if (onTranscriptUpdate && data.text) {
               onTranscriptUpdate(data.text)

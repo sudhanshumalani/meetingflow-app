@@ -239,6 +239,21 @@ class AssemblyAISpeakerService {
       const { id } = await transcriptResponse.json()
       console.log('✅ Speaker diarization job created:', id)
 
+      // CRITICAL: Save transcript ID to localStorage for recovery
+      try {
+        const transcriptRecord = {
+          id,
+          createdAt: new Date().toISOString(),
+          audioSize: audioBlob.size,
+          status: 'processing'
+        }
+        localStorage.setItem('latest_assemblyai_transcript_id', id)
+        localStorage.setItem(`assemblyai_transcript_${id}`, JSON.stringify(transcriptRecord))
+        console.log('💾 TRANSCRIPT ID SAVED FOR RECOVERY:', id)
+      } catch (saveError) {
+        console.error('Failed to save transcript ID:', saveError)
+      }
+
       if (onProgress) onProgress('processing', 40)
 
       // Step 3: Poll for result

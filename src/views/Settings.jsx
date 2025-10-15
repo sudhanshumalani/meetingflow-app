@@ -679,6 +679,77 @@ export default function Settings() {
                     </button>
                   </div>
 
+                  {/* Emergency Export Button - Works on Mobile PWA */}
+                  <div className="mt-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg">
+                    <h4 className="font-semibold text-red-900 mb-2 flex items-center gap-2">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      Emergency Data Export
+                    </h4>
+                    <p className="text-sm text-red-800 mb-3">
+                      Export all your data as a downloadable file. Use this if sync isn't working or to create a manual backup.
+                    </p>
+                    <button
+                      onClick={() => {
+                        try {
+                          // Get all data from localStorage
+                          const meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+                          const stakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+                          const categories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+
+                          if (meetings.length === 0) {
+                            alert('⚠️ No meetings found to export')
+                            return
+                          }
+
+                          // Create backup object
+                          const backup = {
+                            meetings: meetings,
+                            stakeholders: stakeholders,
+                            categories: categories,
+                            exportedAt: new Date().toISOString(),
+                            exportedFrom: 'emergency-export',
+                            deviceInfo: {
+                              userAgent: navigator.userAgent,
+                              platform: navigator.platform,
+                              language: navigator.language
+                            }
+                          }
+
+                          // Create and download file
+                          const jsonString = JSON.stringify(backup, null, 2)
+                          const blob = new Blob([jsonString], { type: 'application/json' })
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = `meetingflow-emergency-backup-${Date.now()}.json`
+                          a.style.display = 'none'
+                          document.body.appendChild(a)
+                          a.click()
+
+                          // Cleanup
+                          setTimeout(() => {
+                            document.body.removeChild(a)
+                            URL.revokeObjectURL(url)
+                          }, 100)
+
+                          alert(`✅ EXPORTED ${meetings.length} MEETINGS!\n\n📧 File downloaded. Email it to yourself immediately!\n\n⚠️ DO NOT close this app until you've confirmed the file is saved!`)
+
+                        } catch (error) {
+                          console.error('Export error:', error)
+                          alert('❌ Export failed: ' + error.message)
+                        }
+                      }}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Download Emergency Backup
+                    </button>
+                  </div>
+
                   {/* Last Sync Info */}
                   {sync.lastSyncTime && (
                     <div className="mt-4 p-3 bg-gray-50 rounded-lg">

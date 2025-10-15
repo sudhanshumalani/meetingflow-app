@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Desktop Import Tool</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-purple-50 min-h-screen">
+  <div class="max-w-4xl mx-auto p-6">
+    <div class="bg-white rounded-2xl shadow-2xl p-8 mb-6">
+      <h1 class="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600 mb-4 text-center">
+        💻 Desktop Import Tool
+      </h1>
+      <p class="text-gray-600 text-center mb-8">
+        Import meetings from your mobile device backup
+      </p>
+
+      <div class="bg-blue-50 border-l-4 border-blue-500 p-6 mb-8 rounded-lg">
+        <h2 class="font-bold text-blue-900 mb-3 text-lg">📋 How to use this tool:</h2>
+        <ol class="list-decimal list-inside space-y-2 text-blue-800">
+          <li>Get the backup file from your mobile device (via email, cloud, etc.)</li>
+          <li>Upload the JSON file below, OR paste the content directly</li>
+          <li>Click "Import to MeetingFlow"</li>
+          <li>Copy the generated script</li>
+          <li>Paste it in your MeetingFlow app console (F12)</li>
+        </ol>
+      </div>
+
+      <div class="space-y-6">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            📁 Upload Backup File
+          </label>
+          <input
+            type="file"
+            id="fileInput"
+            accept=".json"
+            class="w-full px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-400 cursor-pointer transition-colors"
+          />
+        </div>
+
+        <div class="text-center text-gray-500 font-medium">OR</div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            📋 Paste Backup Content
+          </label>
+          <textarea
+            id="pasteInput"
+            rows="8"
+            placeholder="Paste your backup JSON here..."
+            class="w-full px-4 py-3 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          ></textarea>
+        </div>
+
+        <button
+          onclick="processImport()"
+          class="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-4 px-6 rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all transform hover:scale-105 font-bold text-xl shadow-lg"
+        >
+          🔄 Import to MeetingFlow
+        </button>
+      </div>
+    </div>
+
+    <div id="results" class="hidden"></div>
+  </div>
+
+  <script>
+    async function processImport() {
+      const fileInput = document.getElementById('fileInput')
+      const pasteInput = document.getElementById('pasteInput').value.trim()
+
+      let backupData = null
+
+      // Try file first
+      if (fileInput.files && fileInput.files[0]) {
+        try {
+          const content = await readFile(fileInput.files[0])
+          backupData = JSON.parse(content)
+        } catch (error) {
+          alert('❌ Error reading file: ' + error.message)
+          return
+        }
+      }
+      // Then try pasted content
+      else if (pasteInput) {
+        try {
+          backupData = JSON.parse(pasteInput)
+        } catch (error) {
+          alert('❌ Error parsing JSON: ' + error.message + '\n\nMake sure you pasted valid JSON.')
+          return
+        }
+      }
+      else {
+        alert('Please upload a file or paste content')
+        return
+      }
+
+      // Validate backup data
+      if (!backupData || !backupData.meetings) {
+        alert('❌ Invalid backup format. Make sure this is a MeetingFlow backup file.')
+        return
+      }
+
+      const meetings = backupData.meetings
+      const stakeholders = backupData.stakeholders || []
+      const categories = backupData.categories || []
+
+      if (meetings.length === 0) {
+        alert('⚠️ This backup contains 0 meetings.')
+        return
+      }
+
+      // Generate import script
+      showResults(meetings, stakeholders, categories, backupData)
+    }
+
+    function readFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = (e) => resolve(e.target.result)
+        reader.onerror = () => reject(new Error('Failed to read file'))
+        reader.readAsText(file)
+      })
+    }
+
+    function showResults(meetings, stakeholders, categories, backupData) {
+      const resultsDiv = document.getElementById('results')
+      resultsDiv.classList.remove('hidden')
+
+      const script = generateImportScript(meetings, stakeholders, categories)
+
+      resultsDiv.innerHTML = `
+        <div class="bg-white rounded-2xl shadow-2xl p-8">
+          <div class="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-xl p-6 mb-6">
+            <h2 class="text-3xl font-bold text-green-900 mb-4 text-center">✅ Ready to Import!</h2>
+            <div class="grid grid-cols-3 gap-4 text-center">
+              <div class="bg-white rounded-lg p-4 shadow">
+                <div class="text-4xl font-bold text-green-600">${meetings.length}</div>
+                <div class="text-sm text-gray-600 mt-2">Meetings</div>
+              </div>
+              <div class="bg-white rounded-lg p-4 shadow">
+                <div class="text-4xl font-bold text-blue-600">${stakeholders.length}</div>
+                <div class="text-sm text-gray-600 mt-2">Stakeholders</div>
+              </div>
+              <div class="bg-white rounded-lg p-4 shadow">
+                <div class="text-4xl font-bold text-purple-600">${categories.length}</div>
+                <div class="text-sm text-gray-600 mt-2">Categories</div>
+              </div>
+            </div>
+
+            ${backupData.exportedAt ? `
+              <div class="text-center mt-4 text-sm text-gray-600">
+                Exported: ${new Date(backupData.exportedAt).toLocaleString()}
+                ${backupData.exportedFrom ? ` from ${backupData.exportedFrom}` : ''}
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="bg-blue-50 border-2 border-blue-300 rounded-xl p-6 mb-6">
+            <h3 class="text-xl font-bold text-blue-900 mb-4">📋 Import Script</h3>
+            <p class="text-sm text-blue-800 mb-4">
+              Copy this script and paste it in your MeetingFlow app console:
+            </p>
+            <textarea
+              id="importScript"
+              readonly
+              class="w-full h-64 p-4 font-mono text-xs bg-white border-2 border-blue-200 rounded-lg mb-4"
+            >${script}</textarea>
+            <div class="grid grid-cols-2 gap-4">
+              <button
+                onclick="copyScript()"
+                class="bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 font-bold transition-all transform hover:scale-105"
+              >
+                📋 Copy Script
+              </button>
+              <button
+                onclick="downloadScript()"
+                class="bg-green-600 text-white py-3 px-6 rounded-lg hover:bg-green-700 font-bold transition-all transform hover:scale-105"
+              >
+                💾 Download Script
+              </button>
+            </div>
+          </div>
+
+          <div class="bg-yellow-50 border-l-4 border-yellow-400 p-6 rounded-lg">
+            <h3 class="font-bold text-yellow-900 mb-3">📝 Next Steps:</h3>
+            <ol class="list-decimal list-inside space-y-2 text-yellow-800 text-sm">
+              <li>Click "Copy Script" above</li>
+              <li>Open: <a href="https://sudhanshumalani.github.io/meetingflow-app" target="_blank" class="text-blue-600 underline font-medium">MeetingFlow App</a></li>
+              <li>Press <strong>F12</strong> to open browser console</li>
+              <li>Click the <strong>Console</strong> tab</li>
+              <li><strong>Paste</strong> the script and press <strong>Enter</strong></li>
+              <li>Wait for confirmation message</li>
+              <li>Press <strong>F5</strong> to refresh the page</li>
+              <li><strong>CRITICAL:</strong> Go to Settings → Sync to Cloud immediately!</li>
+            </ol>
+          </div>
+
+          <div class="mt-6 bg-red-50 border-l-4 border-red-400 p-6 rounded-lg">
+            <h3 class="font-bold text-red-900 mb-2">⚠️ IMPORTANT</h3>
+            <p class="text-red-800 text-sm">
+              After importing, <strong>immediately sync to cloud</strong> and <strong>export a backup</strong>.
+              Do NOT close your mobile browser until you've confirmed the data is safely on desktop!
+            </p>
+          </div>
+        </div>
+      `
+
+      resultsDiv.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+
+    function generateImportScript(meetings, stakeholders, categories) {
+      return `// IMPORT FROM MOBILE BACKUP
+// Generated: ${new Date().toISOString()}
+// Meetings: ${meetings.length}, Stakeholders: ${stakeholders.length}, Categories: ${categories.length}
+
+(function() {
+  console.log('🔄 Importing mobile backup...')
+  console.log('  Meetings:', ${meetings.length})
+  console.log('  Stakeholders:', ${stakeholders.length})
+  console.log('  Categories:', ${categories.length})
+
+  const backupMeetings = ${JSON.stringify(meetings, null, 2)}
+  const backupStakeholders = ${JSON.stringify(stakeholders, null, 2)}
+  const backupCategories = ${JSON.stringify(categories, null, 2)}
+
+  // Get existing data
+  const existingMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+  const existingStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+  const existingCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+
+  console.log('Current data:', {
+    meetings: existingMeetings.length,
+    stakeholders: existingStakeholders.length,
+    categories: existingCategories.length
+  })
+
+  // Check for duplicates
+  const existingMeetingIds = new Set(existingMeetings.map(m => m.id))
+  const existingStakeholderIds = new Set(existingStakeholders.map(s => s.id))
+  const existingCategoryIds = new Set(existingCategories.map(c => c.id))
+
+  let imported = { meetings: 0, stakeholders: 0, categories: 0 }
+  let skipped = { meetings: 0, stakeholders: 0, categories: 0 }
+
+  // Import meetings
+  backupMeetings.forEach(meeting => {
+    if (existingMeetingIds.has(meeting.id)) {
+      skipped.meetings++
+    } else {
+      existingMeetings.unshift(meeting)
+      imported.meetings++
+    }
+  })
+
+  // Import stakeholders
+  backupStakeholders.forEach(stakeholder => {
+    if (existingStakeholderIds.has(stakeholder.id)) {
+      skipped.stakeholders++
+    } else {
+      existingStakeholders.unshift(stakeholder)
+      imported.stakeholders++
+    }
+  })
+
+  // Import categories
+  backupCategories.forEach(category => {
+    if (existingCategoryIds.has(category.id)) {
+      skipped.categories++
+    } else {
+      existingCategories.unshift(category)
+      imported.categories++
+    }
+  })
+
+  // Save everything
+  localStorage.setItem('meetingflow_meetings', JSON.stringify(existingMeetings))
+  localStorage.setItem('meetingflow_stakeholders', JSON.stringify(existingStakeholders))
+  localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(existingCategories))
+
+  console.log('')
+  console.log('📊 IMPORT COMPLETE!')
+  console.log('  ✅ Imported:')
+  console.log('    - Meetings:', imported.meetings)
+  console.log('    - Stakeholders:', imported.stakeholders)
+  console.log('    - Categories:', imported.categories)
+  console.log('  ⏭️ Skipped (duplicates):')
+  console.log('    - Meetings:', skipped.meetings)
+  console.log('    - Stakeholders:', skipped.stakeholders)
+  console.log('    - Categories:', skipped.categories)
+  console.log('  📝 Total now:')
+  console.log('    - Meetings:', existingMeetings.length)
+  console.log('    - Stakeholders:', existingStakeholders.length)
+  console.log('    - Categories:', existingCategories.length)
+
+  // Trigger storage event
+  window.dispatchEvent(new CustomEvent('meetingflow-storage-updated', {
+    detail: {
+      source: 'mobile-import',
+      operation: 'import',
+      imported: imported,
+      skipped: skipped
+    }
+  }))
+
+  alert(\`✅ IMPORT COMPLETE!
+
+Imported:
+• \${imported.meetings} meetings
+• \${imported.stakeholders} stakeholders
+• \${imported.categories} categories
+
+Skipped: \${skipped.meetings} duplicates
+
+Total: \${existingMeetings.length} meetings
+
+🔄 Refresh (F5) to see them!
+
+⚠️ IMPORTANT: Go to Settings → Sync to Cloud NOW!\`)
+})()
+`
+    }
+
+    function copyScript() {
+      const textarea = document.getElementById('importScript')
+      textarea.select()
+      document.execCommand('copy')
+      alert('✅ Script copied to clipboard!\n\nNow:\n1. Open your MeetingFlow app\n2. Press F12\n3. Paste in Console\n4. Press Enter\n5. Refresh (F5)')
+    }
+
+    function downloadScript() {
+      const script = document.getElementById('importScript').value
+      const blob = new Blob([script], { type: 'text/javascript' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `meetingflow-mobile-import-${Date.now()}.js`
+      a.click()
+      URL.revokeObjectURL(url)
+      alert('✅ Script downloaded!')
+    }
+  </script>
+</body>
+</html>

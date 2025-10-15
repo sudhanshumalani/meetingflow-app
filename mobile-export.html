@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mobile Export Tool</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: white;
+      border-radius: 20px;
+      padding: 30px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      color: #667eea;
+      font-size: 28px;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+
+    .subtitle {
+      color: #666;
+      text-align: center;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+
+    .status {
+      background: #f0f4ff;
+      border-left: 4px solid #667eea;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+
+    .status.success {
+      background: #f0fdf4;
+      border-left-color: #22c55e;
+    }
+
+    .status.error {
+      background: #fef2f2;
+      border-left-color: #ef4444;
+    }
+
+    .big-number {
+      font-size: 48px;
+      font-weight: bold;
+      color: #667eea;
+      text-align: center;
+      margin: 20px 0;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 18px;
+      border: none;
+      border-radius: 12px;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-bottom: 12px;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-primary:active {
+      transform: scale(0.98);
+    }
+
+    .btn-success {
+      background: #22c55e;
+      color: white;
+    }
+
+    .btn-secondary {
+      background: #f3f4f6;
+      color: #374151;
+    }
+
+    .meeting-list {
+      max-height: 300px;
+      overflow-y: auto;
+      margin: 20px 0;
+    }
+
+    .meeting-item {
+      background: #f9fafb;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    .meeting-title {
+      font-weight: bold;
+      color: #111827;
+      margin-bottom: 4px;
+    }
+
+    .meeting-meta {
+      color: #6b7280;
+      font-size: 12px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    textarea {
+      width: 100%;
+      height: 200px;
+      padding: 12px;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+
+    .warning {
+      background: #fef3c7;
+      border-left: 4px solid #f59e0b;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      color: #92400e;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+    }
+
+    .spinner {
+      border: 4px solid #f3f4f6;
+      border-top: 4px solid #667eea;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 20px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>📱 Mobile Export Tool</h1>
+      <p class="subtitle">Export your meetings from mobile device</p>
+
+      <div class="warning">
+        <strong>⚠️ IMPORTANT:</strong> Do NOT close this browser or clear data until export is complete!
+      </div>
+
+      <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>Scanning for meetings...</p>
+      </div>
+
+      <div id="results" class="hidden">
+        <div class="status success">
+          <div class="big-number" id="meetingCount">0</div>
+          <div style="text-align: center; font-weight: bold;">Meetings Found!</div>
+        </div>
+
+        <div id="meetingList" class="meeting-list"></div>
+
+        <button class="btn btn-primary" onclick="downloadBackup()">
+          <span>💾</span>
+          <span>Download Backup File</span>
+        </button>
+
+        <button class="btn btn-success" onclick="copyToClipboard()">
+          <span>📋</span>
+          <span>Copy to Clipboard</span>
+        </button>
+
+        <button class="btn btn-secondary" onclick="showData()">
+          <span>👁️</span>
+          <span>View Data</span>
+        </button>
+      </div>
+
+      <div id="dataView" class="hidden">
+        <h3 style="margin-bottom: 12px;">Your Data:</h3>
+        <textarea id="dataTextarea" readonly></textarea>
+        <button class="btn btn-secondary" onclick="hideData()">Close</button>
+      </div>
+
+      <div id="noData" class="hidden">
+        <div class="status error">
+          <strong>❌ No meetings found</strong>
+          <p style="margin-top: 8px; font-size: 14px;">
+            This browser doesn't have any meeting data. Make sure you're on the device where you recorded the meetings.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="background: #fef3c7; border: 2px solid #f59e0b;">
+      <h3 style="color: #92400e; margin-bottom: 12px;">📝 Next Steps After Export:</h3>
+      <ol style="color: #92400e; font-size: 14px; line-height: 1.8; padding-left: 20px;">
+        <li>Send the downloaded file to yourself via email or cloud storage</li>
+        <li>Open the file on your desktop computer</li>
+        <li>Use the import tool on desktop to restore meetings</li>
+        <li><strong>Do NOT delete anything on mobile until confirmed on desktop</strong></li>
+      </ol>
+    </div>
+  </div>
+
+  <script>
+    let backupData = null
+
+    // Auto-run on page load
+    window.addEventListener('DOMContentLoaded', function() {
+      setTimeout(scanForData, 500)
+    })
+
+    function scanForData() {
+      try {
+        // Get all meeting-related data
+        const meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        const stakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+        const categories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+
+        // Create backup object
+        backupData = {
+          meetings: meetings,
+          stakeholders: stakeholders,
+          categories: categories,
+          exportedAt: new Date().toISOString(),
+          exportedFrom: 'mobile',
+          deviceInfo: {
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            language: navigator.language
+          }
+        }
+
+        document.getElementById('loading').classList.add('hidden')
+
+        if (meetings.length > 0) {
+          // Show results
+          document.getElementById('results').classList.remove('hidden')
+          document.getElementById('meetingCount').textContent = meetings.length
+
+          // Display meeting list
+          const listDiv = document.getElementById('meetingList')
+          listDiv.innerHTML = meetings.slice(0, 20).map((m, i) => `
+            <div class="meeting-item">
+              <div class="meeting-title">${i + 1}. ${m.title || 'Untitled Meeting'}</div>
+              <div class="meeting-meta">
+                ${m.date || 'No date'} • ${m.wordCount || 0} words
+              </div>
+            </div>
+          `).join('')
+
+          if (meetings.length > 20) {
+            listDiv.innerHTML += `<div class="meeting-item" style="text-align: center; color: #6b7280;">
+              ...and ${meetings.length - 20} more meetings
+            </div>`
+          }
+        } else {
+          // No data found
+          document.getElementById('noData').classList.remove('hidden')
+        }
+
+      } catch (error) {
+        document.getElementById('loading').classList.add('hidden')
+        document.getElementById('noData').classList.remove('hidden')
+        console.error('Error scanning data:', error)
+      }
+    }
+
+    function downloadBackup() {
+      if (!backupData) {
+        alert('No data to export')
+        return
+      }
+
+      try {
+        const jsonString = JSON.stringify(backupData, null, 2)
+        const blob = new Blob([jsonString], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `meetingflow-mobile-backup-${Date.now()}.json`
+
+        // Trigger download
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+
+        alert(`✅ Downloaded backup with ${backupData.meetings.length} meetings!\n\n📧 Now send this file to yourself via email or cloud storage, then import on desktop.`)
+      } catch (error) {
+        alert('❌ Download failed: ' + error.message)
+      }
+    }
+
+    function copyToClipboard() {
+      if (!backupData) {
+        alert('No data to copy')
+        return
+      }
+
+      try {
+        const jsonString = JSON.stringify(backupData, null, 2)
+
+        // Create temporary textarea
+        const textarea = document.createElement('textarea')
+        textarea.value = jsonString
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+
+        // Try to copy
+        const success = document.execCommand('copy')
+        document.body.removeChild(textarea)
+
+        if (success) {
+          alert(`✅ Copied ${backupData.meetings.length} meetings to clipboard!\n\n📧 Now paste this into an email to yourself, or into a note app, then send to your desktop.`)
+        } else {
+          alert('❌ Copy failed. Try using the Download button instead.')
+        }
+      } catch (error) {
+        alert('❌ Copy failed: ' + error.message + '\n\nTry using the Download button instead.')
+      }
+    }
+
+    function showData() {
+      if (!backupData) return
+
+      document.getElementById('results').classList.add('hidden')
+      document.getElementById('dataView').classList.remove('hidden')
+      document.getElementById('dataTextarea').value = JSON.stringify(backupData, null, 2)
+    }
+
+    function hideData() {
+      document.getElementById('results').classList.remove('hidden')
+      document.getElementById('dataView').classList.add('hidden')
+    }
+  </script>
+</body>
+</html>

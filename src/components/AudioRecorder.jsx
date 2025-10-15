@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Mic, MicOff, Square, Volume2, Settings, ChevronDown, Users, Loader2 } from 'lucide-react'
 import assemblyAIService from '../services/assemblyAIService'
 import assemblyAISpeakerService from '../services/assemblyAISpeakerService'
+import StreamingTranscriptBuffer from '../utils/StreamingTranscriptBuffer'
+import StreamingAudioBuffer from '../utils/StreamingAudioBuffer'
 
 const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
@@ -45,6 +47,11 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
   const tabConnectionIdRef = useRef(null) // Track tab audio connection ID
   const micConnectionIdRef = useRef(null) // Track microphone connection ID
   const mergeAudioContextRef = useRef(null) // Audio context for merging streams
+
+  // Buffer session tracking for crash recovery
+  const transcriptSessionIdRef = useRef(null) // Current transcript buffer session
+  const audioSessionIdRef = useRef(null) // Current audio buffer session
+  const chunkIndexRef = useRef(0) // Track audio chunk index
 
   // Initialize service on mount
   useEffect(() => {
@@ -205,34 +212,76 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             console.log('🎙️ Tab audio: Starting recording for speaker diarization')
             recordedChunksRef.current = []
 
+            // Start buffer sessions
+            transcriptSessionIdRef.current = await StreamingTranscriptBuffer.startSession({
+              audioSource: 'tabAudio',
+              recordingMode: 'hybrid-speaker'
+            })
+
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+              ? 'audio/webm;codecs=opus'
+              : 'audio/webm'
+
+            audioSessionIdRef.current = await StreamingAudioBuffer.startSession({
+              audioSource: 'tabAudio',
+              mimeType,
+              sampleRate: 16000
+            })
+
+            chunkIndexRef.current = 0
+
             const audioTrack = displayStream.getAudioTracks()[0]
             if (audioTrack) {
               const audioStream = new MediaStream([audioTrack])
-              const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                ? 'audio/webm;codecs=opus'
-                : 'audio/webm'
 
               mediaRecorderRef.current = new MediaRecorder(audioStream, { mimeType, audioBitsPerSecond: 128000 })
 
-              mediaRecorderRef.current.ondataavailable = (event) => {
+              mediaRecorderRef.current.ondataavailable = async (event) => {
                 if (event.data.size > 0) {
                   recordedChunksRef.current.push(event.data)
+
+                  // Store chunk incrementally to IndexedDB
+                  if (audioSessionIdRef.current) {
+                    await StreamingAudioBuffer.storeChunk(
+                      audioSessionIdRef.current,
+                      event.data,
+                      chunkIndexRef.current++
+                    )
+                  }
                 }
               }
 
               mediaRecorderRef.current.start(1000)
               console.log('✅ Tab audio recording started for speaker processing')
             }
+          } else {
+            // Streaming-only mode (no speakers)
+            transcriptSessionIdRef.current = await StreamingTranscriptBuffer.startSession({
+              audioSource: 'tabAudio',
+              recordingMode: 'streaming-only'
+            })
           }
 
           // Start real-time streaming transcription for tab audio
           await assemblyAIService.startTabAudioStreaming(displayStream, {
-            onTranscript: (text, isFinal) => {
+            onTranscript: async (text, isFinal, turnOrder) => {
               console.log('🖥️ Tab audio transcript:', {
                 text: text?.substring(0, 50),
                 isFinal,
                 length: text?.length
               })
+
+              // Buffer turn to IndexedDB
+              if (transcriptSessionIdRef.current && text) {
+                await StreamingTranscriptBuffer.bufferTurn(transcriptSessionIdRef.current, {
+                  turnId: `turn_${turnOrder}`,
+                  text,
+                  isFinal,
+                  endOfTurn: isFinal,
+                  audioSource: 'tabAudio',
+                  recordingMode: enableSpeakerDiarization ? 'hybrid-speaker' : 'streaming-only'
+                })
+              }
 
               if (isFinal && text.trim()) {
                 if (enableSpeakerDiarization) {
@@ -324,6 +373,24 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             recordedChunksRef.current = []
             console.log('🧹 Recording state cleared, ready for fresh recording')
 
+            // Start buffer sessions
+            transcriptSessionIdRef.current = await StreamingTranscriptBuffer.startSession({
+              audioSource: 'mixed',
+              recordingMode: 'hybrid-speaker'
+            })
+
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+              ? 'audio/webm;codecs=opus'
+              : 'audio/webm'
+
+            audioSessionIdRef.current = await StreamingAudioBuffer.startSession({
+              audioSource: 'mixed',
+              mimeType,
+              sampleRate: 16000
+            })
+
+            chunkIndexRef.current = 0
+
             // Create audio context for merging streams
             const audioContext = new (window.AudioContext || window.webkitAudioContext)()
             mergeAudioContextRef.current = audioContext
@@ -347,16 +414,22 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
               // Record the merged stream
               const mergedStream = destination.stream
-              const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                ? 'audio/webm;codecs=opus'
-                : 'audio/webm'
 
               mediaRecorderRef.current = new MediaRecorder(mergedStream, { mimeType, audioBitsPerSecond: 128000 })
 
-              mediaRecorderRef.current.ondataavailable = (event) => {
+              mediaRecorderRef.current.ondataavailable = async (event) => {
                 if (event.data.size > 0) {
                   recordedChunksRef.current.push(event.data)
                   console.log(`📦 Hybrid recording chunk: ${(event.data.size / 1024).toFixed(2)} KB`)
+
+                  // Store chunk incrementally to IndexedDB
+                  if (audioSessionIdRef.current) {
+                    await StreamingAudioBuffer.storeChunk(
+                      audioSessionIdRef.current,
+                      event.data,
+                      chunkIndexRef.current++
+                    )
+                  }
                 }
               }
 
@@ -365,6 +438,12 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
             } else {
               console.warn('⚠️ Missing audio tracks, speaker diarization may not work correctly')
             }
+          } else {
+            // Streaming-only hybrid mode (no speakers)
+            transcriptSessionIdRef.current = await StreamingTranscriptBuffer.startSession({
+              audioSource: 'mixed',
+              recordingMode: 'streaming-only'
+            })
           }
 
           // Create independent connections for real-time streaming (no interference)
@@ -377,8 +456,20 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
           // Start real-time tab audio streaming (using independent connection)
           await assemblyAIService.startRealtimeTranscriptionWithConnection(tabConnectionIdRef.current, displayStream, {
-            onTranscript: (text, isFinal) => {
+            onTranscript: async (text, isFinal, turnOrder) => {
               console.log('🖥️ [Hybrid] Tab transcript:', { text: text?.substring(0, 30), isFinal })
+
+              // Buffer turn to IndexedDB
+              if (transcriptSessionIdRef.current && text) {
+                await StreamingTranscriptBuffer.bufferTurn(transcriptSessionIdRef.current, {
+                  turnId: `tab_turn_${turnOrder}`,
+                  text: `[Tab] ${text}`,
+                  isFinal,
+                  endOfTurn: isFinal,
+                  audioSource: 'mixed',
+                  recordingMode: enableSpeakerDiarization ? 'hybrid-speaker' : 'streaming-only'
+                })
+              }
 
               if (isFinal && text.trim()) {
                 if (enableSpeakerDiarization) {
@@ -406,8 +497,20 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
           // Start real-time microphone streaming (using independent connection)
           await assemblyAIService.startRealtimeTranscriptionWithConnection(micConnectionIdRef.current, micStream, {
-            onTranscript: (text, isFinal) => {
+            onTranscript: async (text, isFinal, turnOrder) => {
               console.log('🎙️ [Hybrid] Mic transcript:', { text: text?.substring(0, 30), isFinal })
+
+              // Buffer turn to IndexedDB
+              if (transcriptSessionIdRef.current && text) {
+                await StreamingTranscriptBuffer.bufferTurn(transcriptSessionIdRef.current, {
+                  turnId: `mic_turn_${turnOrder}`,
+                  text: `[Mic] ${text}`,
+                  isFinal,
+                  endOfTurn: isFinal,
+                  audioSource: 'mixed',
+                  recordingMode: enableSpeakerDiarization ? 'hybrid-speaker' : 'streaming-only'
+                })
+              }
 
               if (isFinal && text.trim()) {
                 if (enableSpeakerDiarization) {
@@ -465,6 +568,20 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         if (enableSpeakerDiarization) {
           console.log('🎙️ Starting with speaker diarization enabled')
 
+          // Start buffer sessions
+          transcriptSessionIdRef.current = await StreamingTranscriptBuffer.startSession({
+            audioSource: 'microphone',
+            recordingMode: 'hybrid-speaker'
+          })
+
+          audioSessionIdRef.current = await StreamingAudioBuffer.startSession({
+            audioSource: 'microphone',
+            mimeType: 'audio/webm;codecs=opus',
+            sampleRate: 16000
+          })
+
+          chunkIndexRef.current = 0
+
           await assemblyAISpeakerService.startHybridTranscription(
             micStream,
             {
@@ -475,7 +592,19 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
               // Real-time transcript (no speakers, instant feedback)
               // Note: When speaker diarization is enabled, we show real-time preview
               // but don't persist it - speaker processing will provide the final transcript
-              onRealtimeTranscript: (text, isFinal) => {
+              onRealtimeTranscript: async (text, isFinal, turnOrder) => {
+                // Buffer streaming transcript for recovery
+                if (transcriptSessionIdRef.current && text) {
+                  await StreamingTranscriptBuffer.bufferTurn(transcriptSessionIdRef.current, {
+                    turnId: `turn_${turnOrder}`,
+                    text,
+                    isFinal,
+                    endOfTurn: isFinal,
+                    audioSource: 'microphone',
+                    recordingMode: 'hybrid-speaker'
+                  })
+                }
+
                 if (isFinal && text.trim()) {
                   // During speaker mode, just show the transcript without persisting
                   // The speaker processing will handle persistence after stop
@@ -533,14 +662,33 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
           )
         } else {
           // Regular real-time transcription (no speakers)
+
+          // Start transcript buffer session
+          transcriptSessionIdRef.current = await StreamingTranscriptBuffer.startSession({
+            audioSource: 'microphone',
+            recordingMode: 'streaming-only'
+          })
+
           await assemblyAIService.startRealtimeTranscription(micStream, {
-            onTranscript: (text, isFinal) => {
+            onTranscript: async (text, isFinal, turnOrder) => {
               console.log('🎤 AssemblyAI transcript:', {
                 text: text?.substring(0, 50),
                 isFinal,
                 length: text?.length,
                 persistentLength: persistentTranscriptRef.current.length
               })
+
+              // Buffer turn to IndexedDB
+              if (transcriptSessionIdRef.current) {
+                await StreamingTranscriptBuffer.bufferTurn(transcriptSessionIdRef.current, {
+                  turnId: `turn_${turnOrder}`,
+                  text,
+                  isFinal,
+                  endOfTurn: isFinal,
+                  audioSource: 'microphone',
+                  recordingMode: 'streaming-only'
+                })
+              }
 
               if (isFinal && text.trim()) {
                 persistentTranscriptRef.current += text + ' '
@@ -600,6 +748,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
     try {
       handleAutoSave('stop')
 
+      // Complete transcript buffer session
+      if (transcriptSessionIdRef.current) {
+        await StreamingTranscriptBuffer.completeSession(transcriptSessionIdRef.current, {
+          speakerProcessingStatus: enableSpeakerDiarization ? 'processing' : 'not-applicable'
+        })
+      }
+
       // If speaker diarization is enabled, trigger processing
       if (enableSpeakerDiarization) {
         console.log('🛑 Stopping with speaker diarization processing...')
@@ -648,6 +803,16 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
 
                 console.log('✅ Speaker diarization complete:', speakerData)
 
+                // Mark audio upload as completed
+                if (audioSessionIdRef.current && speakerData.id) {
+                  await StreamingAudioBuffer.markUploaded(audioSessionIdRef.current, speakerData.id)
+                }
+
+                // Update transcript buffer with completed speaker status
+                if (transcriptSessionIdRef.current) {
+                  await StreamingTranscriptBuffer.updateSpeakerStatus(transcriptSessionIdRef.current, 'completed')
+                }
+
                 // Accumulate speaker utterances across sessions
                 if (speakerData.utterances && speakerData.utterances.length > 0) {
                   accumulatedUtterancesRef.current = [...accumulatedUtterancesRef.current, ...speakerData.utterances]
@@ -687,6 +852,17 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
               } catch (error) {
                 console.error('❌ Speaker diarization failed:', error)
                 setError('Speaker identification failed. Showing plain transcript.')
+
+                // Mark audio upload as failed
+                if (audioSessionIdRef.current) {
+                  await StreamingAudioBuffer.markUploadFailed(audioSessionIdRef.current, error.message)
+                }
+
+                // Update transcript buffer with failed status
+                if (transcriptSessionIdRef.current) {
+                  await StreamingTranscriptBuffer.updateSpeakerStatus(transcriptSessionIdRef.current, 'failed')
+                }
+
                 setIsProcessingSpeakers(false)
                 // Clear chunks even on error to prevent retry with bad data
                 recordedChunksRef.current = []
@@ -771,6 +947,11 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
         mediaRecorderRef.current = null
         recordedChunksRef.current = []
       }
+
+      // Clear session refs (sessions are completed in IndexedDB)
+      transcriptSessionIdRef.current = null
+      audioSessionIdRef.current = null
+      chunkIndexRef.current = 0
 
       console.log('🛑 Recording stopped - transcript preserved:', {
         length: transcript.length,

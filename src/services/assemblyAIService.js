@@ -21,6 +21,16 @@ class AssemblyAIService {
     // Track multiple concurrent connections (for hybrid mode)
     this.connections = new Map()
 
+    // Reconnection tracking
+    this.reconnectionEnabled = false
+    this.reconnectAttempts = 0
+    this.maxReconnectAttempts = 5
+    this.reconnectDelay = 1000 // Start with 1 second
+    this.reconnectTimeout = null
+    this.lastAudioStream = null
+    this.lastCallbacks = null
+    this.lastTurnOrder = 0 // Track Turn sequence for gap detection
+
     console.log('🎯 AssemblyAI Service initialized')
   }
 
@@ -363,6 +373,10 @@ class AssemblyAIService {
 
     const { onTranscript, onError, onClose } = callbacks
 
+    // Save for reconnection
+    this.lastAudioStream = audioStream
+    this.lastCallbacks = callbacks
+
     try {
       console.log('🎙️ AssemblyAI: Starting real-time transcription...')
 
@@ -388,10 +402,16 @@ class AssemblyAIService {
 
         if (data.type === 'Begin') {
           console.log('🎬 AssemblyAI: Session started:', data.id, 'expires:', data.expires_at)
+          this.reconnectionEnabled = true // Enable reconnection after successful connection
         } else if (data.type === 'Turn') {
           // v3 Universal Streaming: All transcripts come as "Turn" messages
           const isFinal = data.end_of_turn === true
           const text = data.transcript || ''
+
+          // Track Turn sequence for gap detection
+          if (data.turn_order > this.lastTurnOrder) {
+            this.lastTurnOrder = data.turn_order
+          }
 
           if (text) {
             console.log(`📝 AssemblyAI Turn #${data.turn_order}:`, {
@@ -400,7 +420,7 @@ class AssemblyAIService {
               confidence: data.end_of_turn_confidence
             })
             if (onTranscript) {
-              onTranscript(text, isFinal)
+              onTranscript(text, isFinal, data.turn_order)
             }
           }
         } else if (data.type === 'Termination') {
@@ -424,8 +444,21 @@ class AssemblyAIService {
           wasClean: event.wasClean
         })
         this.isStreaming = false
-        if (onClose) onClose()
-        this.cleanup()
+
+        // Attempt reconnection if enabled and close was unexpected
+        if (this.reconnectionEnabled && !event.wasClean && this.reconnectAttempts < this.maxReconnectAttempts) {
+          console.warn(`⚠️ Unexpected disconnect. Attempting reconnection (${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})...`)
+          this.attemptReconnect(audioStream, callbacks)
+        } else {
+          // Normal close or max retries reached
+          if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            console.error('❌ Max reconnection attempts reached. Giving up.')
+            if (onError) onError(new Error('Max reconnection attempts reached'))
+          }
+          this.reconnectionEnabled = false
+          if (onClose) onClose()
+          this.cleanup()
+        }
       }
 
       // Step 4: Set up audio processing
@@ -529,6 +562,9 @@ class AssemblyAIService {
    */
   stopRealtimeTranscription() {
     console.log('🛑 AssemblyAI: Stopping real-time transcription...')
+
+    // Disable reconnection before intentional stop
+    this.disableReconnection()
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       // Send terminate message
@@ -737,6 +773,81 @@ class AssemblyAIService {
   stopRecording() {
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       this.mediaRecorder.stop()
+    }
+  }
+
+  /**
+   * Attempt to reconnect WebSocket with exponential backoff
+   * @param {MediaStream} audioStream
+   * @param {Object} callbacks
+   */
+  async attemptReconnect(audioStream, callbacks) {
+    this.reconnectAttempts++
+
+    // Calculate delay with exponential backoff (max 30 seconds)
+    const delay = Math.min(
+      this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
+      30000
+    )
+
+    console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`)
+
+    // Clear any existing reconnect timeout
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout)
+    }
+
+    this.reconnectTimeout = setTimeout(async () => {
+      try {
+        console.log('🔄 Attempting to reconnect WebSocket...')
+
+        // Cleanup old connection first (but keep audioStream reference)
+        if (this.processor) {
+          this.processor.disconnect()
+          this.processor = null
+        }
+        if (this.source) {
+          this.source.disconnect()
+          this.source = null
+        }
+        if (this.audioContext && this.audioContext.state !== 'closed') {
+          await this.audioContext.close()
+          this.audioContext = null
+        }
+        if (this.ws) {
+          this.ws = null
+        }
+
+        // Attempt reconnection
+        await this.startRealtimeTranscription(audioStream, callbacks)
+
+        // Success - reset reconnection state
+        this.reconnectAttempts = 0
+        console.log('✅ Reconnection successful!')
+      } catch (error) {
+        console.error('❌ Reconnection failed:', error)
+
+        // If we haven't exceeded max attempts, the onclose handler will trigger another attempt
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+          console.error('❌ Max reconnection attempts reached')
+          this.reconnectionEnabled = false
+          if (callbacks.onError) {
+            callbacks.onError(new Error('Failed to reconnect after maximum attempts'))
+          }
+        }
+      }
+    }, delay)
+  }
+
+  /**
+   * Disable reconnection (call this before intentional stop)
+   */
+  disableReconnection() {
+    this.reconnectionEnabled = false
+    this.reconnectAttempts = 0
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout)
+      this.reconnectTimeout = null
     }
   }
 

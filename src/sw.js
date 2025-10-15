@@ -1,9 +1,12 @@
 /**
- * Clean PWA Service Worker
- * Handles caching and offline functionality only
+ * Enhanced PWA Service Worker
+ * Handles caching, offline functionality, and background sync for audio uploads
  */
 
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching'
+import { registerRoute } from 'workbox-routing'
+import { NetworkOnly, NetworkFirst } from 'workbox-strategies'
+import { BackgroundSyncPlugin } from 'workbox-background-sync'
 
 // Clean up outdated caches first
 cleanupOutdatedCaches()
@@ -12,6 +15,52 @@ cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
 
 console.log('🔧 PWA Service Worker installed')
+
+/**
+ * Background Sync Queue for Audio Uploads
+ * Retries failed AssemblyAI audio uploads automatically
+ */
+const audioUploadQueue = new BackgroundSyncPlugin('audio-upload-queue', {
+  maxRetentionTime: 24 * 60 // Retry for up to 24 hours (in minutes)
+})
+
+/**
+ * Route: AssemblyAI Audio Upload
+ * Use NetworkOnly strategy with background sync for retries
+ */
+registerRoute(
+  ({ url }) => url.hostname === 'api.assemblyai.com' && url.pathname.includes('/v2/upload'),
+  new NetworkOnly({
+    plugins: [audioUploadQueue]
+  }),
+  'POST'
+)
+
+/**
+ * Route: AssemblyAI Transcript Polling
+ * Use NetworkFirst strategy (cache with network fallback)
+ */
+registerRoute(
+  ({ url }) => url.hostname === 'api.assemblyai.com' && url.pathname.includes('/v2/transcript'),
+  new NetworkFirst({
+    cacheName: 'assemblyai-transcripts',
+    plugins: [
+      {
+        cacheWillUpdate: async ({ response }) => {
+          // Only cache completed transcripts
+          if (response.status === 200) {
+            const clone = response.clone()
+            const data = await clone.json()
+            if (data.status === 'completed' || data.status === 'error') {
+              return response
+            }
+          }
+          return null
+        }
+      }
+    ]
+  })
+)
 
 /**
  * Service Worker Installation

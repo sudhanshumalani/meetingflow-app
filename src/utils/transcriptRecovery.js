@@ -1,164 +1,281 @@
 /**
- * EMERGENCY TRANSCRIPT RECOVERY TOOL
- * Recovers transcripts from Assembly AI when local data is lost
+ * transcriptRecovery.js
+ *
+ * 4-tier fallback recovery system for transcript data
  */
+
+import StreamingTranscriptBuffer from './StreamingTranscriptBuffer'
+import StreamingAudioBuffer from './StreamingAudioBuffer'
 
 /**
- * Search browser console logs for Assembly AI transcript ID
- * Look for patterns like: "Speaker diarization job created: [ID]"
+ * Attempt to recover transcript data using 4-tier fallback
+ * @param {string} sessionId - Session ID to recover
+ * @param {Object} reactState - React state as fallback
+ * @returns {Object} Recovery result
  */
-export function searchConsoleForTranscriptId() {
-  console.warn('🔍 TRANSCRIPT RECOVERY: Searching for Assembly AI transcript ID...')
-  console.warn('📋 Please check your browser console history for messages like:')
-  console.warn('   "✅ Speaker diarization job created: [TRANSCRIPT_ID]"')
-  console.warn('   "✅ Audio uploaded: [UPLOAD_URL]"')
-  console.warn('')
-  console.warn('⚠️ If you find a transcript ID, use: recoverTranscript("TRANSCRIPT_ID")')
-}
-
-/**
- * Recover transcript from Assembly AI using transcript ID
- * @param {string} transcriptId - Assembly AI transcript ID
- * @param {string} apiKey - Assembly AI API key (from env)
- * @returns {Promise<Object>} - Recovered transcript data
- */
-export async function recoverTranscript(transcriptId, apiKey = null) {
-  // Get API key from environment or parameter
-  const key = apiKey || import.meta.env.VITE_ASSEMBLYAI_API_KEY
-
-  if (!key || key === 'your_api_key_here') {
-    throw new Error('❌ Assembly AI API key required. Please provide it as parameter or set VITE_ASSEMBLYAI_API_KEY')
+export async function recoverTranscript(sessionId, reactState = {}) {
+  const recovery = {
+    success: false,
+    tier: null,
+    transcript: '',
+    speakerData: null,
+    audioSource: 'unknown',
+    recordingMode: 'unknown',
+    metadata: {}
   }
-
-  console.log('🔄 Attempting to recover transcript:', transcriptId)
 
   try {
-    const response = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
-      headers: { authorization: key }
-    })
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch transcript: ${response.statusText}`)
+    // Tier 1: Complete speaker data (AssemblyAI processed)
+    const tier1Result = await attemptTier1Recovery(sessionId)
+    if (tier1Result.success) {
+      console.log('✅ Tier 1 Recovery: Found complete speaker data')
+      return { ...recovery, ...tier1Result, tier: 1 }
     }
 
-    const transcript = await response.json()
-
-    if (transcript.status === 'completed') {
-      console.log('✅ TRANSCRIPT RECOVERED!', {
-        speakers: countSpeakers(transcript.utterances),
-        utterances: transcript.utterances?.length || 0,
-        words: transcript.words?.length || 0,
-        textLength: transcript.text?.length || 0,
-        text: transcript.text
-      })
-
-      // Format the data
-      const recoveredData = {
-        text: transcript.text,
-        utterances: transcript.utterances || [],
-        words: transcript.words || [],
-        speakers_detected: countSpeakers(transcript.utterances),
-        confidence: transcript.confidence,
-        audio_duration: transcript.audio_duration,
-        recovered: true,
-        recoveredAt: new Date().toISOString()
-      }
-
-      // Save to localStorage as backup
-      localStorage.setItem('recovered_transcript_backup', JSON.stringify(recoveredData))
-      console.log('💾 Transcript saved to localStorage as backup')
-
-      return recoveredData
-    } else if (transcript.status === 'error') {
-      throw new Error(`Transcript processing failed: ${transcript.error}`)
-    } else {
-      throw new Error(`Transcript status: ${transcript.status} (not completed yet)`)
+    // Tier 2: Partial speaker + streaming merge
+    const tier2Result = await attemptTier2Recovery(sessionId)
+    if (tier2Result.success) {
+      console.log('✅ Tier 2 Recovery: Merged partial speaker data with streaming transcript')
+      return { ...recovery, ...tier2Result, tier: 2 }
     }
+
+    // Tier 3: Streaming buffer only (IndexedDB turns)
+    const tier3Result = await attemptTier3Recovery(sessionId)
+    if (tier3Result.success) {
+      console.log('✅ Tier 3 Recovery: Reconstructed from streaming buffer')
+      return { ...recovery, ...tier3Result, tier: 3 }
+    }
+
+    // Tier 4: React state (last resort)
+    const tier4Result = attemptTier4Recovery(reactState)
+    if (tier4Result.success) {
+      console.log('✅ Tier 4 Recovery: Using React state')
+      return { ...recovery, ...tier4Result, tier: 4 }
+    }
+
+    console.warn('❌ All recovery tiers failed')
+    return recovery
+
   } catch (error) {
     console.error('❌ Recovery failed:', error)
-    throw error
+    return recovery
   }
 }
 
 /**
- * Count unique speakers from utterances
+ * Tier 1: Complete speaker data from AssemblyAI processing
+ * This is the best case - full speaker diarization completed successfully
  */
-function countSpeakers(utterances) {
-  if (!utterances || utterances.length === 0) return 0
-  const speakers = new Set(utterances.map(u => u.speaker))
-  return speakers.size
-}
+async function attemptTier1Recovery(sessionId) {
+  try {
+    const session = await StreamingTranscriptBuffer.getSession(sessionId)
 
-/**
- * Format recovered transcript for display
- */
-export function formatRecoveredTranscript(speakerData, speakerLabels = {}) {
-  if (!speakerData.utterances || speakerData.utterances.length === 0) {
-    return speakerData.text || ''
-  }
-
-  return speakerData.utterances.map(utterance => {
-    const speakerName = speakerLabels[utterance.speaker] || `Speaker ${utterance.speaker}`
-    return `[${speakerName}]: ${utterance.text}`
-  }).join('\n\n')
-}
-
-/**
- * Check localStorage for any backup transcript
- */
-export function checkLocalBackup() {
-  console.log('🔍 Checking localStorage for backup transcripts...')
-
-  const backup = localStorage.getItem('recovered_transcript_backup')
-  if (backup) {
-    try {
-      const data = JSON.parse(backup)
-      console.log('✅ FOUND BACKUP TRANSCRIPT:', {
-        words: data.text?.split(' ').length || 0,
-        speakers: data.speakers_detected,
-        recoveredAt: data.recoveredAt
-      })
-      return data
-    } catch (e) {
-      console.error('Failed to parse backup:', e)
+    if (session && session.speakerProcessingStatus === 'completed') {
+      // Check if we have stored speaker data (would be in localStorage backup)
+      const backupData = localStorage.getItem('latest_transcript_backup')
+      if (backupData) {
+        const parsed = JSON.parse(backupData)
+        return {
+          success: true,
+          transcript: parsed.text || '',
+          speakerData: parsed,
+          audioSource: session.audioSource,
+          recordingMode: session.recordingMode,
+          metadata: { source: 'speaker_processing_complete', sessionId }
+        }
+      }
     }
-  }
 
-  console.log('⚠️ No backup found in localStorage')
-  return null
+    return { success: false }
+  } catch (error) {
+    console.error('Tier 1 recovery failed:', error)
+    return { success: false }
+  }
 }
 
 /**
- * List all recent transcripts (requires API key)
- * Note: Assembly AI doesn't have a "list" endpoint, so this is manual
+ * Tier 2: Partial speaker data + streaming transcript merge
+ * Use when speaker processing was interrupted but some data exists
  */
-export function listRecentTranscriptIds() {
-  console.warn('📋 RECOVERY GUIDE:')
-  console.warn('')
-  console.warn('1. Open browser DevTools Console (F12 → Console tab)')
-  console.warn('2. Search for "Speaker diarization job created:" in the logs')
-  console.warn('3. Copy the transcript ID that appears after that message')
-  console.warn('4. Run: await recoverTranscript("YOUR_TRANSCRIPT_ID")')
-  console.warn('')
-  console.warn('If console logs are cleared, check:')
-  console.warn('- Browser history (the transcript might be cached)')
-  console.warn('- Network tab for requests to api.assemblyai.com/v2/transcript')
-  console.warn('- The transcript ID is in the URL of those requests')
+async function attemptTier2Recovery(sessionId) {
+  try {
+    const session = await StreamingTranscriptBuffer.getSession(sessionId)
+
+    if (session && session.speakerProcessingStatus === 'processing') {
+      // Get streaming transcript from buffer
+      const streamingTranscript = await StreamingTranscriptBuffer.getSessionTranscript(sessionId)
+
+      // Check for partial speaker data
+      const backupData = localStorage.getItem('latest_transcript_backup')
+      let partialSpeakerData = null
+
+      if (backupData) {
+        const parsed = JSON.parse(backupData)
+        if (parsed.utterances && parsed.utterances.length > 0) {
+          partialSpeakerData = parsed
+        }
+      }
+
+      if (streamingTranscript || partialSpeakerData) {
+        // Merge: prioritize partial speaker data, fill gaps with streaming
+        const mergedTranscript = partialSpeakerData
+          ? mergePartialSpeakerWithStreaming(partialSpeakerData, streamingTranscript)
+          : streamingTranscript
+
+        return {
+          success: true,
+          transcript: mergedTranscript,
+          speakerData: partialSpeakerData,
+          audioSource: session.audioSource,
+          recordingMode: session.recordingMode,
+          metadata: {
+            source: 'partial_speaker_merge',
+            sessionId,
+            hasSpeakerData: !!partialSpeakerData,
+            hasStreamingTranscript: !!streamingTranscript
+          }
+        }
+      }
+    }
+
+    return { success: false }
+  } catch (error) {
+    console.error('Tier 2 recovery failed:', error)
+    return { success: false }
+  }
 }
 
-// Global exports for console use
-if (typeof window !== 'undefined') {
-  window.recoverTranscript = recoverTranscript
-  window.searchConsoleForTranscriptId = searchConsoleForTranscriptId
-  window.checkLocalBackup = checkLocalBackup
-  window.formatRecoveredTranscript = formatRecoveredTranscript
-  window.listRecentTranscriptIds = listRecentTranscriptIds
+/**
+ * Tier 3: Streaming buffer only (no speaker data)
+ * Reconstruct plain transcript from Turn-based buffer
+ */
+async function attemptTier3Recovery(sessionId) {
+  try {
+    const streamingTranscript = await StreamingTranscriptBuffer.getSessionTranscript(sessionId)
+    const session = await StreamingTranscriptBuffer.getSession(sessionId)
+
+    if (streamingTranscript && streamingTranscript.trim()) {
+      return {
+        success: true,
+        transcript: streamingTranscript,
+        speakerData: null,
+        audioSource: session?.audioSource || 'unknown',
+        recordingMode: session?.recordingMode || 'streaming-only',
+        metadata: { source: 'streaming_buffer_only', sessionId }
+      }
+    }
+
+    return { success: false }
+  } catch (error) {
+    console.error('Tier 3 recovery failed:', error)
+    return { success: false }
+  }
 }
 
-export default {
-  recoverTranscript,
-  searchConsoleForTranscriptId,
-  checkLocalBackup,
-  formatRecoveredTranscript,
-  listRecentTranscriptIds
+/**
+ * Tier 4: React state fallback (last resort)
+ * Use current React state if all else fails
+ */
+function attemptTier4Recovery(reactState) {
+  try {
+    const { transcript, speakerData, audioSource } = reactState
+
+    if (transcript && transcript.trim()) {
+      return {
+        success: true,
+        transcript,
+        speakerData: speakerData || null,
+        audioSource: audioSource || 'unknown',
+        recordingMode: speakerData ? 'hybrid-speaker' : 'streaming-only',
+        metadata: { source: 'react_state_fallback' }
+      }
+    }
+
+    return { success: false }
+  } catch (error) {
+    console.error('Tier 4 recovery failed:', error)
+    return { success: false }
+  }
+}
+
+/**
+ * Merge partial speaker data with streaming transcript
+ * Fill gaps in speaker timeline with streaming transcript
+ */
+function mergePartialSpeakerWithStreaming(speakerData, streamingTranscript) {
+  if (!speakerData.utterances || speakerData.utterances.length === 0) {
+    return streamingTranscript
+  }
+
+  // If speaker data seems complete, use it
+  const speakerText = speakerData.utterances.map(u => u.text).join(' ')
+  const speakerWordCount = speakerText.split(' ').filter(w => w.trim()).length
+  const streamingWordCount = streamingTranscript.split(' ').filter(w => w.trim()).length
+
+  // If speaker data has at least 70% of streaming words, use speaker data
+  if (speakerWordCount >= streamingWordCount * 0.7) {
+    console.log('📊 Speaker data is substantial, using it directly')
+    return speakerText
+  }
+
+  // Otherwise, append streaming transcript to fill gaps
+  console.log('📊 Speaker data incomplete, appending streaming transcript')
+  return `${speakerText}\n\n[Additional transcript from streaming]:\n${streamingTranscript}`
+}
+
+/**
+ * Find all orphaned sessions (active sessions not properly closed)
+ * Used for crash recovery prompts
+ */
+export async function findOrphanedSessions() {
+  try {
+    const activeSessions = await StreamingTranscriptBuffer.getActiveSessions()
+
+    // Filter sessions older than 5 minutes (likely orphaned from crash)
+    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000)
+    const orphanedSessions = activeSessions.filter(session =>
+      session.lastUpdateTime < fiveMinutesAgo
+    )
+
+    console.log(`🔍 Found ${orphanedSessions.length} orphaned sessions`)
+
+    // Enrich with preview data
+    const enriched = await Promise.all(
+      orphanedSessions.map(async (session) => {
+        const transcript = await StreamingTranscriptBuffer.getSessionTranscript(session.sessionId)
+        const wordCount = transcript.split(' ').filter(w => w.trim()).length
+
+        return {
+          ...session,
+          previewText: transcript.substring(0, 100),
+          wordCount,
+          ageMinutes: Math.round((Date.now() - session.lastUpdateTime) / 60000)
+        }
+      })
+    )
+
+    return enriched
+  } catch (error) {
+    console.error('Failed to find orphaned sessions:', error)
+    return []
+  }
+}
+
+/**
+ * Delete an orphaned session (user declined recovery)
+ */
+export async function deleteOrphanedSession(sessionId) {
+  try {
+    await StreamingTranscriptBuffer.deleteSession(sessionId)
+    console.log(`🗑️ Deleted orphaned session: ${sessionId}`)
+  } catch (error) {
+    console.error('Failed to delete orphaned session:', error)
+  }
+}
+
+/**
+ * Recover orphaned session and return transcript
+ */
+export async function recoverOrphanedSession(sessionId) {
+  return await recoverTranscript(sessionId)
 }

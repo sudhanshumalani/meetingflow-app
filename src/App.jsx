@@ -11,6 +11,7 @@ import GoogleAuthCallback from './components/GoogleAuthCallback'
 import SpeakerDiarizationTest from './views/SpeakerDiarizationTest'
 import ErrorBoundary, { ErrorToast } from './components/ErrorBoundary'
 import LoadingSpinner from './components/LoadingSpinner'
+import CrashRecoveryPrompt from './components/CrashRecoveryPrompt'
 import accessibility, { a11y } from './utils/accessibility'
 import storage from './utils/storage'
 import './index.css'
@@ -75,6 +76,7 @@ function AppContent() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [recoveredData, setRecoveredData] = useState(null)
 
   useEffect(() => {
     // Load persisted data on app start
@@ -277,6 +279,20 @@ function AppContent() {
           </div>
         </div>
       )}
+
+      {/* Crash Recovery Prompt */}
+      <CrashRecoveryPrompt
+        onRecover={(data) => {
+          console.log('🔄 Recovered data from crash:', data)
+          setRecoveredData(data)
+          // Show success message
+          setError(`✅ Recovered ${data.transcript.split(' ').length} words from interrupted recording!`)
+          setTimeout(() => setError(null), 5000)
+        }}
+        onDismiss={() => {
+          console.log('ℹ️ User dismissed crash recovery prompt')
+        }}
+      />
 
       {/* Accessibility Status Indicator (dev only) */}
       {process.env.NODE_ENV === 'development' && (

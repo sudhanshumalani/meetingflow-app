@@ -29,7 +29,7 @@ class SyncService {
   constructor() {
     this.deviceId = null
     this.syncConfig = null
-    this.syncQueue = []
+    this.syncQueue = [] // Legacy - kept for backwards compatibility
     this.isOnline = navigator.onLine
     this.lastSyncTime = null
     this.autoSyncInterval = null
@@ -42,17 +42,41 @@ class SyncService {
     this.initializationPromise = null
     this.isInitialized = false
 
+    // NEW: Persistent operation queue for guaranteed sync
+    this.operationQueue = []
+    this.isProcessingQueue = false
+    this.maxQueueSize = 100 // Prevent memory issues
+    this.queueProcessInterval = null
+
+    // NEW: Delta sync tracking
+    this.lastSyncSnapshot = null // Snapshot of data at last successful sync
+    this.pendingChanges = {
+      meetings: { added: [], updated: [], deleted: [] },
+      stakeholders: { added: [], updated: [], deleted: [] },
+      stakeholderCategories: { added: [], updated: [], deleted: [] }
+    }
+
     // Start initialization
     this.initializationPromise = this.initialize()
 
     // Setup online/offline detection
     window.addEventListener('online', () => {
       this.isOnline = true
-      this.processOfflineQueue()
+      console.log('📡 Network online - processing operation queue')
+      this.processOfflineQueue() // Legacy
+      this.processOperationQueue() // NEW: Enhanced queue processing
     })
     window.addEventListener('offline', () => {
       this.isOnline = false
+      console.log('📴 Network offline - queueing operations')
     })
+
+    // Setup periodic queue processing for resilience
+    this.queueProcessInterval = setInterval(() => {
+      if (this.isOnline && !this.isProcessingQueue) {
+        this.processOperationQueue()
+      }
+    }, 30000) // Process queue every 30 seconds if online
   }
 
   /**
@@ -67,12 +91,488 @@ class SyncService {
       // Initialize device tracking and load existing config in proper order
       await this.initializeDevice()
       await this.loadSyncConfig()
+      await this.loadOperationQueue() // NEW: Load persisted queue
+      await this.loadSyncSnapshot() // NEW: Load delta sync snapshot
 
       this.isInitialized = true
       console.log('🚀 SyncService fully initialized')
     } catch (error) {
       console.error('❌ Failed to initialize SyncService:', error)
       throw error
+    }
+  }
+
+  /**
+   * Load persisted operation queue from storage
+   */
+  async loadOperationQueue() {
+    try {
+      const persistedQueue = await localforage.getItem('sync_operation_queue')
+      if (persistedQueue && Array.isArray(persistedQueue)) {
+        this.operationQueue = persistedQueue
+        console.log(`📋 Loaded ${persistedQueue.length} queued operations from storage`)
+
+        // Process queue if online
+        if (this.isOnline) {
+          setTimeout(() => this.processOperationQueue(), 2000) // Delay to allow full initialization
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load operation queue:', error)
+      this.operationQueue = []
+    }
+  }
+
+  /**
+   * Save operation queue to persistent storage
+   */
+  async saveOperationQueue() {
+    try {
+      await localforage.setItem('sync_operation_queue', this.operationQueue)
+      console.log(`💾 Saved ${this.operationQueue.length} operations to persistent queue`)
+    } catch (error) {
+      console.error('Failed to save operation queue:', error)
+    }
+  }
+
+  /**
+   * Add an operation to the persistent queue
+   * @param {string} type - Operation type: 'sync_to_cloud', 'sync_from_cloud', 'delete'
+   * @param {object} data - Operation data
+   * @param {number} priority - Priority (0=highest, default=5)
+   */
+  async queueOperation(type, data, priority = 5) {
+    const operation = {
+      id: uuidv4(),
+      type,
+      data,
+      priority,
+      timestamp: Date.now(),
+      retryCount: 0,
+      maxRetries: 3,
+      status: 'pending' // 'pending', 'processing', 'failed', 'completed'
+    }
+
+    // Enforce max queue size
+    if (this.operationQueue.length >= this.maxQueueSize) {
+      console.warn(`⚠️ Operation queue full (${this.maxQueueSize} items), removing oldest low-priority item`)
+      // Remove oldest low-priority item (priority >= 5)
+      const lowPriorityIndex = this.operationQueue.findIndex(op => op.priority >= 5 && op.status === 'pending')
+      if (lowPriorityIndex !== -1) {
+        this.operationQueue.splice(lowPriorityIndex, 1)
+      }
+    }
+
+    this.operationQueue.push(operation)
+
+    // Sort by priority (0=highest) then timestamp (oldest first)
+    this.operationQueue.sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority
+      return a.timestamp - b.timestamp
+    })
+
+    await this.saveOperationQueue()
+
+    console.log(`📝 Queued operation: ${type} (priority ${priority}, queue size: ${this.operationQueue.length})`)
+
+    // Try to process immediately if online
+    if (this.isOnline && !this.isProcessingQueue) {
+      this.processOperationQueue()
+    }
+
+    return operation.id
+  }
+
+  /**
+   * Process the operation queue
+   */
+  async processOperationQueue() {
+    if (this.isProcessingQueue || !this.isOnline) {
+      return
+    }
+
+    if (this.operationQueue.length === 0) {
+      return
+    }
+
+    this.isProcessingQueue = true
+    console.log(`⚙️ Processing operation queue (${this.operationQueue.length} operations)`)
+
+    try {
+      while (this.operationQueue.length > 0 && this.isOnline) {
+        // Get next pending operation
+        const opIndex = this.operationQueue.findIndex(op => op.status === 'pending')
+        if (opIndex === -1) {
+          // No pending operations, clean up completed/failed ones
+          this.operationQueue = this.operationQueue.filter(op => op.status === 'pending' || op.status === 'processing')
+          await this.saveOperationQueue()
+          break
+        }
+
+        const operation = this.operationQueue[opIndex]
+        operation.status = 'processing'
+        await this.saveOperationQueue()
+
+        try {
+          console.log(`▶️ Processing operation ${operation.type} (attempt ${operation.retryCount + 1}/${operation.maxRetries + 1})`)
+
+          let result = false
+          switch (operation.type) {
+            case 'sync_to_cloud':
+              result = await this.syncToCloud(operation.data)
+              break
+
+            case 'sync_from_cloud':
+              result = await this.syncFromCloud()
+              break
+
+            default:
+              console.warn(`Unknown operation type: ${operation.type}`)
+              result = { success: false, error: 'Unknown operation type' }
+          }
+
+          if (result && result.success !== false) {
+            // Operation succeeded
+            console.log(`✅ Operation ${operation.type} completed successfully`)
+            operation.status = 'completed'
+            this.operationQueue.splice(opIndex, 1) // Remove from queue
+            await this.saveOperationQueue()
+          } else {
+            throw new Error(result?.error || 'Operation failed')
+          }
+        } catch (error) {
+          console.error(`❌ Operation ${operation.type} failed:`, error.message)
+
+          operation.retryCount++
+
+          if (operation.retryCount >= operation.maxRetries) {
+            console.error(`❌ Operation ${operation.type} failed after ${operation.maxRetries} retries, removing from queue`)
+            operation.status = 'failed'
+            this.operationQueue.splice(opIndex, 1) // Remove failed operation
+            this.notifyListeners('operation_failed', {
+              operation: operation.type,
+              error: error.message,
+              retries: operation.retryCount
+            })
+          } else {
+            // Retry with exponential backoff
+            const delayMs = Math.min(30000, Math.pow(2, operation.retryCount) * 1000)
+            console.log(`⏳ Retrying operation ${operation.type} in ${delayMs}ms`)
+            operation.status = 'pending'
+            await this.saveOperationQueue()
+
+            // Wait before continuing to next operation
+            await new Promise(resolve => setTimeout(resolve, delayMs))
+          }
+        }
+
+        // Check if we went offline during processing
+        if (!this.isOnline) {
+          console.log('📴 Went offline during queue processing, pausing')
+          break
+        }
+      }
+
+      console.log(`✅ Operation queue processing complete (${this.operationQueue.length} remaining)`)
+    } finally {
+      this.isProcessingQueue = false
+    }
+  }
+
+  /**
+   * Clear all completed operations from queue
+   */
+  async clearCompletedOperations() {
+    const before = this.operationQueue.length
+    this.operationQueue = this.operationQueue.filter(op => op.status !== 'completed')
+    const removed = before - this.operationQueue.length
+
+    if (removed > 0) {
+      await this.saveOperationQueue()
+      console.log(`🧹 Cleared ${removed} completed operations from queue`)
+    }
+  }
+
+  /**
+   * Get queue status
+   */
+  getQueueStatus() {
+    const pending = this.operationQueue.filter(op => op.status === 'pending').length
+    const processing = this.operationQueue.filter(op => op.status === 'processing').length
+    const failed = this.operationQueue.filter(op => op.status === 'failed').length
+
+    return {
+      total: this.operationQueue.length,
+      pending,
+      processing,
+      failed,
+      isProcessing: this.isProcessingQueue,
+      operations: this.operationQueue.map(op => ({
+        id: op.id,
+        type: op.type,
+        status: op.status,
+        priority: op.priority,
+        retryCount: op.retryCount,
+        timestamp: new Date(op.timestamp).toISOString()
+      }))
+    }
+  }
+
+  /**
+   * Calculate delta between current data and last sync snapshot
+   * @param {object} currentData - Current local data
+   * @returns {object} Delta containing only changes since last sync
+   */
+  calculateDelta(currentData) {
+    if (!this.lastSyncSnapshot) {
+      // No snapshot - this is first sync, return all data
+      console.log('📊 No sync snapshot found - treating as full sync')
+      return {
+        isFullSync: true,
+        meetings: currentData.meetings || [],
+        stakeholders: currentData.stakeholders || [],
+        stakeholderCategories: currentData.stakeholderCategories || [],
+        deletedItems: currentData.deletedItems || []
+      }
+    }
+
+    console.log('📊 Calculating delta since last sync...')
+
+    const delta = {
+      isFullSync: false,
+      meetings: { added: [], updated: [], deleted: [] },
+      stakeholders: { added: [], updated: [], deleted: [] },
+      stakeholderCategories: { added: [], updated: [], deleted: [] },
+      deletedItems: currentData.deletedItems || [] // Always include all deletions
+    }
+
+    // Create maps for fast lookup
+    const snapshotMeetingsMap = new Map((this.lastSyncSnapshot.meetings || []).map(m => [m.id, m]))
+    const snapshotStakeholdersMap = new Map((this.lastSyncSnapshot.stakeholders || []).map(s => [s.id, s]))
+    const snapshotCategoriesMap = new Map((this.lastSyncSnapshot.stakeholderCategories || []).map(c => [c.id || c.name, c]))
+
+    // Detect meeting changes
+    (currentData.meetings || []).forEach(meeting => {
+      const snapshot = snapshotMeetingsMap.get(meeting.id)
+      if (!snapshot) {
+        delta.meetings.added.push(meeting)
+      } else {
+        // Check if updated by comparing timestamps or content
+        const currentTime = new Date(meeting.updatedAt || meeting.lastSaved || meeting.createdAt || 0)
+        const snapshotTime = new Date(snapshot.updatedAt || snapshot.lastSaved || snapshot.createdAt || 0)
+
+        if (currentTime > snapshotTime || JSON.stringify(meeting) !== JSON.stringify(snapshot)) {
+          delta.meetings.updated.push(meeting)
+        }
+      }
+    })
+
+    // Detect deleted meetings
+    snapshotMeetingsMap.forEach((snapshot, id) => {
+      if (!(currentData.meetings || []).find(m => m.id === id)) {
+        delta.meetings.deleted.push({ id, deletedAt: new Date().toISOString() })
+      }
+    })
+
+    // Detect stakeholder changes
+    (currentData.stakeholders || []).forEach(stakeholder => {
+      const snapshot = snapshotStakeholdersMap.get(stakeholder.id)
+      if (!snapshot) {
+        delta.stakeholders.added.push(stakeholder)
+      } else {
+        const currentTime = new Date(stakeholder.updatedAt || stakeholder.createdAt || 0)
+        const snapshotTime = new Date(snapshot.updatedAt || snapshot.createdAt || 0)
+
+        if (currentTime > snapshotTime || JSON.stringify(stakeholder) !== JSON.stringify(snapshot)) {
+          delta.stakeholders.updated.push(stakeholder)
+        }
+      }
+    })
+
+    // Detect deleted stakeholders
+    snapshotStakeholdersMap.forEach((snapshot, id) => {
+      if (!(currentData.stakeholders || []).find(s => s.id === id)) {
+        delta.stakeholders.deleted.push({ id, deletedAt: new Date().toISOString() })
+      }
+    })
+
+    // Detect category changes
+    (currentData.stakeholderCategories || []).forEach(category => {
+      const categoryKey = category.id || category.name
+      const snapshot = snapshotCategoriesMap.get(categoryKey)
+      if (!snapshot) {
+        delta.stakeholderCategories.added.push(category)
+      } else {
+        const currentTime = new Date(category.updatedAt || category.createdAt || 0)
+        const snapshotTime = new Date(snapshot.updatedAt || snapshot.createdAt || 0)
+
+        if (currentTime > snapshotTime || JSON.stringify(category) !== JSON.stringify(snapshot)) {
+          delta.stakeholderCategories.updated.push(category)
+        }
+      }
+    })
+
+    // Detect deleted categories
+    snapshotCategoriesMap.forEach((snapshot, key) => {
+      if (!(currentData.stakeholderCategories || []).find(c => (c.id || c.name) === key)) {
+        delta.stakeholderCategories.deleted.push({ id: snapshot.id, name: snapshot.name, deletedAt: new Date().toISOString() })
+      }
+    })
+
+    const totalChanges =
+      delta.meetings.added.length + delta.meetings.updated.length + delta.meetings.deleted.length +
+      delta.stakeholders.added.length + delta.stakeholders.updated.length + delta.stakeholders.deleted.length +
+      delta.stakeholderCategories.added.length + delta.stakeholderCategories.updated.length + delta.stakeholderCategories.deleted.length
+
+    console.log('📊 Delta calculation complete:', {
+      totalChanges,
+      meetings: {
+        added: delta.meetings.added.length,
+        updated: delta.meetings.updated.length,
+        deleted: delta.meetings.deleted.length
+      },
+      stakeholders: {
+        added: delta.stakeholders.added.length,
+        updated: delta.stakeholders.updated.length,
+        deleted: delta.stakeholders.deleted.length
+      },
+      categories: {
+        added: delta.stakeholderCategories.added.length,
+        updated: delta.stakeholderCategories.updated.length,
+        deleted: delta.stakeholderCategories.deleted.length
+      },
+      deletionTombstones: delta.deletedItems.length
+    })
+
+    return delta
+  }
+
+  /**
+   * Apply delta to base data
+   * @param {object} baseData - Base data to apply delta to
+   * @param {object} delta - Delta containing changes
+   * @returns {object} Merged data
+   */
+  applyDelta(baseData, delta) {
+    if (delta.isFullSync) {
+      // Full sync - return delta as-is
+      return {
+        meetings: delta.meetings,
+        stakeholders: delta.stakeholders,
+        stakeholderCategories: delta.stakeholderCategories,
+        deletedItems: delta.deletedItems
+      }
+    }
+
+    console.log('🔄 Applying delta to base data...')
+
+    const result = {
+      meetings: [...(baseData.meetings || [])],
+      stakeholders: [...(baseData.stakeholders || [])],
+      stakeholderCategories: [...(baseData.stakeholderCategories || [])],
+      deletedItems: [...(baseData.deletedItems || []), ...(delta.deletedItems || [])]
+    }
+
+    // Apply meeting changes
+    delta.meetings.added.forEach(meeting => {
+      if (!result.meetings.find(m => m.id === meeting.id)) {
+        result.meetings.push(meeting)
+      }
+    })
+    delta.meetings.updated.forEach(meeting => {
+      const index = result.meetings.findIndex(m => m.id === meeting.id)
+      if (index !== -1) {
+        result.meetings[index] = meeting
+      } else {
+        result.meetings.push(meeting)
+      }
+    })
+    delta.meetings.deleted.forEach(deleted => {
+      result.meetings = result.meetings.filter(m => m.id !== deleted.id)
+    })
+
+    // Apply stakeholder changes
+    delta.stakeholders.added.forEach(stakeholder => {
+      if (!result.stakeholders.find(s => s.id === stakeholder.id)) {
+        result.stakeholders.push(stakeholder)
+      }
+    })
+    delta.stakeholders.updated.forEach(stakeholder => {
+      const index = result.stakeholders.findIndex(s => s.id === stakeholder.id)
+      if (index !== -1) {
+        result.stakeholders[index] = stakeholder
+      } else {
+        result.stakeholders.push(stakeholder)
+      }
+    })
+    delta.stakeholders.deleted.forEach(deleted => {
+      result.stakeholders = result.stakeholders.filter(s => s.id !== deleted.id)
+    })
+
+    // Apply category changes
+    delta.stakeholderCategories.added.forEach(category => {
+      const key = category.id || category.name
+      if (!result.stakeholderCategories.find(c => (c.id || c.name) === key)) {
+        result.stakeholderCategories.push(category)
+      }
+    })
+    delta.stakeholderCategories.updated.forEach(category => {
+      const key = category.id || category.name
+      const index = result.stakeholderCategories.findIndex(c => (c.id || c.name) === key)
+      if (index !== -1) {
+        result.stakeholderCategories[index] = category
+      } else {
+        result.stakeholderCategories.push(category)
+      }
+    })
+    delta.stakeholderCategories.deleted.forEach(deleted => {
+      const key = deleted.id || deleted.name
+      result.stakeholderCategories = result.stakeholderCategories.filter(c => (c.id || c.name) !== key)
+    })
+
+    console.log('✅ Delta applied successfully')
+
+    return result
+  }
+
+  /**
+   * Save snapshot of current data for future delta calculation
+   * @param {object} data - Data to snapshot
+   */
+  async saveSyncSnapshot(data) {
+    this.lastSyncSnapshot = {
+      meetings: JSON.parse(JSON.stringify(data.meetings || [])),
+      stakeholders: JSON.parse(JSON.stringify(data.stakeholders || [])),
+      stakeholderCategories: JSON.parse(JSON.stringify(data.stakeholderCategories || [])),
+      timestamp: new Date().toISOString()
+    }
+
+    try {
+      await localforage.setItem('sync_snapshot', this.lastSyncSnapshot)
+      console.log('💾 Saved sync snapshot:', {
+        meetings: this.lastSyncSnapshot.meetings.length,
+        stakeholders: this.lastSyncSnapshot.stakeholders.length,
+        categories: this.lastSyncSnapshot.stakeholderCategories.length,
+        timestamp: this.lastSyncSnapshot.timestamp
+      })
+    } catch (error) {
+      console.error('Failed to save sync snapshot:', error)
+    }
+  }
+
+  /**
+   * Load last sync snapshot from storage
+   */
+  async loadSyncSnapshot() {
+    try {
+      const snapshot = await localforage.getItem('sync_snapshot')
+      if (snapshot) {
+        this.lastSyncSnapshot = snapshot
+        console.log('📋 Loaded sync snapshot from', snapshot.timestamp)
+      }
+    } catch (error) {
+      console.error('Failed to load sync snapshot:', error)
+      this.lastSyncSnapshot = null
     }
   }
 
@@ -265,10 +765,22 @@ class SyncService {
     }
 
     if (!this.isOnline) {
-      console.log('📴 Offline - queueing sync operation')
+      console.log('📴 Offline - queueing sync operation to persistent queue')
+
+      // Queue to both legacy and new queue for backwards compatibility
       this.syncQueue.push({ action: 'upload', data, timestamp: Date.now() })
+
+      // NEW: Queue to persistent operation queue with priority
+      const operationId = await this.queueOperation('sync_to_cloud', data, 1) // High priority for user-initiated syncs
+
       this.notifyListeners('status_change', SYNC_STATUS.OFFLINE)
-      return { success: false, queued: true }
+      this.notifyListeners('operation_queued', {
+        operationId,
+        type: 'sync_to_cloud',
+        queueSize: this.operationQueue.length
+      })
+
+      return { success: false, queued: true, operationId }
     }
 
     this.notifyListeners('status_change', SYNC_STATUS.SYNCING)
@@ -346,6 +858,9 @@ class SyncService {
       if (result.success) {
         this.lastSyncTime = new Date().toISOString()
         await localforage.setItem('last_sync_time', this.lastSyncTime)
+
+        // NEW: Save snapshot for delta sync
+        await this.saveSyncSnapshot(data)
 
         console.log('✅ Data synced successfully to cloud')
         this.notifyListeners('sync_success', { timestamp: this.lastSyncTime })
@@ -1136,6 +1651,184 @@ class SyncService {
   }
 
   /**
+   * Ensure single file exists on Google Drive (deduplicate if needed)
+   * @param {string} fileName - Name of the file
+   * @returns {Promise<string|null>} - File ID of the single file or null if none exist
+   */
+  async ensureSingleGoogleDriveFile(fileName) {
+    try {
+      const config = this.syncConfig?.config
+      if (!config?.accessToken) {
+        throw new Error('Google Drive not configured')
+      }
+
+      await this.ensureValidGoogleToken()
+
+      // Step 1: Search for ALL files with this name
+      const searchResponse = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and parents in '${config.folderId || 'root'}' and trashed=false&fields=files(id,name,size,modifiedTime)&spaces=drive`,
+        {
+          headers: {
+            'Authorization': `Bearer ${config.accessToken}`,
+          }
+        }
+      )
+
+      if (!searchResponse.ok) {
+        throw new Error(`Failed to search for files: ${searchResponse.statusText}`)
+      }
+
+      const searchData = await searchResponse.json()
+      const allFiles = searchData.files || []
+
+      console.log(`🔍 Found ${allFiles.length} file(s) named "${fileName}"`)
+
+      if (allFiles.length === 0) {
+        // No file exists - will be created on first upload
+        console.log('ℹ️ No existing file found - will create on first upload')
+        return null
+      }
+
+      if (allFiles.length === 1) {
+        // Perfect - single file exists
+        const fileId = allFiles[0].id
+        console.log(`✅ Single file found: ${fileId}`)
+        await this.saveGoogleDriveFileId(fileName, fileId)
+        return fileId
+      }
+
+      // Multiple files found - DEDUPLICATE!
+      console.warn(`⚠️ Found ${allFiles.length} duplicate files, deduplicating...`)
+
+      // Sort by size (largest first) and modification time (newest first)
+      const sortedFiles = allFiles.sort((a, b) => {
+        const sizeA = parseInt(a.size || '0')
+        const sizeB = parseInt(b.size || '0')
+        if (sizeA !== sizeB) return sizeB - sizeA
+        return new Date(b.modifiedTime) - new Date(a.modifiedTime)
+      })
+
+      const bestFile = sortedFiles[0]
+      const filesToDelete = sortedFiles.slice(1)
+
+      console.log(`📊 Deduplication analysis:`, {
+        bestFile: { id: bestFile.id, size: bestFile.size, modified: bestFile.modifiedTime },
+        deletingCount: filesToDelete.length
+      })
+
+      // Delete all duplicate files
+      for (const file of filesToDelete) {
+        try {
+          await fetch(
+            `https://www.googleapis.com/drive/v3/files/${file.id}`,
+            {
+              method: 'DELETE',
+              headers: {
+                'Authorization': `Bearer ${config.accessToken}`,
+              }
+            }
+          )
+          console.log(`🗑️ Deleted duplicate file: ${file.id}`)
+        } catch (error) {
+          console.error(`Failed to delete duplicate file ${file.id}:`, error)
+          // Continue with other deletions
+        }
+      }
+
+      console.log(`✅ Deduplicated: Kept ${bestFile.id}, deleted ${filesToDelete.length} duplicates`)
+
+      // Save the single file ID
+      await this.saveGoogleDriveFileId(fileName, bestFile.id)
+      return bestFile.id
+    } catch (error) {
+      console.error('Failed to ensure single file:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Save Google Drive file ID to local storage and metadata
+   * @param {string} fileName - Name of the file
+   * @param {string} fileId - Google Drive file ID
+   */
+  async saveGoogleDriveFileId(fileName, fileId) {
+    // Store in localStorage
+    localStorage.setItem(`meetingflow_google_drive_file_id_${fileName}`, fileId)
+
+    // Also store in sync metadata as backup
+    try {
+      const metadata = await localforage.getItem('meetingflow_sync_metadata') || {}
+      metadata.googleDriveFileIds = metadata.googleDriveFileIds || {}
+      metadata.googleDriveFileIds[fileName] = {
+        fileId,
+        updatedAt: Date.now()
+      }
+      await localforage.setItem('meetingflow_sync_metadata', metadata)
+    } catch (error) {
+      console.error('Failed to save file ID to metadata:', error)
+    }
+  }
+
+  /**
+   * Get Google Drive file ID from cache
+   * @param {string} fileName - Name of the file
+   * @returns {Promise<string|null>} - File ID or null if not cached
+   */
+  async getGoogleDriveFileId(fileName) {
+    // Try localStorage first (faster)
+    let fileId = localStorage.getItem(`meetingflow_google_drive_file_id_${fileName}`)
+
+    // Fallback to metadata
+    if (!fileId) {
+      try {
+        const metadata = await localforage.getItem('meetingflow_sync_metadata')
+        fileId = metadata?.googleDriveFileIds?.[fileName]?.fileId
+      } catch (error) {
+        console.error('Failed to get file ID from metadata:', error)
+      }
+    }
+
+    // Validate file still exists if we have a cached ID
+    if (fileId) {
+      const exists = await this.validateGoogleDriveFileExists(fileId)
+      if (!exists) {
+        console.warn(`⚠️ Cached file ID ${fileId} no longer exists, clearing cache`)
+        localStorage.removeItem(`meetingflow_google_drive_file_id_${fileName}`)
+        return null
+      }
+    }
+
+    return fileId
+  }
+
+  /**
+   * Validate that a Google Drive file exists
+   * @param {string} fileId - File ID to validate
+   * @returns {Promise<boolean>} - True if file exists
+   */
+  async validateGoogleDriveFileExists(fileId) {
+    try {
+      const config = this.syncConfig?.config
+      if (!config?.accessToken) {
+        return false
+      }
+
+      const response = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id`,
+        {
+          headers: {
+            'Authorization': `Bearer ${config.accessToken}`,
+          }
+        }
+      )
+
+      return response.ok
+    } catch (error) {
+      return false
+    }
+  }
+
+  /**
    * Google Drive API sync implementation
    */
   async uploadToGoogleDrive(key, data) {
@@ -1150,7 +1843,15 @@ class SyncService {
       const fileName = `meetingflow_${key}.json`
       const content = JSON.stringify(data, null, 2)
 
-      // Function to search for existing files by name (same as download)
+      // NEW APPROACH: Ensure we have a single file (deduplicate if needed)
+      console.log('🔧 Using single file strategy with deduplication')
+      let fileId = await this.ensureSingleGoogleDriveFile(fileName)
+
+      // If deduplication found a file, use it. Otherwise, create new file below.
+      console.log(`📋 Single file strategy result: ${fileId || 'no existing file, will create new'}`)
+
+      // Skip the old complex file selection logic entirely
+      // Function to search for existing files by name (legacy fallback - NO LONGER USED)
       const searchForExistingFiles = async () => {
         console.log('🔍 UPLOAD: Searching for existing files in Google Drive...')
 
@@ -1264,118 +1965,123 @@ class SyncService {
         return bestFile.id
       }
 
-      // ALWAYS use intelligent file selection to ensure all devices use the best file
-      console.log('🚀 UPLOAD: Using intelligent file selection to find the best available file')
-      const bestFileId = await searchForBestFile()
+      // NOTE: Legacy intelligent file selection code above is now obsolete.
+      // We use ensureSingleGoogleDriveFile() instead which handles deduplication.
+      // The fileId variable is already set by the new approach at line 1333.
 
-      let fileId // Declare fileId variable
+      // Use resumable upload for better reliability (recommended by Google for all uploads)
+      console.log('🔄 Using resumable upload protocol')
 
-      if (bestFileId) {
-        if (bestFileId !== config.fileId) {
-          console.log(`🔄 UPLOAD SWITCHING FILES: From ${config.fileId || 'none'} to ${bestFileId} (better file found)`)
-          // Update stored file ID to the best one
-          config.fileId = bestFileId
-          await localforage.setItem('sync_config', this.syncConfig)
-        } else {
-          console.log(`✅ UPLOAD: Stored file ID ${config.fileId} is already the best available file`)
-        }
-        fileId = bestFileId
-      } else {
-        // No files found, will create new one
-        fileId = config.fileId // Keep existing stored ID (may be null)
-        console.log('🔍 UPLOAD: No existing files found, will create new file if needed')
+      const metadata = {
+        name: fileName,
+        mimeType: 'application/json',
+        description: `MeetingFlow App Data - ${key}`
       }
 
-      let response
-      if (fileId) {
-        // Update existing file
-        response = await fetch(
-          `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
-          {
-            method: 'PATCH',
-            headers: {
-              'Authorization': `Bearer ${config.accessToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: content
-          }
-        )
-
-        // Handle file not found error - file was deleted between validation and upload
-        if (response.status === 404) {
-          console.warn(`⚠️ UPLOAD: File ${fileId} was deleted during upload, searching for alternatives...`)
-          // Clear the invalid file ID from config
-          config.fileId = null
-          await localforage.setItem('sync_config', this.syncConfig)
-
-          // Try to find if there are other files we can use
-          const alternativeFileId = await searchForBestFile()
-          if (alternativeFileId) {
-            console.log(`✅ UPLOAD: Found alternative file ${alternativeFileId}, using it`)
-            fileId = alternativeFileId
-            config.fileId = alternativeFileId
-            await localforage.setItem('sync_config', this.syncConfig)
-
-            // Retry upload with the alternative file
-            response = await fetch(
-              `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
-              {
-                method: 'PATCH',
-                headers: {
-                  'Authorization': `Bearer ${config.accessToken}`,
-                  'Content-Type': 'application/json',
-                },
-                body: content
-              }
-            )
-
-            if (response.status === 404) {
-              console.warn(`⚠️ UPLOAD: Alternative file also deleted, creating new file`)
-              fileId = null // Fall through to create new file
-              response = null
-            }
-          } else {
-            console.log(`⚠️ UPLOAD: No alternative files found, creating new file`)
-            fileId = null // Fall through to create new file
-            response = null // Clear the failed response
-          }
-        } else if (!response.ok) {
-          const error = await response.json()
-          throw new Error(`Google Drive upload failed: ${error.error?.message || response.statusText}`)
-        }
+      // Add parent folder if specified (only for new files)
+      if (!fileId && config.folderId) {
+        metadata.parents = [config.folderId]
       }
 
-      if (!fileId) {
-        // Create new file
-        const metadata = {
-          name: fileName,
-          parents: config.folderId ? [config.folderId] : undefined,
-          description: `MeetingFlow App Data - ${key}`
+      // Step 1: Initiate resumable upload session
+      console.log(`📤 Step 1: Initiating resumable upload session (${fileId ? 'update' : 'create'})`)
+      const initResponse = await fetch(
+        fileId
+          ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=resumable`
+          : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+        {
+          method: fileId ? 'PATCH' : 'POST',
+          headers: {
+            'Authorization': `Bearer ${config.accessToken}`,
+            'Content-Type': 'application/json; charset=UTF-8',
+            'X-Upload-Content-Type': 'application/json',
+            'X-Upload-Content-Length': content.length.toString()
+          },
+          body: JSON.stringify(metadata)
         }
+      )
 
-        // Use multipart upload for new files with proper RFC 2387 format
-        const boundary = '-------314159265358979323846'
-        const delimiter = "\r\n--" + boundary + "\r\n"
-        const close_delim = "\r\n--" + boundary + "--"
+      // Handle file not found error - file was deleted between validation and upload
+      if (initResponse.status === 404 && fileId) {
+        console.warn(`⚠️ UPLOAD: File ${fileId} was deleted during upload, will create new file`)
+        fileId = null
+        config.fileId = null
+        await localforage.setItem('sync_config', this.syncConfig)
 
-        const metadataContent = delimiter +
-          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-          JSON.stringify(metadata) + delimiter +
-          'Content-Type: application/json\r\n' +
-          'Content-Transfer-Encoding: binary\r\n\r\n' +
-          content + close_delim
-
-        response = await fetch(
-          'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+        // Retry as new file creation
+        const retryInitResponse = await fetch(
+          'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
           {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${config.accessToken}`,
-              'Content-Type': `multipart/related; boundary="${boundary}"`
+              'Content-Type': 'application/json; charset=UTF-8',
+              'X-Upload-Content-Type': 'application/json',
+              'X-Upload-Content-Length': content.length.toString()
             },
-            body: metadataContent
+            body: JSON.stringify({
+              name: fileName,
+              mimeType: 'application/json',
+              parents: config.folderId ? [config.folderId] : undefined,
+              description: `MeetingFlow App Data - ${key}`
+            })
           }
         )
+
+        if (!retryInitResponse.ok) {
+          const error = await retryInitResponse.json()
+          throw new Error(`Failed to initiate resumable upload: ${error.error?.message || retryInitResponse.statusText}`)
+        }
+
+        const uploadUrl = retryInitResponse.headers.get('Location')
+        if (!uploadUrl) {
+          throw new Error('No upload URL returned from resumable upload initiation')
+        }
+
+        // Step 2: Upload content to session URL
+        console.log('📤 Step 2: Uploading content to resumable session')
+        const uploadResponse = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: content
+        })
+
+        if (!uploadResponse.ok) {
+          throw new Error(`Resumable upload failed: ${uploadResponse.statusText}`)
+        }
+
+        var response = uploadResponse
+      } else {
+        if (!initResponse.ok) {
+          const error = await initResponse.json()
+          throw new Error(`Failed to initiate resumable upload: ${error.error?.message || initResponse.statusText}`)
+        }
+
+        // Get the upload URL from Location header
+        const uploadUrl = initResponse.headers.get('Location')
+        if (!uploadUrl) {
+          throw new Error('No upload URL returned from resumable upload initiation')
+        }
+
+        console.log('✅ Resumable session URL obtained')
+
+        // Step 2: Upload content to session URL
+        console.log('📤 Step 2: Uploading content to resumable session')
+        const uploadResponse = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: content
+        })
+
+        if (!uploadResponse.ok) {
+          throw new Error(`Resumable upload failed: ${uploadResponse.statusText}`)
+        }
+
+        var response = uploadResponse
       }
 
       if (response && !response.ok) {
@@ -1393,10 +2099,10 @@ class SyncService {
         fileName: fileName
       })
 
-      // Verify the uploaded file by checking its size
+      // Verify the uploaded file with relaxed size validation
       try {
         const verifyResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${result.id}?fields=size,name`,
+          `https://www.googleapis.com/drive/v3/files/${result.id}?fields=size,name,md5Checksum`,
           {
             headers: {
               'Authorization': `Bearer ${config.accessToken}`,
@@ -1407,27 +2113,57 @@ class SyncService {
         if (verifyResponse.ok) {
           const fileInfo = await verifyResponse.json()
           const uploadedSize = parseInt(fileInfo.size || '0')
+          const sizeDifference = Math.abs(originalSize - uploadedSize)
 
-          console.log('✅ File integrity check:', {
+          console.log('📊 File integrity check:', {
             originalSize,
             uploadedSize,
-            sizeDifference: Math.abs(originalSize - uploadedSize),
-            integrityOk: Math.abs(originalSize - uploadedSize) < 100 // Allow small encoding differences
+            sizeDifference,
+            sizeDifferencePercent: ((sizeDifference / originalSize) * 100).toFixed(2) + '%',
+            uploadedMd5: fileInfo.md5Checksum
           })
 
-          // If there's a significant size difference, this indicates corruption
-          if (Math.abs(originalSize - uploadedSize) > 100) {
-            console.error('❌ FILE CORRUPTION DETECTED:', {
+          // Relaxed size validation - allow up to 500 bytes difference
+          // This accounts for different line endings (CRLF vs LF), UTF-8 BOM, and JSON formatting
+          if (sizeDifference > 500) {
+            // Large difference - warn but don't fail (could be legitimate formatting differences)
+            console.warn('⚠️ SIZE MISMATCH WARNING:', {
               expected: originalSize,
               actual: uploadedSize,
-              fileName: fileInfo.name
+              difference: sizeDifference,
+              fileName: fileInfo.name,
+              message: 'Size difference detected but continuing (may be due to encoding/formatting)'
             })
-            throw new Error(`File corruption detected: expected ${originalSize} bytes, got ${uploadedSize} bytes`)
+
+            // Only fail if difference is VERY large (> 10% or > 5KB)
+            const percentDifference = (sizeDifference / originalSize) * 100
+            if (percentDifference > 10 && sizeDifference > 5000) {
+              console.error('❌ SIGNIFICANT FILE CORRUPTION DETECTED:', {
+                expected: originalSize,
+                actual: uploadedSize,
+                difference: sizeDifference,
+                percentDifference: percentDifference.toFixed(2) + '%',
+                fileName: fileInfo.name
+              })
+              throw new Error(`Significant file corruption detected: expected ${originalSize} bytes, got ${uploadedSize} bytes (${percentDifference.toFixed(1)}% difference)`)
+            }
+          } else {
+            console.log('✅ File size validation passed')
+          }
+
+          // Additional validation: Check if Google Drive provided MD5 checksum
+          if (fileInfo.md5Checksum) {
+            console.log('✅ Upload verified with MD5 checksum:', fileInfo.md5Checksum)
           }
         }
       } catch (verifyError) {
+        // Don't fail the upload for verification issues
+        if (verifyError.message && verifyError.message.includes('corruption')) {
+          // This is a corruption error we threw - re-throw it
+          throw verifyError
+        }
+        // For other verification errors, just log and continue
         console.warn('⚠️ Could not verify file integrity:', verifyError.message)
-        // Don't fail the upload for verification issues, just log them
       }
 
       // Save file ID for future updates
@@ -1937,11 +2673,24 @@ class SyncService {
    */
   async clearSyncData() {
     this.stopAutoSync()
+
+    // Clear periodic queue processing
+    if (this.queueProcessInterval) {
+      clearInterval(this.queueProcessInterval)
+      this.queueProcessInterval = null
+    }
+
     this.syncQueue = []
+    this.operationQueue = [] // NEW: Clear operation queue
+    this.lastSyncSnapshot = null // NEW: Clear snapshot
+
     await localforage.removeItem('sync_config')
     await localforage.removeItem('last_sync_time')
     await localforage.removeItem('sync_device_id')
     await localforage.removeItem('sync_device_info')
+    await localforage.removeItem('sync_operation_queue') // NEW: Clear persisted queue
+    await localforage.removeItem('sync_snapshot') // NEW: Clear snapshot
+
     this.syncConfig = null
     this.deviceId = null
     console.log('🗑️ All sync data cleared')

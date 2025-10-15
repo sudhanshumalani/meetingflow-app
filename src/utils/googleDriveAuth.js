@@ -182,24 +182,27 @@ class TokenManager {
     }
   }
 
-  async refreshAccessToken() {
+  async refreshAccessToken(retryCount = 0, maxRetries = 3) {
     if (this.refreshInProgress) return false
 
     // Check if we have a refresh token
     if (!this.refreshToken) {
       console.log('⚠️ No refresh token available (using implicit flow) - user will need to re-authenticate')
       this.notifyListeners('token_refresh_failed', {
-        error: 'No refresh token available - re-authentication required'
+        error: 'No refresh token available - re-authentication required',
+        requiresReauth: true,
+        userMessage: 'Your session has expired. Please sign in again to continue syncing.'
       })
       return false
     }
 
     this.refreshInProgress = true
+    let response = null
 
     try {
-      console.log('🔄 Refreshing access token using refresh token...')
+      console.log(`🔄 Refreshing access token using refresh token (attempt ${retryCount + 1}/${maxRetries + 1})...`)
 
-      const response = await fetch('https://oauth2.googleapis.com/token', {
+      response = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -229,18 +232,67 @@ class TokenManager {
       })
 
       console.log('✅ Access token refreshed successfully')
-      this.notifyListeners('token_refreshed', { success: true })
+      this.notifyListeners('token_refreshed', {
+        success: true,
+        retryCount,
+        userMessage: retryCount > 0 ? 'Connection restored. Sync is working again.' : null
+      })
 
       return true
     } catch (error) {
-      console.error('❌ Failed to refresh access token:', error)
-      this.notifyListeners('token_refresh_failed', { error: error.message })
+      console.error(`❌ Failed to refresh access token (attempt ${retryCount + 1}):`, error)
 
-      // If refresh token is invalid, clear all tokens
-      if (error.message.includes('invalid_grant')) {
-        console.log('🗑️ Refresh token invalid, clearing all tokens')
+      // Check if this is a permanent failure (invalid_grant means refresh token is bad)
+      const isPermanentFailure = error.message.includes('invalid_grant') ||
+                                 error.message.includes('invalid_client') ||
+                                 error.message.includes('unauthorized_client')
+
+      if (isPermanentFailure) {
+        console.log('🗑️ Permanent token failure detected, clearing all tokens')
+        this.notifyListeners('token_refresh_failed', {
+          error: error.message,
+          requiresReauth: true,
+          isPermanent: true,
+          userMessage: 'Your Google Drive connection has expired. Please sign in again to continue syncing.'
+        })
         this.clearTokens()
+        return false
       }
+
+      // Check if this is a network/temporary error that we can retry
+      const isNetworkError = error.message.includes('NetworkError') ||
+                            error.message.includes('Failed to fetch') ||
+                            error.message.includes('network') ||
+                            (response && response.status >= 500)
+
+      if (isNetworkError && retryCount < maxRetries) {
+        // Exponential backoff: 2s, 4s, 8s
+        const delayMs = Math.pow(2, retryCount + 1) * 1000
+        console.log(`⏳ Network error, retrying in ${delayMs / 1000} seconds...`)
+
+        this.notifyListeners('token_refresh_retrying', {
+          retryCount: retryCount + 1,
+          maxRetries: maxRetries + 1,
+          delayMs,
+          userMessage: `Connection issue. Retrying in ${delayMs / 1000} seconds... (${retryCount + 1}/${maxRetries + 1})`
+        })
+
+        this.refreshInProgress = false
+
+        // Wait and retry
+        await new Promise(resolve => setTimeout(resolve, delayMs))
+        return this.refreshAccessToken(retryCount + 1, maxRetries)
+      }
+
+      // All retries exhausted or non-retryable error
+      this.notifyListeners('token_refresh_failed', {
+        error: error.message,
+        requiresReauth: false,
+        retriesExhausted: retryCount >= maxRetries,
+        userMessage: retryCount >= maxRetries
+          ? 'Unable to refresh your Google Drive connection after multiple attempts. Please check your internet connection and try manually syncing.'
+          : 'Failed to refresh Google Drive connection. Please try manually syncing or sign in again.'
+      })
 
       return false
     } finally {
@@ -354,9 +406,24 @@ export class GoogleDriveAuth {
     switch (event) {
       case 'token_refreshed':
         console.log('🔄 Token refreshed automatically')
+        if (data.userMessage) {
+          console.log(`📢 User notification: ${data.userMessage}`)
+        }
+        break
+      case 'token_refresh_retrying':
+        console.log(`⏳ Token refresh retrying (${data.retryCount}/${data.maxRetries})`)
+        if (data.userMessage) {
+          console.log(`📢 User notification: ${data.userMessage}`)
+        }
         break
       case 'token_refresh_failed':
         console.warn('⚠️ Automatic token refresh failed:', data.error)
+        if (data.userMessage) {
+          console.error(`📢 User notification: ${data.userMessage}`)
+        }
+        if (data.requiresReauth) {
+          console.warn('🔐 Re-authentication required')
+        }
         break
       case 'tokens_cleared':
         console.log('🗑️ Tokens cleared, user will need to re-authenticate')

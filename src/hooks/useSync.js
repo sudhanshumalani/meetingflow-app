@@ -33,7 +33,11 @@ export function useSync() {
     initializeSync()
 
     // Online/offline detection
-    const handleOnline = () => setIsOnline(true)
+    const handleOnline = () => {
+      setIsOnline(true)
+      // Process queued operations when coming back online
+      syncService.processOfflineQueue()
+    }
     const handleOffline = () => setIsOnline(false)
 
     window.addEventListener('online', handleOnline)
@@ -47,6 +51,63 @@ export function useSync() {
       }
     }
   }, [])
+
+  /**
+   * iOS PWA Visibility Event Sync Trigger
+   * Handles sync when app resumes from background (critical for iOS)
+   */
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      // Only trigger when app becomes visible (not when backgrounding)
+      if (!document.hidden && syncConfig?.enabled) {
+        console.log('📱 App resumed - triggering visibility sync')
+
+        try {
+          // Step 1: Refresh token proactively (critical for iOS token expiration)
+          const tokenManager = await syncService.getTokenManager()
+          if (tokenManager) {
+            await tokenManager.getValidToken()
+          }
+
+          // Step 2: Sync from cloud to get latest data
+          const cloudResult = await syncService.syncFromCloud()
+
+          // Step 3: Upload any local changes if they exist
+          if (cloudResult.success) {
+            const localData = await syncService.getLocalData()
+            if (localData && localData.hasLocalChanges) {
+              console.log('📤 Uploading local changes after resume')
+              await syncService.syncToCloud(localData.data)
+            }
+          }
+
+          console.log('✅ Visibility sync completed')
+        } catch (error) {
+          console.error('❌ Visibility sync failed:', error)
+          // Don't throw - this is a background operation
+        }
+      }
+    }
+
+    const handlePageShow = (event) => {
+      // Page was restored from bfcache (iOS PWA resume from app switcher)
+      if (event.persisted && syncConfig?.enabled) {
+        console.log('📱 App restored from bfcache - triggering sync')
+        handleVisibilityChange()
+      }
+    }
+
+    // Listen for visibility changes (iOS PWA backgrounding/foregrounding)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    // Listen for pageshow (iOS PWA resume from app switcher)
+    window.addEventListener('pageshow', handlePageShow)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('pageshow', handlePageShow)
+    }
+  }, [syncConfig])
 
   /**
    * Initialize sync status and listeners

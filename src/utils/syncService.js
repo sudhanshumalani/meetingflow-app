@@ -929,8 +929,16 @@ class SyncService {
    */
   generateDataVersion(data) {
     const sortedData = {
-      meetings: (data.meetings || []).sort((a, b) => a.id.localeCompare(b.id)),
-      stakeholders: (data.stakeholders || []).sort((a, b) => a.id.localeCompare(b.id)),
+      meetings: (data.meetings || []).sort((a, b) => {
+        const idA = a?.id || ''
+        const idB = b?.id || ''
+        return idA.localeCompare(idB)
+      }),
+      stakeholders: (data.stakeholders || []).sort((a, b) => {
+        const idA = a?.id || ''
+        const idB = b?.id || ''
+        return idA.localeCompare(idB)
+      }),
       stakeholderCategories: data.stakeholderCategories || []
     }
     return this.calculateChecksum(sortedData)

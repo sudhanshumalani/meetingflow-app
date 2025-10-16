@@ -1969,8 +1969,8 @@ class SyncService {
       // We use ensureSingleGoogleDriveFile() instead which handles deduplication.
       // The fileId variable is already set by the new approach at line 1333.
 
-      // Use resumable upload for better reliability (recommended by Google for all uploads)
-      console.log('🔄 Using resumable upload protocol')
+      // Use multipart upload (resumable upload has CORS issues from browsers)
+      console.log('🔄 Using multipart upload for browser compatibility')
 
       const metadata = {
         name: fileName,
@@ -1983,105 +1983,82 @@ class SyncService {
         metadata.parents = [config.folderId]
       }
 
-      // Step 1: Initiate resumable upload session
-      console.log(`📤 Step 1: Initiating resumable upload session (${fileId ? 'update' : 'create'})`)
-      const initResponse = await fetch(
+      // Create multipart upload body
+      const boundary = '-------MeetingFlowBoundary' + Math.random().toString(36)
+      const delimiter = "\r\n--" + boundary + "\r\n"
+      const closeDelimiter = "\r\n--" + boundary + "--"
+
+      const multipartRequestBody =
+        delimiter +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadata) +
+        delimiter +
+        'Content-Type: application/json\r\n\r\n' +
+        content +
+        closeDelimiter
+
+      console.log(`📤 Uploading to Google Drive (${fileId ? 'update' : 'create'})`)
+
+      const response = await fetch(
         fileId
-          ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=resumable`
-          : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+          ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+          : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
         {
           method: fileId ? 'PATCH' : 'POST',
           headers: {
             'Authorization': `Bearer ${config.accessToken}`,
-            'Content-Type': 'application/json; charset=UTF-8',
-            'X-Upload-Content-Type': 'application/json',
-            'X-Upload-Content-Length': content.length.toString()
+            'Content-Type': `multipart/related; boundary=${boundary}`
           },
-          body: JSON.stringify(metadata)
+          body: multipartRequestBody
         }
       )
 
       // Handle file not found error - file was deleted between validation and upload
-      if (initResponse.status === 404 && fileId) {
+      if (response.status === 404 && fileId) {
         console.warn(`⚠️ UPLOAD: File ${fileId} was deleted during upload, will create new file`)
         fileId = null
         config.fileId = null
         await localforage.setItem('sync_config', this.syncConfig)
 
         // Retry as new file creation
-        const retryInitResponse = await fetch(
-          'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+        const retryMetadata = {
+          name: fileName,
+          mimeType: 'application/json',
+          parents: config.folderId ? [config.folderId] : undefined,
+          description: `MeetingFlow App Data - ${key}`
+        }
+
+        const retryBoundary = '-------MeetingFlowBoundary' + Math.random().toString(36)
+        const retryDelimiter = "\r\n--" + retryBoundary + "\r\n"
+        const retryCloseDelimiter = "\r\n--" + retryBoundary + "--"
+
+        const retryBody =
+          retryDelimiter +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+          JSON.stringify(retryMetadata) +
+          retryDelimiter +
+          'Content-Type: application/json\r\n\r\n' +
+          content +
+          retryCloseDelimiter
+
+        const retryResponse = await fetch(
+          'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
           {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${config.accessToken}`,
-              'Content-Type': 'application/json; charset=UTF-8',
-              'X-Upload-Content-Type': 'application/json',
-              'X-Upload-Content-Length': content.length.toString()
+              'Content-Type': `multipart/related; boundary=${retryBoundary}`
             },
-            body: JSON.stringify({
-              name: fileName,
-              mimeType: 'application/json',
-              parents: config.folderId ? [config.folderId] : undefined,
-              description: `MeetingFlow App Data - ${key}`
-            })
+            body: retryBody
           }
         )
 
-        if (!retryInitResponse.ok) {
-          const error = await retryInitResponse.json()
-          throw new Error(`Failed to initiate resumable upload: ${error.error?.message || retryInitResponse.statusText}`)
+        if (!retryResponse.ok) {
+          const error = await retryResponse.json()
+          throw new Error(`Failed to upload file: ${error.error?.message || retryResponse.statusText}`)
         }
 
-        const uploadUrl = retryInitResponse.headers.get('Location')
-        if (!uploadUrl) {
-          throw new Error('No upload URL returned from resumable upload initiation')
-        }
-
-        // Step 2: Upload content to session URL
-        console.log('📤 Step 2: Uploading content to resumable session')
-        const uploadResponse = await fetch(uploadUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: content
-        })
-
-        if (!uploadResponse.ok) {
-          throw new Error(`Resumable upload failed: ${uploadResponse.statusText}`)
-        }
-
-        var response = uploadResponse
-      } else {
-        if (!initResponse.ok) {
-          const error = await initResponse.json()
-          throw new Error(`Failed to initiate resumable upload: ${error.error?.message || initResponse.statusText}`)
-        }
-
-        // Get the upload URL from Location header
-        const uploadUrl = initResponse.headers.get('Location')
-        if (!uploadUrl) {
-          throw new Error('No upload URL returned from resumable upload initiation')
-        }
-
-        console.log('✅ Resumable session URL obtained')
-
-        // Step 2: Upload content to session URL
-        console.log('📤 Step 2: Uploading content to resumable session')
-        const uploadResponse = await fetch(uploadUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: content
-        })
-
-        if (!uploadResponse.ok) {
-          throw new Error(`Resumable upload failed: ${uploadResponse.statusText}`)
-        }
-
-        var response = uploadResponse
+        response = retryResponse
       }
 
       if (response && !response.ok) {

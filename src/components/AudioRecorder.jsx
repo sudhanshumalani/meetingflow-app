@@ -5,7 +5,7 @@ import assemblyAISpeakerService from '../services/assemblyAISpeakerService'
 import StreamingTranscriptBuffer from '../utils/StreamingTranscriptBuffer'
 import StreamingAudioBuffer from '../utils/StreamingAudioBuffer'
 
-const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disabled = false }) => {
+const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange, className = '', disabled = false }) => {
   const [isInitialized, setIsInitialized] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
@@ -89,6 +89,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, className = '', disable
       onTranscriptUpdate(currentTranscript, speakerData)
     }
   }, [transcript, speakerData, onTranscriptUpdate])
+
+  // Notify parent when speaker processing state changes
+  useEffect(() => {
+    if (onProcessingStateChange) {
+      onProcessingStateChange(isProcessingSpeakers)
+    }
+  }, [isProcessingSpeakers, onProcessingStateChange])
 
   // Auto-save functionality for processed audio
   const handleAutoSave = (reason = 'auto') => {

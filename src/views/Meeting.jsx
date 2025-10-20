@@ -26,7 +26,8 @@ import {
   Eye,
   Edit3,
   Search,
-  XCircle
+  XCircle,
+  Download
 } from 'lucide-react'
 import { mockStakeholders, getCategoryDisplayName, STAKEHOLDER_CATEGORIES } from '../utils/mockData'
 import { getTemplateForCategory, getColorClasses, PRIORITY_LEVELS } from '../utils/meetingTemplates'
@@ -112,6 +113,7 @@ export default function Meeting() {
   // Audio transcription state
   const [audioTranscript, setAudioTranscript] = useState('')
   const [speakerData, setSpeakerData] = useState(null) // Speaker diarization data
+  const [isProcessingSpeakers, setIsProcessingSpeakers] = useState(false) // Track speaker processing state
 
   // Debug: Monitor audioTranscript state changes
   useEffect(() => {
@@ -132,6 +134,7 @@ export default function Meeting() {
 
   // Save confirmation state
   const [showSaveConfirmation, setShowSaveConfirmation] = useState(false)
+  const [saveError, setSaveError] = useState(null) // Error state for save operations
   // AI processing state (uses Claude AI analysis hook)
   const [isAIProcessing, setIsAIProcessing] = useState(false)
   const [aiMode, setAiMode] = useState('auto') // 'auto', 'manual', 'off'
@@ -700,12 +703,79 @@ export default function Meeting() {
         status: 'completed'
       }), [formData, digitalNotes, audioTranscript, speakerData, aiResult, manualText, uploadedFiles, uploadedImageUrls, ocrResult, extractedText])
 
+  // Helper: Provide context-specific suggestions for save errors
+  const getSaveSuggestion = (error) => {
+    const errorMsg = error?.message || ''
+
+    if (errorMsg.includes('quota') || errorMsg.includes('storage') || errorMsg.includes('Storage')) {
+      return 'Storage is full. Try deleting old meetings or clearing browser cache.'
+    }
+    if (errorMsg.includes('speaker') || errorMsg.includes('Speaker')) {
+      return 'Wait for speaker identification to finish, then try saving again.'
+    }
+    if (errorMsg.includes('Invalid') || errorMsg.includes('required')) {
+      return 'Some required fields are missing. Please check your meeting details.'
+    }
+    if (errorMsg.includes('network') || errorMsg.includes('Network')) {
+      return 'Check your internet connection and try again.'
+    }
+    return 'Please try again. If the problem persists, use the Export Backup button to save your notes.'
+  }
+
+  // Validation function to check meeting data before saving
+  const validateMeetingData = () => {
+    const errors = []
+
+    if (!formData.title?.trim()) {
+      errors.push('Meeting title is required')
+    }
+
+    // Check if we have any content at all
+    const hasDigitalNotes = Object.values(digitalNotes).some(note => note?.trim())
+    const hasAudioContent = audioTranscript?.trim()
+    const hasOCRContent = extractedText?.trim()
+    const hasManualContent = manualText?.trim()
+    const hasUploadedImages = uploadedFiles?.length > 0
+
+    const hasContent = hasDigitalNotes || hasAudioContent || hasOCRContent || hasManualContent || hasUploadedImages
+
+    if (!hasContent) {
+      errors.push('Meeting must have some content (notes, transcript, or images)')
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors
+    }
+  }
+
   // Save functionality
   const handleSave = async () => {
+    // Prevent save during speaker processing
+    if (isProcessingSpeakers) {
+      console.warn('⚠️ Save blocked: Speaker processing is still running')
+      setSaveError({
+        message: 'Cannot save while speaker identification is in progress',
+        timestamp: new Date().toISOString(),
+        canRetry: true,
+        suggestion: 'Please wait for speaker processing to complete (usually 10-30 seconds), then try saving again.'
+      })
+      return
+    }
+
+    // Clear previous errors
+    setSaveError(null)
+
     // Save operation starting
     setIsSaving(true)
 
     try {
+      // Validate meeting data BEFORE attempting save
+      const validation = validateMeetingData()
+      if (!validation.valid) {
+        throw new Error(`Invalid meeting data: ${validation.errors.join(', ')}`)
+      }
+
       // SIMPLE ARCHITECTURE: URL determines the operation
       const isCreatingNew = (id === 'new')
 
@@ -724,8 +794,12 @@ export default function Meeting() {
           originalInputs: newMeetingData.originalInputs
         })
 
-        // Add to context and navigate immediately
-        addMeeting(newMeetingData)
+        // Add to context with error handling
+        const saveResult = await addMeeting(newMeetingData)
+        if (saveResult && !saveResult.success) {
+          throw new Error(saveResult.error || 'Failed to save meeting')
+        }
+
         setCurrentMeeting(newMeetingData)
         navigate(`/meeting/${newMeetingId}`, { replace: true })
       } else {
@@ -738,17 +812,31 @@ export default function Meeting() {
           formDataSelectedStakeholder: formData.selectedStakeholder
         })
 
-        // Update in context
-        updateMeeting(updatedMeetingData)
+        // Update in context with error handling
+        const saveResult = await updateMeeting(updatedMeetingData)
+        if (saveResult && !saveResult.success) {
+          throw new Error(saveResult.error || 'Failed to update meeting')
+        }
+
         setCurrentMeeting(updatedMeetingData)
       }
 
-      // Show success confirmation
+      // Only show success if we get here without errors
       setShowSaveConfirmation(true)
       setTimeout(() => setShowSaveConfirmation(false), SAVE_CONFIRMATION_TIMEOUT)
 
     } catch (error) {
       console.error('❌ SAVE FAILED:', error)
+
+      // Show user-friendly error with recovery options
+      setSaveError({
+        message: error.message || 'An unexpected error occurred while saving',
+        timestamp: new Date().toISOString(),
+        canRetry: true,
+        suggestion: getSaveSuggestion(error)
+      })
+
+      // Don't clear the error automatically - user must acknowledge
     } finally {
       setIsSaving(false)
     }
@@ -935,13 +1023,13 @@ export default function Meeting() {
                 
                 <TouchButton
                   onClick={handleSave}
-                  disabled={isSaving || isAIProcessing}
+                  disabled={isSaving || isAIProcessing || isProcessingSpeakers}
                   variant="primary"
                   size="small"
                   className="px-3 py-1"
                 >
                   <Save size={14} />
-                  {isSaving ? 'Saving...' : 'Save'}
+                  {isSaving ? 'Saving...' : isProcessingSpeakers ? 'Processing...' : 'Save'}
                 </TouchButton>
               </div>
             }
@@ -1023,11 +1111,11 @@ export default function Meeting() {
                 
                 <button
                   onClick={handleSave}
-                  disabled={isSaving || isAIProcessing}
+                  disabled={isSaving || isAIProcessing || isProcessingSpeakers}
                   className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
                 >
                   <Save size={16} />
-                  Save Meeting
+                  {isSaving ? 'Saving...' : isProcessingSpeakers ? 'Processing Speakers...' : 'Save Meeting'}
                 </button>
 
               </div>
@@ -1037,6 +1125,27 @@ export default function Meeting() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-2 md:py-8 safe-bottom">
+        {/* Speaker Processing Warning */}
+        {isProcessingSpeakers && (
+          <div className="mb-4 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-lg shadow-sm animate-pulse">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-6 h-6 text-yellow-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-yellow-900 mb-1">
+                  Speaker Identification in Progress
+                </h3>
+                <p className="text-sm text-yellow-700 mb-2">
+                  Please wait for speaker processing to complete before saving. This ensures all speaker labels are properly included in your meeting notes.
+                </p>
+                <div className="flex items-center gap-2 text-xs text-yellow-600">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Processing... This usually takes 10-30 seconds</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <ResponsiveGrid
           mobileColumns={1}
           tabletColumns={1}
@@ -1779,6 +1888,7 @@ Example notes you might paste:
                         console.log(`✅ Auto-saved transcript (${reason})`)
                       }
                     }}
+                    onProcessingStateChange={setIsProcessingSpeakers}
                     className="w-full"
                   />
 
@@ -2194,6 +2304,70 @@ Example notes you might paste:
             <div>
               <p className="font-semibold">Meeting Saved!</p>
               <p className="text-sm opacity-90">Your meeting has been successfully saved.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save Error Modal */}
+      {saveError && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 animate-scale-in">
+            <div className="flex items-start gap-3 mb-4">
+              <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  Failed to Save Meeting
+                </h3>
+                <p className="text-sm text-gray-700 mb-3">
+                  {saveError.message}
+                </p>
+                <div className="text-sm text-blue-700 bg-blue-50 p-3 rounded">
+                  💡 <strong>Suggestion:</strong> {saveError.suggestion}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2 justify-end mt-6">
+              <button
+                onClick={() => setSaveError(null)}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  // Emergency export to JSON
+                  const dataToSave = buildMeetingData(id || uuidv4())
+                  const blob = new Blob([JSON.stringify(dataToSave, null, 2)],
+                    { type: 'application/json' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `meeting-backup-${Date.now()}.json`
+                  a.click()
+                  URL.revokeObjectURL(url)
+
+                  // Show a toast that export succeeded
+                  setSaveError(null)
+                  alert('Backup exported successfully! Your meeting data has been saved to a JSON file.')
+                }}
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors flex items-center gap-2 justify-center"
+              >
+                <Download className="w-4 h-4" />
+                Export Backup
+              </button>
+              {saveError.canRetry && (
+                <button
+                  onClick={() => {
+                    setSaveError(null)
+                    handleSave()
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                >
+                  Try Again
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -470,13 +470,18 @@ class AssemblyAIService {
         })
         this.isStreaming = false
 
-        // Attempt reconnection if enabled and close was unexpected
-        if (this.reconnectionEnabled && !event.wasClean && this.reconnectAttempts < this.maxReconnectAttempts) {
-          console.warn(`⚠️ Unexpected disconnect. Attempting reconnection (${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})...`)
+        // Determine if this close is recoverable (should attempt reconnection)
+        const isRecoverableClose = this.isRecoverableWebSocketClose(event.code, event.wasClean)
+
+        // Only attempt reconnection for recoverable network errors
+        if (this.reconnectionEnabled && isRecoverableClose && this.reconnectAttempts < this.maxReconnectAttempts) {
+          console.warn(`⚠️ Recoverable disconnect (code ${event.code}). Attempting reconnection (${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})...`)
           this.attemptReconnect(audioStream, callbacks)
         } else {
-          // Normal close or max retries reached
-          if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+          // Normal close, non-recoverable close, or max retries reached
+          if (!isRecoverableClose) {
+            console.log(`ℹ️ Non-recoverable close (code ${event.code}). Recording will stop gracefully.`)
+          } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             console.error('❌ Max reconnection attempts reached. Giving up.')
             if (onError) onError(new Error('Max reconnection attempts reached'))
           }
@@ -874,6 +879,54 @@ class AssemblyAIService {
       clearTimeout(this.reconnectTimeout)
       this.reconnectTimeout = null
     }
+  }
+
+  /**
+   * Determine if a WebSocket close event is recoverable (should attempt reconnection)
+   * @param {number} code - WebSocket close code
+   * @param {boolean} wasClean - Whether the close was clean
+   * @returns {boolean} - True if reconnection should be attempted
+   */
+  isRecoverableWebSocketClose(code, wasClean) {
+    // Standard WebSocket close codes reference:
+    // 1000: Normal closure (user initiated stop, session complete)
+    // 1001: Going away (browser navigating away, tab closed)
+    // 1006: Abnormal closure (network error, no close frame received)
+    // 1008: Policy violation
+    // 1011: Server error
+    // 3000-3999: Reserved for libraries/frameworks
+    // 4000-4999: Reserved for applications (AssemblyAI custom codes)
+
+    // AssemblyAI-specific codes (from documentation):
+    // 3005: Session Expired (max session duration exceeded)
+    // 4000-4999: Auth/permission errors, rate limiting, etc.
+
+    // RECOVERABLE: Only abnormal network closures
+    if (code === 1006 && !wasClean) {
+      // 1006 = Abnormal closure (no close frame received)
+      // This indicates a network interruption that might be temporary
+      console.log('🔄 Detected abnormal network closure (1006) - will attempt reconnection')
+      return true
+    }
+
+    // NON-RECOVERABLE: All other cases
+    // - 1000 (Normal): User stopped recording or infrastructure timeout (60s idle)
+    // - 1001 (Going away): Browser/tab closing
+    // - 3005 (Session expired): AssemblyAI session duration limit reached
+    // - 4xxx (Application error): Auth issues, rate limiting, invalid config
+    // - Clean closures: Intentional disconnections
+
+    if (code === 1000 || wasClean) {
+      console.log('ℹ️ Normal/clean closure (code 1000 or wasClean=true) - likely infrastructure timeout or user stop')
+    } else if (code === 1001) {
+      console.log('ℹ️ Browser navigating away (code 1001) - no reconnection needed')
+    } else if (code === 3005) {
+      console.log('ℹ️ AssemblyAI session expired (code 3005) - session duration limit reached')
+    } else if (code >= 4000 && code <= 4999) {
+      console.log('ℹ️ Application-level error (code 4xxx) - likely auth/config issue')
+    }
+
+    return false
   }
 
   /**

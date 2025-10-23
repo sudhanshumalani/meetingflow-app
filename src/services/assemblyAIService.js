@@ -31,6 +31,12 @@ class AssemblyAIService {
     this.lastCallbacks = null
     this.lastTurnOrder = 0 // Track Turn sequence for gap detection
 
+    // Keepalive for preventing idle disconnections
+    this.keepaliveInterval = null
+    this.lastActivityTime = Date.now()
+    this.KEEPALIVE_INTERVAL = 30000 // Send keepalive every 30 seconds
+    this.INACTIVITY_TIMEOUT = 180000 // Warn if no activity for 3 minutes
+
     console.log('🎯 AssemblyAI Service initialized')
   }
 
@@ -48,7 +54,9 @@ class AssemblyAIService {
       source: null,
       isStreaming: false,
       audioBuffer: null,
-      audioBufferIndex: 0
+      audioBufferIndex: 0,
+      keepaliveInterval: null, // Keepalive timer
+      lastActivityTime: Date.now() // Track last activity
     }
     this.connections.set(connectionId, connection)
     console.log(`🆕 Created independent connection: ${connectionId}`)
@@ -177,11 +185,18 @@ class AssemblyAIService {
       conn.ws.onopen = () => {
         console.log(`🔌 AssemblyAI [${connectionId}]: WebSocket connected`)
         conn.isStreaming = true
+        conn.lastActivityTime = Date.now()
+
+        // Start keepalive to prevent idle disconnections
+        this.startKeepalive(connectionId)
       }
 
       conn.ws.onmessage = (message) => {
         const data = JSON.parse(message.data)
         console.log(`📩 AssemblyAI [${connectionId}] message:`, data.type)
+
+        // Update last activity time on any message
+        conn.lastActivityTime = Date.now()
 
         if (data.type === 'Begin') {
           console.log(`🎬 AssemblyAI [${connectionId}]: Session started:`, data.id, 'expires:', data.expires_at)
@@ -336,6 +351,9 @@ class AssemblyAIService {
 
     console.log(`🧹 [${connectionId}] Cleaning up resources...`)
 
+    // Stop keepalive for this connection
+    this.stopKeepalive(connectionId)
+
     if (conn.processor) {
       conn.processor.disconnect()
       conn.processor = null
@@ -394,11 +412,18 @@ class AssemblyAIService {
       this.ws.onopen = () => {
         console.log('🔌 AssemblyAI: WebSocket connected')
         this.isStreaming = true
+        this.lastActivityTime = Date.now()
+
+        // Start keepalive to prevent idle disconnections
+        this.startKeepalive()
       }
 
       this.ws.onmessage = (message) => {
         const data = JSON.parse(message.data)
         console.log('📩 AssemblyAI message:', data.type, data)
+
+        // Update last activity time on any message
+        this.lastActivityTime = Date.now()
 
         if (data.type === 'Begin') {
           console.log('🎬 AssemblyAI: Session started:', data.id, 'expires:', data.expires_at)
@@ -857,6 +882,9 @@ class AssemblyAIService {
   cleanup() {
     console.log('🧹 AssemblyAI: Cleaning up resources...')
 
+    // Stop keepalive timer
+    this.stopKeepalive()
+
     if (this.processor) {
       this.processor.disconnect()
       this.processor = null
@@ -877,6 +905,75 @@ class AssemblyAIService {
     }
 
     this.isStreaming = false
+  }
+
+  /**
+   * Start keepalive mechanism to prevent idle disconnections
+   * Sends periodic empty audio frames to keep WebSocket alive
+   * @param {string} connectionId - Optional connection ID for multi-connection mode
+   */
+  startKeepalive(connectionId = null) {
+    const conn = connectionId ? this.getConnection(connectionId) : this
+
+    if (!conn) {
+      console.warn('⚠️ Cannot start keepalive: connection not found')
+      return
+    }
+
+    // Stop any existing keepalive
+    this.stopKeepalive(connectionId)
+
+    console.log(`💓 Starting keepalive ${connectionId ? `[${connectionId}]` : ''}`)
+
+    const interval = setInterval(() => {
+      const ws = conn.ws
+      const lastActivity = conn.lastActivityTime
+      const timeSinceActivity = Date.now() - lastActivity
+
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn(`⚠️ Keepalive ${connectionId ? `[${connectionId}]` : ''}: WebSocket not open, stopping keepalive`)
+        this.stopKeepalive(connectionId)
+        return
+      }
+
+      // Warn if no activity for a long time
+      if (timeSinceActivity > this.INACTIVITY_TIMEOUT) {
+        console.warn(`⚠️ Keepalive ${connectionId ? `[${connectionId}]` : ''}: No activity for ${Math.round(timeSinceActivity / 1000)}s`)
+      }
+
+      // Send empty audio frame as keepalive
+      // Note: AssemblyAI expects audio data, so we send a minimal silent frame
+      try {
+        const silentFrame = new Int16Array(160) // 10ms of silence at 16kHz
+        ws.send(silentFrame.buffer)
+        console.log(`💓 Keepalive ${connectionId ? `[${connectionId}]` : ''}: Sent silent frame (${Math.round(timeSinceActivity / 1000)}s since last activity)`)
+      } catch (error) {
+        console.error(`❌ Keepalive ${connectionId ? `[${connectionId}]` : ''}: Failed to send frame:`, error)
+        this.stopKeepalive(connectionId)
+      }
+    }, this.KEEPALIVE_INTERVAL)
+
+    if (connectionId) {
+      conn.keepaliveInterval = interval
+    } else {
+      this.keepaliveInterval = interval
+    }
+  }
+
+  /**
+   * Stop keepalive mechanism
+   * @param {string} connectionId - Optional connection ID for multi-connection mode
+   */
+  stopKeepalive(connectionId = null) {
+    const conn = connectionId ? this.getConnection(connectionId) : this
+
+    if (!conn) return
+
+    if (conn.keepaliveInterval) {
+      clearInterval(conn.keepaliveInterval)
+      conn.keepaliveInterval = null
+      console.log(`💔 Stopped keepalive ${connectionId ? `[${connectionId}]` : ''}`)
+    }
   }
 
   /**

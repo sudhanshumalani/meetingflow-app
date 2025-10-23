@@ -83,14 +83,22 @@ function AppContent() {
     const loadPersistedData = async () => {
       try {
         a11y.announceLoadingState(true, 'application data')
-        
+
         // Simulate loading time for better UX
         await new Promise(resolve => setTimeout(resolve, 100))
-        
+
         // Load storage info for debugging
         const storageInfo = await storage.getStorageInfo()
         console.log('Storage info:', storageInfo)
-        
+
+        // Clean up old/empty transcript buffer sessions (run in background)
+        try {
+          const StreamingTranscriptBuffer = (await import('./utils/StreamingTranscriptBuffer')).default
+          await StreamingTranscriptBuffer.cleanupOldSessions()
+        } catch (cleanupError) {
+          console.warn('⚠️ Session cleanup failed:', cleanupError)
+        }
+
         // Load user preferences
         const preferences = await storage.getUserPreferences()
         console.log('User preferences loaded:', preferences)

@@ -21,43 +21,55 @@ export async function recoverTranscript(sessionId, reactState = {}) {
     speakerData: null,
     audioSource: 'unknown',
     recordingMode: 'unknown',
-    metadata: {}
+    metadata: {},
+    attemptedTiers: []
   }
 
   try {
+    console.log('🔍 Starting transcript recovery for session:', sessionId)
+
     // Tier 1: Complete speaker data (AssemblyAI processed)
+    console.log('🔍 Attempting Tier 1 Recovery: Complete speaker data...')
     const tier1Result = await attemptTier1Recovery(sessionId)
+    recovery.attemptedTiers.push({ tier: 1, success: tier1Result.success })
     if (tier1Result.success) {
       console.log('✅ Tier 1 Recovery: Found complete speaker data')
       return { ...recovery, ...tier1Result, tier: 1 }
     }
 
     // Tier 2: Partial speaker + streaming merge
+    console.log('🔍 Attempting Tier 2 Recovery: Partial speaker + streaming merge...')
     const tier2Result = await attemptTier2Recovery(sessionId)
+    recovery.attemptedTiers.push({ tier: 2, success: tier2Result.success })
     if (tier2Result.success) {
       console.log('✅ Tier 2 Recovery: Merged partial speaker data with streaming transcript')
       return { ...recovery, ...tier2Result, tier: 2 }
     }
 
     // Tier 3: Streaming buffer only (IndexedDB turns)
+    console.log('🔍 Attempting Tier 3 Recovery: Streaming buffer only...')
     const tier3Result = await attemptTier3Recovery(sessionId)
+    recovery.attemptedTiers.push({ tier: 3, success: tier3Result.success })
     if (tier3Result.success) {
       console.log('✅ Tier 3 Recovery: Reconstructed from streaming buffer')
       return { ...recovery, ...tier3Result, tier: 3 }
     }
 
     // Tier 4: React state (last resort)
+    console.log('🔍 Attempting Tier 4 Recovery: React state fallback...')
     const tier4Result = attemptTier4Recovery(reactState)
+    recovery.attemptedTiers.push({ tier: 4, success: tier4Result.success })
     if (tier4Result.success) {
       console.log('✅ Tier 4 Recovery: Using React state')
       return { ...recovery, ...tier4Result, tier: 4 }
     }
 
-    console.warn('❌ All recovery tiers failed')
+    console.warn('❌ All recovery tiers failed:', recovery.attemptedTiers)
     return recovery
 
   } catch (error) {
-    console.error('❌ Recovery failed:', error)
+    console.error('❌ Recovery failed with exception:', error)
+    recovery.error = error.message
     return recovery
   }
 }
@@ -231,17 +243,17 @@ export async function findOrphanedSessions() {
   try {
     const activeSessions = await StreamingTranscriptBuffer.getActiveSessions()
 
-    // Filter sessions older than 5 minutes (likely orphaned from crash)
-    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000)
-    const orphanedSessions = activeSessions.filter(session =>
-      session.lastUpdateTime < fiveMinutesAgo
-    )
+    console.log(`🔍 Checking ${activeSessions.length} active sessions for orphaned data`)
 
-    console.log(`🔍 Found ${orphanedSessions.length} orphaned sessions`)
+    // Filter sessions that are truly orphaned:
+    // 1. Session is still marked as active (isActive = true)
+    // 2. Session is older than 2 minutes (enough time for a session to complete)
+    // 3. Session has actual transcript data (wordCount > 0)
+    const twoMinutesAgo = Date.now() - (2 * 60 * 1000)
 
-    // Enrich with preview data
-    const enriched = await Promise.all(
-      orphanedSessions.map(async (session) => {
+    // Enrich with transcript data first to filter effectively
+    const enrichedSessions = await Promise.all(
+      activeSessions.map(async (session) => {
         const transcript = await StreamingTranscriptBuffer.getSessionTranscript(session.sessionId)
         const wordCount = transcript.split(' ').filter(w => w.trim()).length
 
@@ -249,12 +261,33 @@ export async function findOrphanedSessions() {
           ...session,
           previewText: transcript.substring(0, 100),
           wordCount,
-          ageMinutes: Math.round((Date.now() - session.lastUpdateTime) / 60000)
+          ageMinutes: Math.round((Date.now() - session.startTime) / 60000),
+          ageSeconds: Math.round((Date.now() - session.startTime) / 1000)
         }
       })
     )
 
-    return enriched
+    // Filter for truly orphaned sessions
+    const orphanedSessions = enrichedSessions.filter(session => {
+      // Must be older than 2 minutes
+      if (session.startTime >= twoMinutesAgo) {
+        console.log(`⏭️ Skipping recent session (${session.ageSeconds}s old):`, session.sessionId)
+        return false
+      }
+
+      // Must have actual content
+      if (session.wordCount === 0) {
+        console.log(`⏭️ Skipping empty session:`, session.sessionId)
+        return false
+      }
+
+      console.log(`✅ Found orphaned session (${session.ageMinutes}min old, ${session.wordCount} words):`, session.sessionId)
+      return true
+    })
+
+    console.log(`🔍 Found ${orphanedSessions.length} truly orphaned sessions out of ${activeSessions.length} active`)
+
+    return orphanedSessions
   } catch (error) {
     console.error('Failed to find orphaned sessions:', error)
     return []
@@ -277,5 +310,42 @@ export async function deleteOrphanedSession(sessionId) {
  * Recover orphaned session and return transcript
  */
 export async function recoverOrphanedSession(sessionId) {
-  return await recoverTranscript(sessionId)
+  try {
+    console.log('🔄 Starting recovery for session:', sessionId)
+    const result = await recoverTranscript(sessionId)
+
+    // Enhanced error logging for debugging
+    if (!result.success) {
+      console.error('❌ Recovery failed for session:', sessionId, 'Result:', result)
+
+      // Try to get session metadata for debugging
+      const session = await StreamingTranscriptBuffer.getSession(sessionId)
+      console.error('📊 Session metadata:', session)
+
+      // Try to get raw turns
+      const turns = await StreamingTranscriptBuffer.getSessionTurns(sessionId)
+      console.error('📊 Session turns count:', turns.length)
+
+      // Return enhanced error information
+      return {
+        success: false,
+        error: 'No recoverable data found',
+        details: {
+          sessionExists: !!session,
+          turnsCount: turns.length,
+          sessionMetadata: session
+        }
+      }
+    }
+
+    console.log('✅ Recovery successful for session:', sessionId, 'Tier:', result.tier)
+    return result
+  } catch (error) {
+    console.error('❌ Recovery error for session:', sessionId, error)
+    return {
+      success: false,
+      error: error.message,
+      details: { exception: error }
+    }
+  }
 }

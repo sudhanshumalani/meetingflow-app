@@ -63,12 +63,32 @@ const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
           setOrphanedSessions(prev => prev.filter(s => s.sessionId !== session.sessionId))
         }, 2000)
       } else {
-        setRecoveryStatus(prev => ({ ...prev, [session.sessionId]: 'failed' }))
-        console.error('❌ Recovery failed for session:', session.sessionId)
+        setRecoveryStatus(prev => ({
+          ...prev,
+          [session.sessionId]: {
+            status: 'failed',
+            error: result.error || 'Unknown error',
+            details: result.details
+          }
+        }))
+        console.error('❌ Recovery failed for session:', session.sessionId, result)
+
+        // Show more helpful error message to user
+        const errorMsg = result.error || 'Recovery failed - no data found'
+        alert(`Recovery Failed\n\n${errorMsg}\n\nThe recording data may have been lost. Please check the browser console for details.`)
       }
     } catch (error) {
-      setRecoveryStatus(prev => ({ ...prev, [session.sessionId]: 'failed' }))
+      setRecoveryStatus(prev => ({
+        ...prev,
+        [session.sessionId]: {
+          status: 'failed',
+          error: error.message,
+          details: { exception: error.toString() }
+        }
+      }))
       console.error('❌ Recovery error:', error)
+
+      alert(`Recovery Error\n\n${error.message}\n\nPlease check the browser console for details.`)
     }
   }
 
@@ -172,7 +192,18 @@ const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
                         <span>Recovered successfully!</span>
                       </div>
                     )}
-                    {status === 'failed' && (
+                    {status?.status === 'failed' && (
+                      <div className="flex items-col gap-1 mt-2 text-xs text-red-700">
+                        <div className="flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" />
+                          <span>Recovery failed</span>
+                        </div>
+                        {status.error && (
+                          <div className="text-xs text-red-600 mt-0.5">{status.error}</div>
+                        )}
+                      </div>
+                    )}
+                    {status === 'failed' && typeof status !== 'object' && (
                       <div className="flex items-center gap-1 mt-2 text-xs text-red-700">
                         <AlertTriangle className="w-3 h-3" />
                         <span>Recovery failed</span>

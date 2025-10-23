@@ -757,9 +757,35 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
 
       // Complete transcript buffer session
       if (transcriptSessionIdRef.current) {
-        await StreamingTranscriptBuffer.completeSession(transcriptSessionIdRef.current, {
-          speakerProcessingStatus: enableSpeakerDiarization ? 'processing' : 'not-applicable'
-        })
+        try {
+          console.log('📝 Completing transcript buffer session:', transcriptSessionIdRef.current)
+
+          // Add a final turn with the current transcript state to ensure nothing is lost
+          if (transcript || interimText) {
+            const finalText = transcript + (interimText ? ' ' + interimText : '')
+            console.log('📝 Adding final turn with', finalText.split(' ').filter(w => w.trim()).length, 'words')
+
+            await StreamingTranscriptBuffer.bufferTurn(transcriptSessionIdRef.current, {
+              turnId: `final_turn_${Date.now()}`,
+              text: finalText,
+              isFinal: true,
+              endOfTurn: true,
+              audioSource: selectedAudioSource,
+              recordingMode: enableSpeakerDiarization ? 'hybrid-speaker' : 'streaming-only'
+            })
+          }
+
+          // Complete session (this will flush the batch automatically)
+          await StreamingTranscriptBuffer.completeSession(transcriptSessionIdRef.current, {
+            speakerProcessingStatus: enableSpeakerDiarization ? 'processing' : 'not-applicable',
+            finalTranscriptLength: (transcript + interimText).length
+          })
+
+          console.log('✅ Transcript buffer session completed successfully')
+        } catch (error) {
+          console.error('❌ Error completing transcript buffer session:', error)
+          // Don't throw - allow recording to stop gracefully even if buffer completion fails
+        }
       }
 
       // If speaker diarization is enabled, trigger processing

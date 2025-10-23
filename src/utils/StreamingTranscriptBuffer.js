@@ -127,22 +127,42 @@ class StreamingTranscriptBuffer {
    * @param {Object} finalStatus - Final status info
    */
   async completeSession(sessionId, finalStatus = {}) {
-    // Flush any remaining turns
-    await this.flushBatch()
+    try {
+      console.log(`🏁 Completing session ${sessionId}...`)
 
-    // Update session metadata
-    const session = await this.sessionDb.getItem(sessionId)
-    if (session) {
+      // Flush any remaining turns
+      await this.flushBatch()
+
+      // Update session metadata
+      const session = await this.sessionDb.getItem(sessionId)
+      if (!session) {
+        console.warn(`⚠️ Session ${sessionId} not found - may have been already deleted`)
+        return
+      }
+
       session.isActive = false
       session.completedTime = Date.now()
       session.speakerProcessingStatus = finalStatus.speakerProcessingStatus || session.speakerProcessingStatus
       session.finalTranscriptLength = finalStatus.finalTranscriptLength || session.totalCharacters
-      await this.sessionDb.setItem(sessionId, session)
-      console.log(`✅ Completed transcript buffer session: ${sessionId}`)
-    }
 
-    if (this.currentSessionId === sessionId) {
-      this.currentSessionId = null
+      await this.sessionDb.setItem(sessionId, session)
+      console.log(`✅ Completed transcript buffer session: ${sessionId}`, {
+        turns: session.turnCount,
+        chars: session.finalTranscriptLength,
+        speakerStatus: session.speakerProcessingStatus
+      })
+
+      if (this.currentSessionId === sessionId) {
+        this.currentSessionId = null
+      }
+
+      // Clean up old completed sessions (don't await - run in background)
+      this.cleanupOldSessions().catch(err => {
+        console.warn('⚠️ Background cleanup failed:', err)
+      })
+    } catch (error) {
+      console.error(`❌ Failed to complete session ${sessionId}:`, error)
+      throw error
     }
   }
 
@@ -237,20 +257,32 @@ class StreamingTranscriptBuffer {
   }
 
   /**
-   * Cleanup old completed sessions (older than 7 days)
+   * Cleanup old completed sessions (older than 7 days) and empty active sessions
    */
   async cleanupOldSessions() {
     const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000)
+    const oneHourAgo = Date.now() - (60 * 60 * 1000)
     const sessionsToDelete = []
 
     await this.sessionDb.iterate((value, key) => {
+      // Delete completed sessions older than 7 days
       if (!value.isActive && value.completedTime && value.completedTime < sevenDaysAgo) {
+        console.log(`🧹 Marking old completed session for deletion: ${value.sessionId} (${Math.round((Date.now() - value.completedTime) / 86400000)} days old)`)
+        sessionsToDelete.push(value.sessionId)
+      }
+      // Delete active sessions older than 1 hour with no turns (likely failed to start properly)
+      else if (value.isActive && value.startTime < oneHourAgo && value.turnCount === 0) {
+        console.log(`🧹 Marking empty active session for deletion: ${value.sessionId} (${Math.round((Date.now() - value.startTime) / 60000)} minutes old, 0 turns)`)
         sessionsToDelete.push(value.sessionId)
       }
     })
 
-    console.log(`🧹 Cleaning up ${sessionsToDelete.length} old sessions`)
-    await Promise.all(sessionsToDelete.map(id => this.deleteSession(id)))
+    if (sessionsToDelete.length > 0) {
+      console.log(`🧹 Cleaning up ${sessionsToDelete.length} old/empty sessions`)
+      await Promise.all(sessionsToDelete.map(id => this.deleteSession(id)))
+    } else {
+      console.log(`✅ No old sessions to clean up`)
+    }
   }
 
   /**

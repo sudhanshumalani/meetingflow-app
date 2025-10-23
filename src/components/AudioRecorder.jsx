@@ -33,6 +33,12 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
   const mediaRecorderRef = useRef(null) // For speaker diarization recording
   const recordedChunksRef = useRef([]) // For speaker diarization audio chunks
 
+  // Connection health monitoring
+  const [connectionStatus, setConnectionStatus] = useState('disconnected') // 'connected', 'disconnected', 'reconnecting'
+  const connectionHealthTimerRef = useRef(null)
+  const lastTranscriptTimeRef = useRef(Date.now())
+  const disconnectionStartTimeRef = useRef(null)
+
   // Mobile lifecycle management
   const [wakeLock, setWakeLock] = useState(null)
 
@@ -198,6 +204,51 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
     }
   }, [isRecording, wakeLock])
 
+  // Connection health monitoring - Auto-cleanup after 5 minutes of disconnection
+  useEffect(() => {
+    if (!isRecording) {
+      if (connectionHealthTimerRef.current) {
+        clearInterval(connectionHealthTimerRef.current)
+        connectionHealthTimerRef.current = null
+      }
+      setConnectionStatus('disconnected')
+      return
+    }
+
+    setConnectionStatus('connected')
+
+    // Monitor connection health every 10 seconds
+    connectionHealthTimerRef.current = setInterval(() => {
+      if (disconnectionStartTimeRef.current) {
+        const disconnectionDuration = Date.now() - disconnectionStartTimeRef.current
+        const minutesDisconnected = Math.floor(disconnectionDuration / 60000)
+
+        console.log(`⚠️ WebSocket disconnected for ${minutesDisconnected} minutes`)
+
+        // After 5 minutes of disconnection, give up and stop recording
+        if (disconnectionDuration > 5 * 60 * 1000) {
+          console.error('❌ WebSocket disconnected for 5+ minutes - stopping recording')
+          setError('Connection lost for too long - stopping recording')
+
+          // Stop recording gracefully
+          stopRecording().catch(err => {
+            console.error('Error stopping recording after timeout:', err)
+          })
+        } else if (minutesDisconnected >= 2) {
+          // Warning after 2 minutes
+          setError(`Connection interrupted for ${minutesDisconnected} minutes - recording continues but transcript may be incomplete`)
+        }
+      }
+    }, 10000)
+
+    return () => {
+      if (connectionHealthTimerRef.current) {
+        clearInterval(connectionHealthTimerRef.current)
+        connectionHealthTimerRef.current = null
+      }
+    }
+  }, [isRecording])
+
   // Check microphone permissions
   const checkPermissions = async () => {
     try {
@@ -312,6 +363,14 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 length: text?.length
               })
 
+              // Update connection status - we're receiving data!
+              setConnectionStatus('connected')
+              lastTranscriptTimeRef.current = Date.now()
+              if (disconnectionStartTimeRef.current) {
+                disconnectionStartTimeRef.current = null
+                setError(null) // Clear disconnection warning
+              }
+
               // Buffer turn to IndexedDB
               if (transcriptSessionIdRef.current && text) {
                 await StreamingTranscriptBuffer.bufferTurn(transcriptSessionIdRef.current, {
@@ -353,16 +412,23 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 displayStream.getTracks().forEach(track => track.stop())
               }
             },
-            onClose: async () => {
-              console.log('🔌 Tab audio streaming connection closed')
-              await cleanupRecordingSession('tab_audio_close')
-              setIsRecording(false)
-              handleAutoSave('recording_ended')
+            onClose: () => {
+              console.log('🔌 Tab audio streaming connection closed - WebSocket disconnected but recording continues')
+              handleAutoSave('websocket_disconnected')
 
-              // Stop the tab stream when connection closes
-              if (displayStream) {
-                displayStream.getTracks().forEach(track => track.stop())
+              // NOTE: We do NOT stop recording or cleanup session here!
+              // iOS frequently disconnects WebSockets due to backgrounding/notifications
+              // The MediaStream keeps recording, we just lose real-time transcription
+              // AssemblyAI will attempt reconnection automatically
+
+              // Track disconnection start time
+              if (!disconnectionStartTimeRef.current) {
+                disconnectionStartTimeRef.current = Date.now()
               }
+
+              // Set disconnected state for UI indicator
+              setConnectionStatus('reconnecting')
+              setError('Connection interrupted - recording continues, attempting to reconnect...')
             }
           })
 
@@ -756,16 +822,23 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 micStream.getTracks().forEach(track => track.stop())
               }
             },
-            onClose: async () => {
-              console.log('🔌 AssemblyAI connection closed')
-              await cleanupRecordingSession('assemblyai_close')
-              setIsRecording(false)
-              handleAutoSave('recording_ended')
+            onClose: () => {
+              console.log('🔌 AssemblyAI connection closed - WebSocket disconnected but recording continues')
+              handleAutoSave('websocket_disconnected')
 
-              // Stop the mic stream when connection closes
-              if (micStream) {
-                micStream.getTracks().forEach(track => track.stop())
+              // NOTE: We do NOT stop recording or cleanup session here!
+              // iOS frequently disconnects WebSockets due to backgrounding/notifications
+              // The MediaStream keeps recording, we just lose real-time transcription
+              // AssemblyAI will attempt reconnection automatically
+
+              // Track disconnection start time
+              if (!disconnectionStartTimeRef.current) {
+                disconnectionStartTimeRef.current = Date.now()
               }
+
+              // Set disconnected state for UI indicator
+              setConnectionStatus('reconnecting')
+              setError('Connection interrupted - recording continues, attempting to reconnect...')
             }
           })
         }
@@ -1292,6 +1365,30 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
               </div>
             )}
           </div>
+
+        {/* Connection Status Indicator - Only show during recording */}
+        {isRecording && (
+          <div className={`mb-3 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+            connectionStatus === 'connected'
+              ? 'bg-green-50 text-green-700 border border-green-200'
+              : connectionStatus === 'reconnecting'
+              ? 'bg-yellow-50 text-yellow-700 border border-yellow-200 animate-pulse'
+              : 'bg-gray-50 text-gray-600 border border-gray-200'
+          }`}>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${
+                connectionStatus === 'connected' ? 'bg-green-500' :
+                connectionStatus === 'reconnecting' ? 'bg-yellow-500' :
+                'bg-gray-400'
+              }`}></div>
+              <span>
+                {connectionStatus === 'connected' && '🟢 Connected - Transcribing'}
+                {connectionStatus === 'reconnecting' && '🟡 Reconnecting - Recording continues'}
+                {connectionStatus === 'disconnected' && '⚫ Disconnected'}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Main Recording Button */}
         <div className="flex items-center justify-center mb-4">

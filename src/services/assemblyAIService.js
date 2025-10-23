@@ -995,11 +995,12 @@ class AssemblyAIService {
       }
 
       // Send empty audio frame as keepalive
-      // Note: AssemblyAI expects audio data, so we send a minimal silent frame
+      // Note: AssemblyAI requires audio chunks between 50-1000ms
+      // 800 samples at 16kHz = 50ms (minimum required duration)
       try {
-        const silentFrame = new Int16Array(160) // 10ms of silence at 16kHz
+        const silentFrame = new Int16Array(800) // 50ms of silence at 16kHz (minimum required)
         ws.send(silentFrame.buffer)
-        console.log(`💓 Keepalive ${connectionId ? `[${connectionId}]` : ''}: Sent silent frame (${Math.round(timeSinceActivity / 1000)}s since last activity)`)
+        console.log(`💓 Keepalive ${connectionId ? `[${connectionId}]` : ''}: Sent 50ms silent frame (${Math.round(timeSinceActivity / 1000)}s since last activity)`)
       } catch (error) {
         console.error(`❌ Keepalive ${connectionId ? `[${connectionId}]` : ''}: Failed to send frame:`, error)
         this.stopKeepalive(connectionId)

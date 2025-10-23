@@ -149,20 +149,54 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
     }
   }
 
-  // Handle app going to background on mobile
+  // Handle app going to background on mobile - CRITICAL for iOS
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden && isRecording) {
         console.log('📱 App went to background during recording - auto-saving transcript')
         handleAutoSave('background')
+
+        // iOS: Try to keep wake lock active
+        if (wakeLock && wakeLock.released) {
+          console.log('⚠️ Wake lock was released, attempting to reacquire...')
+          requestWakeLock().catch(err => console.warn('Failed to reacquire wake lock:', err))
+        }
       } else if (!document.hidden && isRecording) {
         console.log('📱 App returned to foreground during recording')
+
+        // iOS: Ensure wake lock is still active
+        if (!wakeLock || wakeLock.released) {
+          console.log('🔄 Reacquiring wake lock after foreground...')
+          requestWakeLock().catch(err => console.warn('Failed to reacquire wake lock:', err))
+        }
+      }
+    }
+
+    const handlePageHide = () => {
+      if (isRecording) {
+        console.log('📱 Page hiding during recording - emergency save')
+        handleAutoSave('page_hide')
+      }
+    }
+
+    const handleBeforeUnload = (e) => {
+      if (isRecording) {
+        console.log('⚠️ Page unloading during recording')
+        handleAutoSave('before_unload')
+        // Don't prevent unload, just save
       }
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [isRecording])
+    window.addEventListener('pagehide', handlePageHide)
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('pagehide', handlePageHide)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [isRecording, wakeLock])
 
   // Check microphone permissions
   const checkPermissions = async () => {

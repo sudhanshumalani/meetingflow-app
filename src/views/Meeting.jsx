@@ -660,8 +660,10 @@ export default function Meeting() {
   
 
 
-  // Extract meeting data builder for better performance
-  const buildMeetingData = useMemo(() => (meetingId) => ({
+  // Build meeting data object
+  const buildMeetingData = (meetingId) => {
+    try {
+      return {
         id: meetingId,
         ...formData,
         digitalNotes,
@@ -676,10 +678,11 @@ export default function Meeting() {
             type: file.type,
             lastModified: file.lastModified
           })),
-          uploadedImageUrls: uploadedImageUrls.map(img => ({
-            name: img.name,
-            url: img.url
-          })),
+          // Don't save Blob URLs - they become invalid on reload
+          // uploadedImageUrls: uploadedImageUrls.map(img => ({
+          //   name: img.name,
+          //   url: img.url
+          // })),
           ocrResults: ocrResult,
           audioTranscript: audioTranscript || null,
           speakerData: speakerData || null, // Add to originalInputs too
@@ -701,7 +704,12 @@ export default function Meeting() {
         uploadedFiles: uploadedFiles.map(f => f.name),
         lastSaved: new Date().toISOString(),
         status: 'completed'
-      }), [formData, digitalNotes, audioTranscript, speakerData, aiResult, manualText, uploadedFiles, uploadedImageUrls, ocrResult, extractedText])
+      }
+    } catch (error) {
+      console.error('❌ Error building meeting data:', error)
+      throw new Error(`Failed to build meeting data: ${error.message}`)
+    }
+  }
 
   // Helper: Provide context-specific suggestions for save errors
   const getSaveSuggestion = (error) => {

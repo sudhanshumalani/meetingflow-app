@@ -39,6 +39,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
   const lastTranscriptTimeRef = useRef(Date.now())
   const disconnectionStartTimeRef = useRef(null)
 
+  // DEBUG: WebSocket close code tracking (temporary for iOS debugging)
+  const [lastCloseInfo, setLastCloseInfo] = useState(null)
+
   // Mobile lifecycle management
   const [wakeLock, setWakeLock] = useState(null)
 
@@ -822,8 +825,20 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 micStream.getTracks().forEach(track => track.stop())
               }
             },
-            onClose: () => {
+            onClose: (closeInfo) => {
               console.log('🔌 AssemblyAI connection closed - WebSocket disconnected but recording continues')
+
+              // DEBUG: Capture close code for iOS debugging
+              if (closeInfo) {
+                setLastCloseInfo({
+                  code: closeInfo.code,
+                  reason: closeInfo.reason || 'No reason provided',
+                  wasClean: closeInfo.wasClean,
+                  timestamp: new Date().toLocaleTimeString()
+                })
+                console.log('📊 DEBUG Close Info:', closeInfo)
+              }
+
               handleAutoSave('websocket_disconnected')
 
               // NOTE: We do NOT stop recording or cleanup session here!
@@ -1387,6 +1402,25 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 {connectionStatus === 'disconnected' && '⚫ Disconnected'}
               </span>
             </div>
+          </div>
+        )}
+
+        {/* DEBUG: WebSocket Close Info Display (temporary for iOS debugging) */}
+        {lastCloseInfo && (
+          <div className="mb-3 px-3 py-2 rounded-lg text-xs bg-purple-50 border border-purple-200">
+            <div className="font-semibold text-purple-900 mb-1">🔍 DEBUG: Last WebSocket Close</div>
+            <div className="space-y-0.5 text-purple-800 font-mono">
+              <div>Code: <span className="font-bold">{lastCloseInfo.code}</span></div>
+              <div>Reason: {lastCloseInfo.reason}</div>
+              <div>Clean: {lastCloseInfo.wasClean ? 'Yes' : 'No'}</div>
+              <div>Time: {lastCloseInfo.timestamp}</div>
+            </div>
+            <button
+              onClick={() => setLastCloseInfo(null)}
+              className="mt-2 text-purple-600 hover:text-purple-800 text-xs underline"
+            >
+              Clear
+            </button>
           </div>
         )}
 

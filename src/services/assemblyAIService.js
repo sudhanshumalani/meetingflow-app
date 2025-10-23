@@ -486,7 +486,7 @@ class AssemblyAIService {
             if (onError) onError(new Error('Max reconnection attempts reached'))
           }
           this.reconnectionEnabled = false
-          if (onClose) onClose()
+          if (onClose) onClose({ code: event.code, reason: event.reason, wasClean: event.wasClean })
           this.cleanup()
         }
       }

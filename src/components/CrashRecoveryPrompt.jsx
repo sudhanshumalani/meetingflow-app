@@ -58,7 +58,10 @@ const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
           })
         }
 
-        // Remove from list after successful recovery
+        // IMPORTANT: Delete the session from IndexedDB so it doesn't appear again
+        await deleteOrphanedSession(session.sessionId)
+
+        // Remove from UI list after successful recovery and deletion
         setTimeout(() => {
           setOrphanedSessions(prev => prev.filter(s => s.sessionId !== session.sessionId))
         }, 2000)
@@ -108,6 +111,27 @@ const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
       await handleRecoverSession(session)
     }
     setIsRecovering(false)
+  }
+
+  const handleClearAll = async () => {
+    if (!window.confirm('Are you sure you want to delete all orphaned sessions? This cannot be undone.')) {
+      return
+    }
+
+    try {
+      console.log('🗑️ Clearing all orphaned sessions...')
+      setIsRecovering(true)
+      for (const session of orphanedSessions) {
+        await deleteOrphanedSession(session.sessionId)
+      }
+      setOrphanedSessions([])
+      setIsRecovering(false)
+      console.log('✅ All orphaned sessions cleared')
+    } catch (error) {
+      console.error('❌ Error clearing sessions:', error)
+      setIsRecovering(false)
+      alert(`Error clearing sessions: ${error.message}`)
+    }
   }
 
   const handleDismiss = () => {
@@ -260,14 +284,25 @@ const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
                 Dismiss
               </button>
               {orphanedSessions.some(s => !recoveryStatus[s.sessionId]) && (
-                <button
-                  onClick={handleRecoverAll}
-                  disabled={isRecovering}
-                  className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                >
-                  <Download className="w-3 h-3" />
-                  Recover All
-                </button>
+                <>
+                  <button
+                    onClick={handleRecoverAll}
+                    disabled={isRecovering}
+                    className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    <Download className="w-3 h-3" />
+                    Recover All
+                  </button>
+                  <button
+                    onClick={handleClearAll}
+                    disabled={isRecovering}
+                    className="px-3 py-1.5 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    title="Delete all orphaned sessions permanently"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    Clear All
+                  </button>
+                </>
               )}
             </div>
           </div>

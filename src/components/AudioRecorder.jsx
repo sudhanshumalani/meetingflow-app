@@ -308,9 +308,10 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 setTranscript(persistentTranscriptRef.current)
               }
             },
-            onError: (error) => {
+            onError: async (error) => {
               console.error('❌ Tab audio streaming error:', error)
               setError(error.message)
+              await cleanupRecordingSession('tab_audio_error')
               setIsRecording(false)
 
               // Stop the tab stream on error
@@ -318,8 +319,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 displayStream.getTracks().forEach(track => track.stop())
               }
             },
-            onClose: () => {
+            onClose: async () => {
               console.log('🔌 Tab audio streaming connection closed')
+              await cleanupRecordingSession('tab_audio_close')
               setIsRecording(false)
               handleAutoSave('recording_ended')
 
@@ -534,9 +536,10 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 setTranscript(persistentTranscriptRef.current)
               }
             },
-            onError: (error) => {
+            onError: async (error) => {
               console.error('❌ Hybrid mode microphone error:', error)
               setError(`Microphone: ${error.message}`)
+              await cleanupRecordingSession('hybrid_mic_error')
               setIsRecording(false)
 
               // Stop the mic stream on error
@@ -651,9 +654,10 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 setIsProcessingSpeakers(false)
               },
 
-              onError: (error) => {
+              onError: async (error) => {
                 console.error('❌ Speaker diarization error:', error)
                 setError(error.message)
+                await cleanupRecordingSession('speaker_diarization_error')
                 setIsRecording(false)
                 setIsProcessingSpeakers(false)
 
@@ -707,9 +711,10 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 setTranscript(persistentTranscriptRef.current)
               }
             },
-            onError: (error) => {
+            onError: async (error) => {
               console.error('❌ AssemblyAI error:', error)
               setError(error.message)
+              await cleanupRecordingSession('assemblyai_error')
               setIsRecording(false)
 
               // Stop the mic stream on error
@@ -717,8 +722,9 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 micStream.getTracks().forEach(track => track.stop())
               }
             },
-            onClose: () => {
+            onClose: async () => {
               console.log('🔌 AssemblyAI connection closed')
+              await cleanupRecordingSession('assemblyai_close')
               setIsRecording(false)
               handleAutoSave('recording_ended')
 
@@ -750,43 +756,56 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
     }
   }
 
+  // Centralized session cleanup - ALWAYS call this when recording stops
+  const cleanupRecordingSession = async (reason = 'stop') => {
+    console.log(`🧹 Cleaning up recording session - reason: ${reason}`)
+
+    // Complete transcript buffer session
+    if (transcriptSessionIdRef.current) {
+      try {
+        console.log('📝 Completing transcript buffer session:', transcriptSessionIdRef.current)
+
+        // Add a final turn with the current transcript state to ensure nothing is lost
+        if (transcript || interimText) {
+          const finalText = transcript + (interimText ? ' ' + interimText : '')
+          console.log('📝 Adding final turn with', finalText.split(' ').filter(w => w.trim()).length, 'words')
+
+          await StreamingTranscriptBuffer.bufferTurn(transcriptSessionIdRef.current, {
+            turnId: `final_turn_${Date.now()}`,
+            text: finalText,
+            isFinal: true,
+            endOfTurn: true,
+            audioSource: selectedAudioSource,
+            recordingMode: enableSpeakerDiarization ? 'hybrid-speaker' : 'streaming-only'
+          })
+        }
+
+        // Complete session (this will flush the batch automatically)
+        await StreamingTranscriptBuffer.completeSession(transcriptSessionIdRef.current, {
+          speakerProcessingStatus: enableSpeakerDiarization ? 'processing' : 'not-applicable',
+          finalTranscriptLength: (transcript + interimText).length
+        })
+
+        console.log('✅ Transcript buffer session completed successfully')
+      } catch (error) {
+        console.error('❌ Error completing transcript buffer session:', error)
+        // Don't throw - allow recording to stop gracefully even if buffer completion fails
+      }
+    }
+
+    // Clear session refs
+    transcriptSessionIdRef.current = null
+    audioSessionIdRef.current = null
+    chunkIndexRef.current = 0
+  }
+
   // Stop recording
   const stopRecording = async () => {
     try {
       handleAutoSave('stop')
 
-      // Complete transcript buffer session
-      if (transcriptSessionIdRef.current) {
-        try {
-          console.log('📝 Completing transcript buffer session:', transcriptSessionIdRef.current)
-
-          // Add a final turn with the current transcript state to ensure nothing is lost
-          if (transcript || interimText) {
-            const finalText = transcript + (interimText ? ' ' + interimText : '')
-            console.log('📝 Adding final turn with', finalText.split(' ').filter(w => w.trim()).length, 'words')
-
-            await StreamingTranscriptBuffer.bufferTurn(transcriptSessionIdRef.current, {
-              turnId: `final_turn_${Date.now()}`,
-              text: finalText,
-              isFinal: true,
-              endOfTurn: true,
-              audioSource: selectedAudioSource,
-              recordingMode: enableSpeakerDiarization ? 'hybrid-speaker' : 'streaming-only'
-            })
-          }
-
-          // Complete session (this will flush the batch automatically)
-          await StreamingTranscriptBuffer.completeSession(transcriptSessionIdRef.current, {
-            speakerProcessingStatus: enableSpeakerDiarization ? 'processing' : 'not-applicable',
-            finalTranscriptLength: (transcript + interimText).length
-          })
-
-          console.log('✅ Transcript buffer session completed successfully')
-        } catch (error) {
-          console.error('❌ Error completing transcript buffer session:', error)
-          // Don't throw - allow recording to stop gracefully even if buffer completion fails
-        }
-      }
+      // ALWAYS cleanup session
+      await cleanupRecordingSession('user_stop')
 
       // If speaker diarization is enabled, trigger processing
       if (enableSpeakerDiarization) {

@@ -5,7 +5,7 @@ export class ClaudeProvider {
     this.apiKey = apiKey || localStorage.getItem('claudeApiKey')
     this.baseUrl = 'https://api.anthropic.com/v1'
     this.model = 'claude-3-haiku-20240307' // Fast, cost-effective for meeting notes
-    this.maxTokens = 2048
+    this.maxTokens = 8192 // Increased for detailed, comprehensive meeting notes
   }
 
   async isAvailable() {
@@ -75,54 +75,71 @@ When provided with a meeting transcript or recording, generate meeting notes wit
 Write a 2-3 sentence overview capturing the meeting's purpose and main outcome. This should give someone who wasn't present a quick understanding of what was accomplished.
 
 ## KEY DISCUSSION POINTS
-Organize the main topics discussed into 3-5 themed sections with descriptive headers. Make sure you are capturing all the key topics discussed. Be thorough with identifying the main themes here.
-Under each header, include:
-- Brief bullet points of what was discussed (2-3 bullets per section)
-- Important context or details mentioned
-- Any data, metrics, or specific examples shared
+Organize the main topics discussed into clearly themed sections with descriptive headers. Capture ALL significant topics that were discussed - don't limit yourself to a fixed number. Be thorough and comprehensive.
+
+Under each topic header, provide detailed bullet points covering:
+- What was discussed in detail
+- Important context, background information, or rationale provided
+- Any data, metrics, numbers, or specific examples mentioned
+- Different perspectives or viewpoints expressed
+- Clarifications or elaborations made during the discussion
+- Relevant details that provide complete understanding
 
 Format as:
-### [Topic Header 1]
-- Key point discussed
-- Supporting details or context
-- Relevant metrics or examples mentioned
+### [Descriptive Topic Header 1]
+- Detailed discussion point with full context
+- Supporting information and background
+- Specific examples, metrics, or data mentioned
+- Additional relevant details
+- Any conclusions or insights reached
+- [Continue with as many bullets as needed to capture the full discussion]
 
-### [Topic Header 2]
-- Main discussion point
-- Important clarification or detail
-- Outcome or conclusion reached
+### [Descriptive Topic Header 2]
+- Comprehensive coverage of what was discussed
+- Important details and nuances
+- Specific information shared
+- Context and implications
+- [Add all relevant points - be thorough]
+
+[Continue with additional topic sections as needed to cover the entire meeting]
 
 ## DECISIONS MADE
-List all concrete decisions reached during the meeting:
-- [Decision 1]: [Brief context and rationale if provided]
-- [Decision 2]: [What was decided and by whom]
-- [Decision 3]: [Include any conditions or dependencies]
+List ALL concrete decisions reached during the meeting with full context:
+- [Decision 1]: [What was decided, who made/approved it, rationale provided, and any conditions]
+- [Decision 2]: [Complete description including background, implications, and next steps]
+- [Decision 3]: [Full details including dependencies, timeline, and expected outcomes]
+- [Continue listing all decisions - be comprehensive and include all relevant context]
 
 ## ACTION ITEMS
-Format each action item with owner, deadline, and clear description:
+Identify and list ALL action items mentioned or implied in the meeting. Format each with owner, deadline, and clear description:
 
 | Action Item | Owner | Due Date | Priority | Notes |
 |------------|-------|----------|----------|--------|
-| [Specific, measurable task] | @[Name] | [Date or timeframe] | High/Medium/Low | [Any dependencies or context] |
-| [Clear deliverable] | @[Name] | [Specific date] | High/Medium/Low | [Additional details] |
+| [Specific, measurable task with full details] | @[Name] | [Date or timeframe] | High/Medium/Low | [Dependencies, context, expected outcome] |
+| [Clear deliverable with complete description] | @[Name] | [Specific date] | High/Medium/Low | [Additional important details] |
+| [Continue listing ALL action items - don't limit the number] | @[Name] | [Timeframe] | [Priority] | [Full context] |
 
 ## OPEN QUESTIONS & FOLLOW-UPS
-- [ ] [Unresolved question that needs further discussion]
-- [ ] [Topic to revisit in next meeting]
-- [ ] [Information needed from external source]
+List ALL unresolved questions, topics requiring further discussion, or information needs:
+- [ ] [Unresolved question with context about why it needs further discussion]
+- [ ] [Topic to revisit in next meeting with relevant background]
+- [ ] [Information needed from external source with explanation of why it's needed]
+- [ ] [Continue listing all open items - be comprehensive]
 
 ## NEXT STEPS
-Provide a brief 2-3 sentence summary of immediate next steps and when the team will reconvene or check in on progress.
+Provide a detailed summary of immediate next steps, including timeline, responsibilities, and when the team will reconvene or check in on progress. Include any important context about the path forward.
 
 ### FORMATTING GUIDELINES:
-1. Use clear, professional language - no jargon unless industry-specific
-2. Keep bullet points concise (under 2 lines each)
-3. Bold important names, dates, and metrics for scanning
-4. Ensure action items are SMART (Specific, Measurable, Assignable, Relevant, Time-bound)
-5. Use active voice and present tense for current states, past tense for decisions made
-6. Organize information hierarchically - most important first
-7. Include speaker attribution only when critical for context
-8. If working from a transcript with timestamps, you may reference them for key moments: [00:15:30]
+1. **BE THOROUGH AND COMPREHENSIVE** - Capture all important information, don't summarize excessively
+2. Use clear, professional language - preserve technical terms and industry-specific jargon as used
+3. Bullet points should be detailed and informative - provide complete context
+4. Bold important names, dates, metrics, and key decisions for easy scanning
+5. Ensure action items are SMART (Specific, Measurable, Assignable, Relevant, Time-bound)
+6. Use active voice and present tense for current states, past tense for decisions made
+7. Organize information hierarchically - most important first
+8. Include speaker attribution when it adds important context or shows who drove decisions
+9. If working from a transcript with timestamps, reference them for key moments: [00:15:30]
+10. **PRIORITIZE COMPLETENESS OVER BREVITY** - detailed notes are more valuable than short summaries
 
 ### STYLE NOTES:
 - Write in third person for main content

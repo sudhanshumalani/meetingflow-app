@@ -2198,6 +2198,56 @@ Example notes you might paste:
                     </div>
                   )}
 
+                  {/* Decisions Made */}
+                  {aiResult.decisionsMade && aiResult.decisionsMade.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        ✅ Decisions Made
+                      </h4>
+                      <div className="bg-white rounded p-3 border border-gray-200">
+                        <ul className="space-y-2">
+                          {aiResult.decisionsMade.map((decision, index) => (
+                            <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
+                              <span className="text-purple-500 font-medium min-w-0">•</span>
+                              <span className="leading-relaxed">{decision}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Open Questions & Follow-ups */}
+                  {aiResult.openQuestions && aiResult.openQuestions.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        ❓ Open Questions & Follow-ups
+                      </h4>
+                      <div className="bg-white rounded p-3 border border-gray-200">
+                        <ul className="space-y-2">
+                          {aiResult.openQuestions.map((question, index) => (
+                            <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
+                              <span className="text-orange-500 font-medium min-w-0">•</span>
+                              <span className="leading-relaxed">{question}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Next Steps */}
+                  {aiResult.nextSteps && aiResult.nextSteps.trim() && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        🚀 Next Steps
+                      </h4>
+                      <p className="text-sm text-gray-700 leading-relaxed bg-white rounded p-3 border border-gray-200">
+                        {aiResult.nextSteps}
+                      </p>
+                    </div>
+                  )}
+
                   {/* Analysis Metadata */}
                   <div className="flex items-center justify-between pt-3 border-t border-blue-200">
                     <div className="flex items-center gap-4 text-xs text-blue-600">

@@ -5,7 +5,7 @@ export class ClaudeProvider {
     this.apiKey = apiKey || localStorage.getItem('claudeApiKey')
     this.baseUrl = 'https://api.anthropic.com/v1'
     this.model = 'claude-3-haiku-20240307' // Fast, cost-effective for meeting notes
-    this.maxTokens = 8192 // Increased for detailed, comprehensive meeting notes
+    this.maxTokens = 4096 // Maximum allowed for Claude Haiku (increased from 2048 for more detailed notes)
   }
 
   async isAvailable() {

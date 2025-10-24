@@ -511,9 +511,10 @@ export default function Home() {
       // Update progress
       setBulkAnalysisProgress({ current: i + 1, total: meetingsToAnalyze.length })
 
-      // Small delay to avoid rate limiting
+      // Longer delay to avoid Claude API rate limiting (especially for new accounts)
+      // Claude has acceleration limits that restrict how quickly you can ramp up usage
       if (i < meetingsToAnalyze.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        await new Promise(resolve => setTimeout(resolve, 5000)) // 5 second delay
       }
     }
 

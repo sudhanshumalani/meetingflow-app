@@ -66,6 +66,7 @@ import {
 import performanceMonitor, { usePerformanceMonitor } from '../utils/performanceMonitor'
 import hapticFeedback from '../utils/hapticFeedback'
 import { BatchExportButton, ExportOptionsButton } from '../components/ExportOptions'
+import { processWithClaude } from '../utils/ocrServiceNew'
 
 export default function Home() {
   const navigate = useNavigate()
@@ -77,6 +78,11 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState('all')
   const [collapsedGroups, setCollapsedGroups] = useState({})
   const [aiInsights, setAiInsights] = useState([])
+
+  // Bulk re-analysis states
+  const [isBulkAnalyzing, setIsBulkAnalyzing] = useState(false)
+  const [bulkAnalysisProgress, setBulkAnalysisProgress] = useState({ current: 0, total: 0 })
+  const [bulkAnalysisError, setBulkAnalysisError] = useState(null)
   
   // Advanced feature states
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
@@ -438,6 +444,86 @@ export default function Home() {
 
   const cancelBulkDelete = () => {
     setShowBulkDeleteConfirm(false)
+  }
+
+  // Bulk AI re-analysis handler
+  const handleBulkReAnalyze = async () => {
+    const claudeApiKey = localStorage.getItem('claudeApiKey')
+
+    if (!claudeApiKey) {
+      setBulkAnalysisError('Claude API key required. Please add it in Settings.')
+      setTimeout(() => setBulkAnalysisError(null), 5000)
+      return
+    }
+
+    // Filter meetings that have transcripts to re-analyze
+    const meetingsToAnalyze = meetings.filter(meeting =>
+      meeting.audioTranscript && meeting.audioTranscript.trim().length > 50
+    )
+
+    if (meetingsToAnalyze.length === 0) {
+      setBulkAnalysisError('No meetings with transcripts found to re-analyze.')
+      setTimeout(() => setBulkAnalysisError(null), 5000)
+      return
+    }
+
+    if (!window.confirm(`Re-analyze ${meetingsToAnalyze.length} meetings with improved AI prompt? This will update all meeting notes with more detailed analysis.\n\nEstimated cost: $${(meetingsToAnalyze.length * 0.003).toFixed(2)}`)) {
+      return
+    }
+
+    setIsBulkAnalyzing(true)
+    setBulkAnalysisProgress({ current: 0, total: meetingsToAnalyze.length })
+    setBulkAnalysisError(null)
+
+    let successCount = 0
+    let failCount = 0
+
+    for (let i = 0; i < meetingsToAnalyze.length; i++) {
+      const meeting = meetingsToAnalyze[i]
+
+      try {
+        console.log(`🔄 Re-analyzing meeting ${i + 1}/${meetingsToAnalyze.length}: ${meeting.title}`)
+
+        const aiResult = await processWithClaude(meeting.audioTranscript, {
+          meetingType: meeting.type || 'general',
+          stakeholder: meeting.stakeholders?.[0] || null,
+          date: meeting.scheduledAt
+        })
+
+        // Update the meeting with new AI analysis
+        updateMeeting(meeting.id, {
+          ...meeting,
+          aiResult: {
+            ...aiResult,
+            reAnalyzedAt: new Date().toISOString(),
+            previousVersion: meeting.aiResult // Keep backup of old analysis
+          }
+        })
+
+        successCount++
+        console.log(`✅ Successfully re-analyzed: ${meeting.title}`)
+
+      } catch (error) {
+        console.error(`❌ Failed to re-analyze meeting ${meeting.title}:`, error)
+        failCount++
+      }
+
+      // Update progress
+      setBulkAnalysisProgress({ current: i + 1, total: meetingsToAnalyze.length })
+
+      // Small delay to avoid rate limiting
+      if (i < meetingsToAnalyze.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    }
+
+    setIsBulkAnalyzing(false)
+
+    // Show completion message
+    const message = `Bulk re-analysis complete!\n✅ Success: ${successCount}\n${failCount > 0 ? `❌ Failed: ${failCount}` : ''}`
+    alert(message)
+
+    console.log(`📊 Bulk re-analysis complete: ${successCount} success, ${failCount} failed`)
   }
 
   // Bulk stakeholder selection handlers
@@ -810,6 +896,18 @@ export default function Home() {
                           variant="menu"
                         />
                       </div>
+
+                      <button
+                        onClick={() => {
+                          handleBulkReAnalyze()
+                          setShowUserMenu(false)
+                        }}
+                        disabled={isBulkAnalyzing}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Brain size={16} className={isBulkAnalyzing ? 'animate-pulse' : ''} />
+                        {isBulkAnalyzing ? `Re-analyzing... (${bulkAnalysisProgress.current}/${bulkAnalysisProgress.total})` : 'Re-Analyze All Meetings'}
+                      </button>
 
                       <div className="border-t border-gray-100 my-1"></div>
 
@@ -2074,6 +2172,27 @@ export default function Home() {
                   Delete {selectedStakeholders.size} Stakeholder{selectedStakeholders.size !== 1 ? 's' : ''}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Analysis Error Toast */}
+      {bulkAnalysisError && (
+        <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
+          <div className="bg-red-50 border border-red-200 rounded-lg shadow-lg p-4 max-w-md">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="text-red-600 flex-shrink-0" size={20} />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-red-900">Error</p>
+                <p className="text-sm text-red-700 mt-1">{bulkAnalysisError}</p>
+              </div>
+              <button
+                onClick={() => setBulkAnalysisError(null)}
+                className="text-red-400 hover:text-red-600"
+              >
+                <X size={16} />
+              </button>
             </div>
           </div>
         </div>

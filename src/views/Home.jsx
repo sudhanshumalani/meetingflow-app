@@ -446,7 +446,97 @@ export default function Home() {
     setShowBulkDeleteConfirm(false)
   }
 
-  // Bulk AI re-analysis handler
+  // Re-analyze selected meetings handler
+  const handleReAnalyzeSelected = async () => {
+    const claudeApiKey = localStorage.getItem('claudeApiKey')
+
+    if (!claudeApiKey) {
+      setBulkAnalysisError('Claude API key required. Please add it in Settings.')
+      setTimeout(() => setBulkAnalysisError(null), 5000)
+      return
+    }
+
+    if (selectedMeetings.size === 0) {
+      setBulkAnalysisError('No meetings selected. Please select meetings using checkboxes.')
+      setTimeout(() => setBulkAnalysisError(null), 5000)
+      return
+    }
+
+    // Get selected meetings that have transcripts
+    const meetingsToAnalyze = meetings.filter(meeting =>
+      selectedMeetings.has(meeting.id) &&
+      meeting.audioTranscript &&
+      meeting.audioTranscript.trim().length > 50
+    )
+
+    if (meetingsToAnalyze.length === 0) {
+      setBulkAnalysisError('Selected meetings have no transcripts to re-analyze.')
+      setTimeout(() => setBulkAnalysisError(null), 5000)
+      return
+    }
+
+    if (!window.confirm(`Re-analyze ${meetingsToAnalyze.length} selected meeting(s) with improved AI prompt?\n\nEstimated cost: $${(meetingsToAnalyze.length * 0.003).toFixed(2)}\n\nTip: Process 3-5 meetings at a time to avoid rate limits.`)) {
+      return
+    }
+
+    setIsBulkAnalyzing(true)
+    setBulkAnalysisProgress({ current: 0, total: meetingsToAnalyze.length })
+    setBulkAnalysisError(null)
+
+    let successCount = 0
+    let failCount = 0
+
+    for (let i = 0; i < meetingsToAnalyze.length; i++) {
+      const meeting = meetingsToAnalyze[i]
+
+      try {
+        console.log(`🔄 Re-analyzing meeting ${i + 1}/${meetingsToAnalyze.length}: ${meeting.title}`)
+
+        const aiResult = await processWithClaude(meeting.audioTranscript, {
+          meetingType: meeting.type || 'general',
+          stakeholder: meeting.stakeholders?.[0] || null,
+          date: meeting.scheduledAt
+        })
+
+        // Update the meeting with new AI analysis
+        updateMeeting(meeting.id, {
+          ...meeting,
+          aiResult: {
+            ...aiResult,
+            reAnalyzedAt: new Date().toISOString(),
+            previousVersion: meeting.aiResult // Keep backup of old analysis
+          }
+        })
+
+        successCount++
+        console.log(`✅ Successfully re-analyzed: ${meeting.title}`)
+
+      } catch (error) {
+        console.error(`❌ Failed to re-analyze meeting ${meeting.title}:`, error)
+        failCount++
+      }
+
+      // Update progress
+      setBulkAnalysisProgress({ current: i + 1, total: meetingsToAnalyze.length })
+
+      // Longer delay to avoid Claude API rate limiting (especially for new accounts)
+      // Claude has acceleration limits that restrict how quickly you can ramp up usage
+      if (i < meetingsToAnalyze.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 5000)) // 5 second delay
+      }
+    }
+
+    setIsBulkAnalyzing(false)
+    setSelectedMeetings(new Set()) // Clear selection after completion
+
+    // Show completion message
+    const message = `Re-analysis of selected meetings complete!\n✅ Success: ${successCount}\n${failCount > 0 ? `❌ Failed: ${failCount}` : ''}`
+    alert(message)
+
+    console.log(`📊 Selected meetings re-analysis complete: ${successCount} success, ${failCount} failed`)
+  }
+
+  // Bulk AI re-analysis handler (ALL meetings)
   const handleBulkReAnalyze = async () => {
     const claudeApiKey = localStorage.getItem('claudeApiKey')
 
@@ -1168,6 +1258,15 @@ export default function Home() {
                       <span className="text-sm text-gray-600">
                         {selectedMeetings.size} selected
                       </span>
+                      <button
+                        onClick={handleReAnalyzeSelected}
+                        disabled={isBulkAnalyzing}
+                        className="flex items-center gap-2 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Re-analyze selected meetings with improved AI prompt"
+                      >
+                        <Brain size={16} className={isBulkAnalyzing ? 'animate-pulse' : ''} />
+                        {isBulkAnalyzing ? `Analyzing... (${bulkAnalysisProgress.current}/${bulkAnalysisProgress.total})` : 'Re-Analyze Selected'}
+                      </button>
                       <button
                         onClick={handleBulkDelete}
                         className="flex items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"

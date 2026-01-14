@@ -202,20 +202,57 @@ class AssemblyAISpeakerService {
         throw new Error('API key required for speaker diarization. Please add VITE_ASSEMBLYAI_API_KEY to your .env file')
       }
 
+      // Validate audio blob before upload
+      if (!audioBlob || audioBlob.size === 0) {
+        throw new Error('No audio data to upload')
+      }
+
+      // AssemblyAI minimum duration is 160ms - estimate based on size
+      // A very rough check: 16kHz mono audio at ~32kbps = ~4KB/second
+      // 160ms would be ~0.64KB minimum
+      if (audioBlob.size < 500) {
+        throw new Error('Audio too short (minimum ~160ms required)')
+      }
+
+      console.log('📤 Audio blob details:', {
+        size: audioBlob.size,
+        type: audioBlob.type,
+        sizeKB: (audioBlob.size / 1024).toFixed(2) + ' KB'
+      })
+
       // Step 1: Upload audio file
+      // CRITICAL: Must include Content-Type: application/octet-stream
       const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
         method: 'POST',
         headers: {
-          authorization: apiKey
+          'authorization': apiKey,
+          'Content-Type': 'application/octet-stream'
         },
         body: audioBlob
       })
 
+      // Parse error response body for better error messages
       if (!uploadResponse.ok) {
-        throw new Error(`Upload failed: ${uploadResponse.statusText}`)
+        let errorMessage = `Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`
+        try {
+          const errorBody = await uploadResponse.json()
+          if (errorBody.error) {
+            errorMessage = `Upload failed: ${errorBody.error}`
+          }
+        } catch (e) {
+          // Response wasn't JSON, use status text
+        }
+        console.error('❌ Upload error:', errorMessage)
+        throw new Error(errorMessage)
       }
 
-      const { upload_url } = await uploadResponse.json()
+      const uploadResult = await uploadResponse.json()
+      const upload_url = uploadResult.upload_url
+
+      if (!upload_url) {
+        throw new Error('Upload succeeded but no URL returned')
+      }
+
       console.log('✅ Audio uploaded:', upload_url)
 
       reportProgress(20, 'Audio uploaded, starting transcription...')
@@ -238,17 +275,33 @@ class AssemblyAISpeakerService {
       const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
         method: 'POST',
         headers: {
-          authorization: apiKey,
-          'content-type': 'application/json'
+          'authorization': apiKey,
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(transcriptConfig)
       })
 
+      // Parse error response body for better error messages
       if (!transcriptResponse.ok) {
-        throw new Error(`Transcription request failed: ${transcriptResponse.statusText}`)
+        let errorMessage = `Transcription request failed: ${transcriptResponse.status} ${transcriptResponse.statusText}`
+        try {
+          const errorBody = await transcriptResponse.json()
+          if (errorBody.error) {
+            errorMessage = `Transcription failed: ${errorBody.error}`
+          }
+        } catch (e) {
+          // Response wasn't JSON
+        }
+        console.error('❌ Transcription request error:', errorMessage)
+        throw new Error(errorMessage)
       }
 
-      const { id } = await transcriptResponse.json()
+      const transcriptResult = await transcriptResponse.json()
+      const id = transcriptResult.id
+
+      if (!id) {
+        throw new Error('Transcription request succeeded but no job ID returned')
+      }
       console.log('✅ Speaker diarization job created:', id)
 
       // CRITICAL: Save transcript ID to localStorage for recovery
@@ -300,42 +353,72 @@ class AssemblyAISpeakerService {
    * Poll for transcription result with speaker labels
    */
   async pollTranscriptWithSpeakers(id, apiKey, onProgress = null) {
-    const maxAttempts = 120 // 2 minutes max
+    const maxAttempts = 180 // 3 minutes max (speaker diarization can take longer)
     let attempts = 0
+    let consecutiveErrors = 0
+    const maxConsecutiveErrors = 3
+
+    console.log(`🔄 Starting to poll for transcript ${id}...`)
 
     while (attempts < maxAttempts) {
       attempts++
 
-      const response = await fetch(`https://api.assemblyai.com/v2/transcript/${id}`, {
-        headers: { authorization: apiKey }
-      })
+      try {
+        const response = await fetch(`https://api.assemblyai.com/v2/transcript/${id}`, {
+          headers: { 'authorization': apiKey }
+        })
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch transcript: ${response.statusText}`)
-      }
+        if (!response.ok) {
+          consecutiveErrors++
+          console.warn(`⚠️ Poll attempt ${attempts} failed: ${response.status} (${consecutiveErrors}/${maxConsecutiveErrors})`)
 
-      const transcript = await response.json()
+          if (consecutiveErrors >= maxConsecutiveErrors) {
+            throw new Error(`Failed to fetch transcript after ${maxConsecutiveErrors} attempts: ${response.status} ${response.statusText}`)
+          }
 
-      if (transcript.status === 'completed') {
-        // Extract speaker diarization data
-        return {
-          text: transcript.text,
-          utterances: transcript.utterances || [], // Array of {speaker, text, start, end, confidence}
-          words: transcript.words || [], // Each word has speaker label
-          speakers_detected: this.countSpeakers(transcript.utterances),
-          confidence: transcript.confidence,
-          audio_duration: transcript.audio_duration
+          // Wait and retry
+          await new Promise(resolve => setTimeout(resolve, 2000))
+          continue
         }
-      } else if (transcript.status === 'error') {
-        throw new Error(transcript.error || 'Transcription failed')
-      }
 
-      // Update progress (0% to 100% within polling phase)
-      if (onProgress && transcript.status === 'processing') {
-        const progress = Math.min(95, attempts * 1.5) // Gradual progress
-        onProgress(progress, `Analyzing audio (${attempts}s)...`)
-      } else if (onProgress && transcript.status === 'queued') {
-        onProgress(5, 'Queued for processing...')
+        // Reset consecutive error counter on success
+        consecutiveErrors = 0
+
+        const transcript = await response.json()
+        console.log(`📊 Poll ${attempts}: status=${transcript.status}`)
+
+        if (transcript.status === 'completed') {
+          console.log('✅ Transcription completed!')
+          // Extract speaker diarization data
+          return {
+            text: transcript.text,
+            utterances: transcript.utterances || [], // Array of {speaker, text, start, end, confidence}
+            words: transcript.words || [], // Each word has speaker label
+            speakers_detected: this.countSpeakers(transcript.utterances),
+            confidence: transcript.confidence,
+            audio_duration: transcript.audio_duration
+          }
+        } else if (transcript.status === 'error') {
+          console.error('❌ Transcription error:', transcript.error)
+          throw new Error(transcript.error || 'Transcription failed with unknown error')
+        }
+
+        // Update progress (0% to 100% within polling phase)
+        if (onProgress && transcript.status === 'processing') {
+          const progress = Math.min(95, attempts * 1.0) // Gradual progress
+          onProgress(progress, `Analyzing audio (${attempts}s)...`)
+        } else if (onProgress && transcript.status === 'queued') {
+          onProgress(5, 'Queued for processing...')
+        }
+
+      } catch (fetchError) {
+        // Network error during poll
+        consecutiveErrors++
+        console.warn(`⚠️ Poll network error: ${fetchError.message} (${consecutiveErrors}/${maxConsecutiveErrors})`)
+
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          throw new Error(`Network error during polling: ${fetchError.message}`)
+        }
       }
 
       // Wait 1 second before next poll

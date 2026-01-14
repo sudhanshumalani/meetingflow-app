@@ -179,6 +179,15 @@ export default function Meeting() {
     }
   }, [uploadedImageUrls])
 
+  // FIX #6: Auto-clear save error when speaker processing completes
+  // This prevents users from being stuck with a stale error message
+  useEffect(() => {
+    if (!isProcessingSpeakers && saveError?.message?.includes('speaker identification')) {
+      console.log('✅ Speaker processing complete - clearing save error')
+      setSaveError(null)
+    }
+  }, [isProcessingSpeakers, saveError])
+
   useEffect(() => {
     console.log('🔄 useEffect triggered for ID:', id, 'Run count:', Math.random())
     console.log('📝 Meeting component loading with ID:', id)

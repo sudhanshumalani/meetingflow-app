@@ -294,6 +294,57 @@ class StreamingAudioBuffer {
   }
 
   /**
+   * FIX #7: Cleanup orphaned sessions (still "active" but older than 1 hour)
+   * These are sessions that were never properly completed due to errors,
+   * app crashes, or iOS backgrounding issues.
+   */
+  async cleanupOrphanedSessions() {
+    const oneHourAgo = Date.now() - (60 * 60 * 1000)
+    const orphanedSessions = []
+    const failedSessions = []
+
+    await this.sessionDb.iterate((value, key) => {
+      // Orphaned: marked active but not updated for over an hour
+      const isOrphaned = value.isActive &&
+        value.lastUpdateTime &&
+        value.lastUpdateTime < oneHourAgo
+
+      // Old failed uploads: failed more than 24 hours ago with multiple retry attempts
+      const isOldFailed = value.uploadStatus === 'failed' &&
+        value.lastUploadAttempt &&
+        value.lastUploadAttempt < (Date.now() - 24 * 60 * 60 * 1000) &&
+        (value.uploadRetryCount || 0) >= 3
+
+      if (isOrphaned) {
+        orphanedSessions.push(value.sessionId)
+      }
+      if (isOldFailed) {
+        failedSessions.push(value.sessionId)
+      }
+    })
+
+    if (orphanedSessions.length > 0 || failedSessions.length > 0) {
+      console.log(`🧹 Cleaning up ${orphanedSessions.length} orphaned and ${failedSessions.length} old failed audio sessions`)
+      const allToDelete = [...orphanedSessions, ...failedSessions]
+      await Promise.all(allToDelete.map(id => this.deleteSession(id)))
+    }
+
+    return { orphanedSessions: orphanedSessions.length, failedSessions: failedSessions.length }
+  }
+
+  /**
+   * Get all sessions (for debugging/monitoring)
+   * @returns {Array} Array of all session metadata
+   */
+  async getAllSessions() {
+    const sessions = []
+    await this.sessionDb.iterate((value) => {
+      sessions.push(value)
+    })
+    return sessions
+  }
+
+  /**
    * Get storage statistics
    * @returns {Object} Storage stats
    */

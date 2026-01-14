@@ -73,6 +73,19 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
         }
         setIsInitialized(true)
         console.log('🎯 AssemblyAI transcription service ready')
+
+        // FIX #7: Cleanup orphaned IndexedDB sessions on initialization
+        // This prevents storage quota exhaustion from crashed/interrupted recordings
+        try {
+          const cleanupResult = await StreamingAudioBuffer.cleanupOrphanedSessions()
+          if (cleanupResult.orphanedSessions > 0 || cleanupResult.failedSessions > 0) {
+            console.log('🧹 Cleaned up orphaned audio sessions:', cleanupResult)
+          }
+          // Also cleanup old completed sessions
+          await StreamingAudioBuffer.cleanupOldSessions()
+        } catch (cleanupError) {
+          console.warn('⚠️ Non-critical: Failed to cleanup orphaned sessions:', cleanupError)
+        }
       } catch (error) {
         console.error('Failed to initialize transcription:', error)
         setError('Failed to initialize audio transcription.')
@@ -270,6 +283,91 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
     }
   }
 
+  // iOS-compatible MIME type detection (Fix #5)
+  const getSupportedMimeType = () => {
+    // Priority order: MP4 for iOS Safari, then WebM variants for Chrome/Firefox
+    const types = [
+      'audio/mp4',                  // iOS Safari preference
+      'audio/webm;codecs=opus',     // Chrome/Firefox preference
+      'audio/webm',                 // Fallback WebM
+      'audio/ogg;codecs=opus',      // Firefox fallback
+    ]
+    for (const type of types) {
+      if (MediaRecorder.isTypeSupported(type)) {
+        console.log(`✅ Using MIME type: ${type}`)
+        return type
+      }
+    }
+    console.warn('⚠️ No preferred MIME type supported, using browser default')
+    return ''  // Let browser choose
+  }
+
+  // Helper to wait for MediaRecorder to reach inactive state (Fix #3)
+  const waitForMediaRecorderInactive = async (maxWait = 2000) => {
+    const start = Date.now()
+    while (mediaRecorderRef.current?.state !== 'inactive' && Date.now() - start < maxWait) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    if (mediaRecorderRef.current?.state !== 'inactive') {
+      console.warn('⚠️ MediaRecorder did not reach inactive state within timeout, forcing cleanup')
+      mediaRecorderRef.current = null
+    }
+    return true
+  }
+
+  // Audio blob validation with duration check (Fix #8)
+  const validateAudioBlob = async (blob) => {
+    if (!blob || blob.size < 1000) {
+      return { valid: false, error: 'Audio file too small (minimum 1KB required)' }
+    }
+
+    // Check actual audio duration using Audio element
+    return new Promise((resolve) => {
+      const audio = new Audio()
+      const url = URL.createObjectURL(blob)
+      audio.src = url
+
+      const cleanup = () => {
+        URL.revokeObjectURL(url)
+      }
+
+      audio.onloadedmetadata = () => {
+        cleanup()
+        if (audio.duration < 1.5) {
+          resolve({ valid: false, error: 'Recording too short (minimum 2 seconds required)' })
+        } else if (!isFinite(audio.duration)) {
+          // Some browsers report Infinity for streaming audio - allow it
+          console.warn('⚠️ Audio duration is Infinity, allowing anyway')
+          resolve({ valid: true, duration: 0 })
+        } else {
+          resolve({ valid: true, duration: audio.duration })
+        }
+      }
+
+      audio.onerror = () => {
+        cleanup()
+        // If we can't load metadata, check size as fallback
+        if (blob.size > 10000) {
+          console.warn('⚠️ Could not load audio metadata, but blob size is sufficient')
+          resolve({ valid: true, duration: 0 })
+        } else {
+          resolve({ valid: false, error: 'Invalid audio format or corrupted file' })
+        }
+      }
+
+      // Timeout fallback - don't block forever
+      setTimeout(() => {
+        cleanup()
+        if (blob.size > 5000) {
+          console.warn('⚠️ Audio validation timeout, allowing based on size')
+          resolve({ valid: true, duration: 0 })
+        } else {
+          resolve({ valid: false, error: 'Audio validation timeout' })
+        }
+      }, 3000)
+    })
+  }
+
   // Start recording
   const startRecording = async () => {
     try {
@@ -277,7 +375,19 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
       setInterimText('')
       setRecordingDuration(0)
 
+      // CRITICAL FIX #2: Reset speaker data for fresh recording
+      accumulatedUtterancesRef.current = []
+      setSpeakerData(null)
+      recordedChunksRef.current = []
+      console.log('🧹 Speaker data and chunks reset for fresh recording')
+
       await checkPermissions()
+
+      // FIX #4: Validate permission result before proceeding
+      if (permissions === 'denied') {
+        setError('Microphone permission denied. Please allow microphone access in your browser settings and reload the page.')
+        return
+      }
 
       // Request wake lock to prevent screen from turning off on mobile
       await requestWakeLock()
@@ -313,9 +423,8 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
               recordingMode: 'hybrid-speaker'
             })
 
-            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-              ? 'audio/webm;codecs=opus'
-              : 'audio/webm'
+            // FIX #5: Use iOS-compatible MIME type detection
+            const mimeType = getSupportedMimeType()
 
             audioSessionIdRef.current = await StreamingAudioBuffer.startSession({
               audioSource: 'tabAudio',
@@ -329,7 +438,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
             if (audioTrack) {
               const audioStream = new MediaStream([audioTrack])
 
-              mediaRecorderRef.current = new MediaRecorder(audioStream, { mimeType, audioBitsPerSecond: 128000 })
+              mediaRecorderRef.current = new MediaRecorder(audioStream, { mimeType: mimeType || undefined, audioBitsPerSecond: 128000 })
 
               mediaRecorderRef.current.ondataavailable = async (event) => {
                 if (event.data.size > 0) {
@@ -474,11 +583,11 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
           if (enableSpeakerDiarization) {
             console.log('🎙️ Hybrid mode: Merging tab + mic audio for speaker diarization')
 
-            // Ensure previous MediaRecorder is fully stopped
+            // FIX #3: Ensure previous MediaRecorder is fully stopped with proper wait
             if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
               console.warn('⚠️ Previous MediaRecorder still active, stopping it first...')
               mediaRecorderRef.current.stop()
-              await new Promise(resolve => setTimeout(resolve, 200)) // Wait for cleanup
+              await waitForMediaRecorderInactive(2000) // Wait up to 2 seconds for iOS
             }
 
             // Clear recorded chunks for fresh start
@@ -491,9 +600,8 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
               recordingMode: 'hybrid-speaker'
             })
 
-            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-              ? 'audio/webm;codecs=opus'
-              : 'audio/webm'
+            // FIX #5: Use iOS-compatible MIME type detection
+            const mimeType = getSupportedMimeType()
 
             audioSessionIdRef.current = await StreamingAudioBuffer.startSession({
               audioSource: 'mixed',
@@ -940,14 +1048,13 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
         } else {
           // Tab audio or hybrid mode - stop MediaRecorder and process
           if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-            mediaRecorderRef.current.stop()
 
-            // Wait a bit for onstop to process
-            mediaRecorderRef.current.onstop = async () => {
+            // CRITICAL FIX #1: Define onstop handler BEFORE calling stop()
+            // iOS Safari may fire onstop synchronously, so handler must be registered first
+            const processRecordedAudio = async () => {
               try {
-                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                  ? 'audio/webm;codecs=opus'
-                  : 'audio/webm'
+                // FIX #5: Use iOS-compatible MIME type detection
+                const mimeType = getSupportedMimeType()
 
                 // Validate we have recorded chunks
                 if (!recordedChunksRef.current || recordedChunksRef.current.length === 0) {
@@ -957,29 +1064,32 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                   return
                 }
 
-                const audioBlob = new Blob(recordedChunksRef.current, { type: mimeType })
+                const audioBlob = new Blob(recordedChunksRef.current, { type: mimeType || 'audio/webm' })
                 console.log(`📦 Recorded audio blob: ${(audioBlob.size / 1024 / 1024).toFixed(2)} MB (${recordedChunksRef.current.length} chunks)`)
 
-                // Validate blob size
-                if (audioBlob.size < 1000) { // Less than 1KB is suspicious
-                  console.error('❌ Audio blob too small:', audioBlob.size, 'bytes')
-                  setError('Recording failed: Audio file too small. Please record for at least 2 seconds.')
+                // FIX #8: Enhanced audio validation with duration check
+                const validation = await validateAudioBlob(audioBlob)
+                if (!validation.valid) {
+                  console.error('❌ Audio validation failed:', validation.error)
+                  setError(`Recording failed: ${validation.error}`)
                   setIsProcessingSpeakers(false)
                   recordedChunksRef.current = [] // Clear for next recording
                   return
                 }
 
+                console.log(`✅ Audio validated: ${validation.duration ? validation.duration.toFixed(1) + 's' : 'size OK'}`)
+
                 // Process with speaker diarization
                 console.log('🎯 Processing speaker diarization with', audioBlob.size, 'bytes of audio data')
-                const speakerData = await assemblyAISpeakerService.transcribeWithSpeakers(audioBlob, {
+                const speakerResult = await assemblyAISpeakerService.transcribeWithSpeakers(audioBlob, {
                   speakers_expected: expectedSpeakers
                 })
 
-                console.log('✅ Speaker diarization complete:', speakerData)
+                console.log('✅ Speaker diarization complete:', speakerResult)
 
                 // Mark audio upload as completed
-                if (audioSessionIdRef.current && speakerData.id) {
-                  await StreamingAudioBuffer.markUploaded(audioSessionIdRef.current, speakerData.id)
+                if (audioSessionIdRef.current && speakerResult.id) {
+                  await StreamingAudioBuffer.markUploaded(audioSessionIdRef.current, speakerResult.id)
                 }
 
                 // Update transcript buffer with completed speaker status
@@ -987,34 +1097,36 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                   await StreamingTranscriptBuffer.updateSpeakerStatus(transcriptSessionIdRef.current, 'completed')
                 }
 
-                // Accumulate speaker utterances across sessions
-                if (speakerData.utterances && speakerData.utterances.length > 0) {
-                  accumulatedUtterancesRef.current = [...accumulatedUtterancesRef.current, ...speakerData.utterances]
+                // FIX #2 CONTINUED: Use fresh utterances for this recording only (not accumulated)
+                // The accumulation across sessions was causing transcript mixing bugs
+                if (speakerResult.utterances && speakerResult.utterances.length > 0) {
+                  // Store this recording's utterances (fresh, not accumulated)
+                  const currentUtterances = speakerResult.utterances
 
-                  // Create merged speaker data with all accumulated utterances
-                  const mergedSpeakerData = {
-                    ...speakerData,
-                    utterances: accumulatedUtterancesRef.current,
-                    text: accumulatedUtterancesRef.current.map(u => u.text).join(' ')
+                  const currentSpeakerData = {
+                    ...speakerResult,
+                    utterances: currentUtterances,
+                    text: currentUtterances.map(u => u.text).join(' ')
                   }
 
-                  console.log('📝 Accumulated utterances:', accumulatedUtterancesRef.current.length)
-                  setSpeakerData(mergedSpeakerData)
-                  setTranscript(mergedSpeakerData.text)
-                  persistentTranscriptRef.current = mergedSpeakerData.text
+                  console.log('📝 Speaker utterances for this recording:', currentUtterances.length)
+                  setSpeakerData(currentSpeakerData)
+                  setTranscript(currentSpeakerData.text)
+                  persistentTranscriptRef.current = currentSpeakerData.text
 
-                  // Update parent with accumulated data
+                  // Update parent with current recording data only
                   if (onTranscriptUpdate) {
-                    onTranscriptUpdate(mergedSpeakerData.text, mergedSpeakerData)
+                    onTranscriptUpdate(currentSpeakerData.text, currentSpeakerData)
                   }
                 } else {
                   // Fallback if no utterances
-                  persistentTranscriptRef.current += ' ' + speakerData.text
-                  setTranscript(persistentTranscriptRef.current)
-                  setSpeakerData(speakerData)
+                  const fallbackText = speakerResult.text || ''
+                  persistentTranscriptRef.current = fallbackText
+                  setTranscript(fallbackText)
+                  setSpeakerData(speakerResult)
 
                   if (onTranscriptUpdate) {
-                    onTranscriptUpdate(persistentTranscriptRef.current, speakerData)
+                    onTranscriptUpdate(fallbackText, speakerResult)
                   }
                 }
 
@@ -1042,6 +1154,50 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
                 recordedChunksRef.current = []
               }
             }
+
+            // Track if processing was triggered (for iOS Safari fallback)
+            let processingTriggered = false
+
+            // Register onstop handler BEFORE calling stop()
+            mediaRecorderRef.current.onstop = () => {
+              if (!processingTriggered) {
+                processingTriggered = true
+                console.log('🎯 MediaRecorder onstop fired - processing audio')
+                processRecordedAudio()
+              }
+            }
+
+            // iOS Safari fallback: Also check state in ondataavailable
+            const originalOnDataAvailable = mediaRecorderRef.current.ondataavailable
+            mediaRecorderRef.current.ondataavailable = (event) => {
+              // Call original handler first
+              if (originalOnDataAvailable) {
+                originalOnDataAvailable(event)
+              } else if (event.data.size > 0) {
+                recordedChunksRef.current.push(event.data)
+              }
+
+              // iOS Safari workaround: check if recorder became inactive
+              // This catches cases where onstop doesn't fire
+              if (mediaRecorderRef.current?.state === 'inactive' && !processingTriggered) {
+                console.log('🍎 iOS Safari fallback: state is inactive after dataavailable')
+                processingTriggered = true
+                processRecordedAudio()
+              }
+            }
+
+            // Now call stop - handler is already registered
+            console.log('🛑 Stopping MediaRecorder (handler pre-registered)')
+            mediaRecorderRef.current.stop()
+
+            // Additional timeout fallback for iOS (if neither onstop nor dataavailable triggers)
+            setTimeout(() => {
+              if (!processingTriggered && recordedChunksRef.current.length > 0) {
+                console.warn('⚠️ Timeout fallback: neither onstop nor dataavailable triggered processing')
+                processingTriggered = true
+                processRecordedAudio()
+              }
+            }, 2000)
           }
 
           // Stop independent connections if in hybrid mode

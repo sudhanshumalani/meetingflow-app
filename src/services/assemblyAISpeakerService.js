@@ -164,12 +164,24 @@ class AssemblyAISpeakerService {
 
   /**
    * Transcribe pre-recorded audio with speaker diarization
+   * This is the PRIMARY method for batch transcription (no WebSocket)
    * @param {Blob} audioBlob - Audio blob to transcribe
    * @param {Object} options - { speakers_expected, onProgress }
-   * @returns {Promise<Object>} - Speaker diarization result
+   * @returns {Promise<Object>} - Speaker diarization result with utterances
    */
   async transcribeWithSpeakers(audioBlob, options = {}) {
     const { speakers_expected = null, onProgress = null } = options
+
+    // Helper to safely call progress callback
+    const reportProgress = (progress, status) => {
+      if (onProgress) {
+        try {
+          onProgress(progress, status)
+        } catch (e) {
+          console.warn('Progress callback error:', e)
+        }
+      }
+    }
 
     if (!this.baseService.isConfigured()) {
       throw new Error('AssemblyAI API key not configured')
@@ -182,7 +194,7 @@ class AssemblyAISpeakerService {
         speakers_expected
       })
 
-      if (onProgress) onProgress('uploading', 0)
+      reportProgress(0, 'Uploading audio...')
 
       // Get API key (needed for file upload)
       const apiKey = this.baseService.apiKey
@@ -206,7 +218,7 @@ class AssemblyAISpeakerService {
       const { upload_url } = await uploadResponse.json()
       console.log('✅ Audio uploaded:', upload_url)
 
-      if (onProgress) onProgress('uploaded', 25)
+      reportProgress(20, 'Audio uploaded, starting transcription...')
 
       // Step 2: Request transcription with speaker labels
       console.log('🎯 Requesting transcription with speaker labels...')
@@ -254,10 +266,14 @@ class AssemblyAISpeakerService {
         console.error('Failed to save transcript ID:', saveError)
       }
 
-      if (onProgress) onProgress('processing', 40)
+      reportProgress(30, 'Processing audio with speaker identification...')
 
       // Step 3: Poll for result
-      const result = await this.pollTranscriptWithSpeakers(id, apiKey, onProgress)
+      const result = await this.pollTranscriptWithSpeakers(id, apiKey, (progress, status) => {
+        // Map polling progress (0-100) to overall progress (30-95)
+        const overallProgress = 30 + (progress * 0.65)
+        reportProgress(overallProgress, status || 'Identifying speakers...')
+      })
 
       console.log('✅ Speaker diarization completed:', {
         speakers: result.speakers_detected,
@@ -266,13 +282,16 @@ class AssemblyAISpeakerService {
         textLength: result.text?.length || 0
       })
 
-      if (onProgress) onProgress('completed', 100)
+      reportProgress(100, 'Complete!')
+
+      // Add the transcript ID to the result for reference
+      result.id = id
 
       return result
 
     } catch (error) {
       console.error('❌ Speaker diarization failed:', error)
-      if (onProgress) onProgress('error', 0)
+      reportProgress(0, 'Failed')
       throw error
     }
   }
@@ -311,10 +330,12 @@ class AssemblyAISpeakerService {
         throw new Error(transcript.error || 'Transcription failed')
       }
 
-      // Update progress (40% to 95%)
+      // Update progress (0% to 100% within polling phase)
       if (onProgress && transcript.status === 'processing') {
-        const progress = 40 + Math.min(55, attempts * 0.5)
-        onProgress('processing', progress)
+        const progress = Math.min(95, attempts * 1.5) // Gradual progress
+        onProgress(progress, `Analyzing audio (${attempts}s)...`)
+      } else if (onProgress && transcript.status === 'queued') {
+        onProgress(5, 'Queued for processing...')
       }
 
       // Wait 1 second before next poll

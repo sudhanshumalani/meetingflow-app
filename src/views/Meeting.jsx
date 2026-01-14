@@ -50,7 +50,7 @@ import {
 // Note: Data integration now available via n8n in Settings
 import { useAIAnalysis } from '../hooks/useAIAnalysis'
 import { ExportOptionsButton } from '../components/ExportOptions'
-import AudioRecorder from '../components/AudioRecorder'
+import AudioRecorderSimple from '../components/AudioRecorderSimple'
 import SpeakerTranscriptView from '../components/SpeakerTranscriptView'
 
 // Constants for better maintainability
@@ -1877,7 +1877,7 @@ Example notes you might paste:
                     Audio Recording & Transcription
                   </h2>
 
-                  <AudioRecorder
+                  <AudioRecorderSimple
                     onTranscriptUpdate={(transcript, speakers = null) => {
                       console.log('📝 Meeting: Received transcript:', transcript?.substring(0, 100) + '...')
                       console.log('👥 Meeting: Received speaker data:', speakers ? `${speakers.speakers_detected} speakers` : 'none')

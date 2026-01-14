@@ -381,6 +381,36 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
       recordedChunksRef.current = []
       console.log('🧹 Speaker data and chunks reset for fresh recording')
 
+      // CRITICAL: Cleanup any existing WebSocket connections before starting new recording
+      // This prevents error 3005 "Invalid message type" from corrupted connection state
+      console.log('🧹 Cleaning up any existing connections before starting...')
+      try {
+        // Stop any existing streaming connections
+        assemblyAIService.stopRealtimeTranscription()
+
+        // Also cleanup any orphaned connection IDs
+        if (tabConnectionIdRef.current) {
+          assemblyAIService.stopConnection(tabConnectionIdRef.current)
+          tabConnectionIdRef.current = null
+        }
+        if (micConnectionIdRef.current) {
+          assemblyAIService.stopConnection(micConnectionIdRef.current)
+          micConnectionIdRef.current = null
+        }
+
+        // Cleanup any existing MediaRecorder
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop()
+          await waitForMediaRecorderInactive(1000)
+        }
+        mediaRecorderRef.current = null
+
+        // Small delay to ensure WebSocket is fully closed
+        await new Promise(resolve => setTimeout(resolve, 300))
+      } catch (cleanupError) {
+        console.warn('⚠️ Pre-recording cleanup warning (non-fatal):', cleanupError)
+      }
+
       await checkPermissions()
 
       // FIX #4: Validate permission result before proceeding
@@ -1081,13 +1111,24 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
 
                 // Process with speaker diarization
                 console.log('🎯 Processing speaker diarization with', audioBlob.size, 'bytes of audio data')
-                const speakerResult = await assemblyAISpeakerService.transcribeWithSpeakers(audioBlob, {
-                  speakers_expected: expectedSpeakers
-                })
+                let speakerResult
+                try {
+                  speakerResult = await assemblyAISpeakerService.transcribeWithSpeakers(audioBlob, {
+                    speakers_expected: expectedSpeakers
+                  })
+                } catch (apiError) {
+                  console.error('❌ AssemblyAI speaker service error:', apiError)
+                  throw new Error(`Speaker identification service failed: ${apiError.message || 'Please try again'}`)
+                }
+
+                // Validate response structure
+                if (!speakerResult) {
+                  throw new Error('Speaker identification returned empty result')
+                }
 
                 console.log('✅ Speaker diarization complete:', speakerResult)
 
-                // Mark audio upload as completed
+                // Mark audio upload as completed (speakerResult.id may not always exist)
                 if (audioSessionIdRef.current && speakerResult.id) {
                   await StreamingAudioBuffer.markUploaded(audioSessionIdRef.current, speakerResult.id)
                 }
@@ -1158,13 +1199,29 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
             // Track if processing was triggered (for iOS Safari fallback)
             let processingTriggered = false
 
+            // Safe wrapper to call processRecordedAudio with proper error handling
+            const safeProcessRecordedAudio = async (source) => {
+              if (processingTriggered) {
+                console.log(`⚠️ Processing already triggered, ignoring ${source} call`)
+                return
+              }
+              processingTriggered = true
+              console.log(`🎯 Processing audio from ${source}`)
+
+              try {
+                await processRecordedAudio()
+              } catch (error) {
+                console.error(`❌ Error processing audio from ${source}:`, error)
+                setError(`Recording processing failed: ${error.message || 'Unknown error'}`)
+                setIsProcessingSpeakers(false)
+                recordedChunksRef.current = []
+              }
+            }
+
             // Register onstop handler BEFORE calling stop()
             mediaRecorderRef.current.onstop = () => {
-              if (!processingTriggered) {
-                processingTriggered = true
-                console.log('🎯 MediaRecorder onstop fired - processing audio')
-                processRecordedAudio()
-              }
+              console.log('🎯 MediaRecorder onstop fired')
+              safeProcessRecordedAudio('onstop')
             }
 
             // iOS Safari fallback: Also check state in ondataavailable
@@ -1181,8 +1238,7 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
               // This catches cases where onstop doesn't fire
               if (mediaRecorderRef.current?.state === 'inactive' && !processingTriggered) {
                 console.log('🍎 iOS Safari fallback: state is inactive after dataavailable')
-                processingTriggered = true
-                processRecordedAudio()
+                safeProcessRecordedAudio('ondataavailable-fallback')
               }
             }
 
@@ -1194,8 +1250,11 @@ const AudioRecorder = ({ onTranscriptUpdate, onAutoSave, onProcessingStateChange
             setTimeout(() => {
               if (!processingTriggered && recordedChunksRef.current.length > 0) {
                 console.warn('⚠️ Timeout fallback: neither onstop nor dataavailable triggered processing')
-                processingTriggered = true
-                processRecordedAudio()
+                safeProcessRecordedAudio('timeout-fallback')
+              } else if (!processingTriggered && recordedChunksRef.current.length === 0) {
+                console.error('❌ Timeout: No audio chunks captured')
+                setError('Recording failed: No audio data was captured. Please try again.')
+                setIsProcessingSpeakers(false)
               }
             }, 2000)
           }

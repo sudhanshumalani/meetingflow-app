@@ -175,13 +175,35 @@ const AudioRecorderSimple = ({
   const startRecording = async () => {
     try {
       setError(null)
-      setTranscript('')
-      setSpeakerData(null)
+      // DON'T clear transcript/speakerData - we want to APPEND to existing
+      // setTranscript('')
+      // setSpeakerData(null)
       setRecordingDuration(0)
       setProcessingProgress(0)
       setProcessingStatus('')
       recordedChunksRef.current = []
       chunkIndexRef.current = 0
+
+      // Cleanup any previous recording state that might be lingering
+      console.log('🧹 Cleaning up any previous recording state...')
+      try {
+        // Stop any existing audio stream
+        if (audioStreamRef.current) {
+          audioStreamRef.current.getTracks().forEach(track => track.stop())
+          audioStreamRef.current = null
+        }
+        // Stop any existing MediaRecorder
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop()
+          mediaRecorderRef.current = null
+        }
+        // Stop audio level monitoring
+        stopAudioLevelMonitoring()
+        // Small delay to ensure cleanup completes
+        await new Promise(resolve => setTimeout(resolve, 200))
+      } catch (cleanupErr) {
+        console.warn('Cleanup warning (non-fatal):', cleanupErr)
+      }
 
       // Check permissions first
       if (permissions === 'denied') {
@@ -371,35 +393,50 @@ const AudioRecorderSimple = ({
         await StreamingAudioBuffer.markUploaded(audioSessionIdRef.current, speakerResult.id)
       }
 
-      // Extract transcript and speaker data
-      let finalTranscript = ''
-      let finalSpeakerData = null
+      // Extract transcript and speaker data from this recording
+      let newTranscript = ''
+      let newSpeakerData = null
 
       if (speakerResult.utterances && speakerResult.utterances.length > 0) {
-        finalTranscript = speakerResult.utterances.map(u => u.text).join(' ')
-        finalSpeakerData = {
+        newTranscript = speakerResult.utterances.map(u => u.text).join(' ')
+        newSpeakerData = {
           ...speakerResult,
-          text: finalTranscript
+          text: newTranscript
         }
       } else if (speakerResult.text) {
-        finalTranscript = speakerResult.text
-        finalSpeakerData = speakerResult
+        newTranscript = speakerResult.text
+        newSpeakerData = speakerResult
       }
 
-      // Update state
-      setTranscript(finalTranscript)
-      setSpeakerData(finalSpeakerData)
+      // APPEND to existing transcript (don't replace)
+      const combinedTranscript = transcript
+        ? `${transcript}\n\n--- Recording ${new Date().toLocaleTimeString()} ---\n\n${newTranscript}`
+        : newTranscript
+
+      // Combine speaker data (merge utterances)
+      let combinedSpeakerData = newSpeakerData
+      if (speakerData && speakerData.utterances && newSpeakerData && newSpeakerData.utterances) {
+        combinedSpeakerData = {
+          ...newSpeakerData,
+          utterances: [...speakerData.utterances, ...newSpeakerData.utterances],
+          text: combinedTranscript
+        }
+      }
+
+      // Update state with combined data
+      setTranscript(combinedTranscript)
+      setSpeakerData(combinedSpeakerData)
       setProcessingProgress(100)
       setProcessingStatus('Complete!')
 
-      // Notify parent component
+      // Notify parent component with COMBINED data
       if (onTranscriptUpdate) {
-        onTranscriptUpdate(finalTranscript, finalSpeakerData)
+        onTranscriptUpdate(combinedTranscript, combinedSpeakerData)
       }
 
-      // Auto-save
-      if (onAutoSave && finalTranscript) {
-        onAutoSave(finalTranscript, 'recording_complete')
+      // Auto-save with combined transcript
+      if (onAutoSave && combinedTranscript) {
+        onAutoSave(combinedTranscript, 'recording_complete')
       }
 
       console.log('✅ Recording processed successfully')

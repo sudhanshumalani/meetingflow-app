@@ -30,6 +30,12 @@ class ErrorBoundary extends React.Component {
   }
 
   handleRetry = () => {
+    // Before retrying, check if we have a transcript backup to preserve
+    const backupStr = localStorage.getItem('meetingflow_transcript_backup')
+    if (backupStr) {
+      console.log('📝 ErrorBoundary: Transcript backup exists, will restore on remount')
+    }
+
     this.setState(prevState => ({
       hasError: false,
       error: null,
@@ -45,7 +51,8 @@ class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       const isDevelopment = process.env.NODE_ENV === 'development'
-      
+      const hasTranscriptBackup = !!localStorage.getItem('meetingflow_transcript_backup')
+
       return (
         <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-6 animate-scale-in">
@@ -53,16 +60,24 @@ class ErrorBoundary extends React.Component {
               <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100 mb-4">
                 <AlertTriangle className="h-8 w-8 text-red-600" />
               </div>
-              
+
               <h1 className="text-xl font-semibold text-gray-900 mb-2">
                 Oops! Something went wrong
               </h1>
-              
-              <p className="text-gray-600 mb-6">
+
+              <p className="text-gray-600 mb-4">
                 We're sorry, but something unexpected happened. Please try again.
               </p>
-              
-              <div className="space-y-3">
+
+              {hasTranscriptBackup && (
+                <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <p className="text-sm text-green-700">
+                    ✓ Your transcript has been saved and will be restored when you retry.
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-3 mt-4">
                 <button
                   onClick={this.handleRetry}
                   className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors button-press focus-ring"

@@ -148,6 +148,40 @@ const AudioRecorderSimple = ({
       } catch (err) {
         debugLog('warning', 'IndexedDB cleanup failed (non-fatal)', { error: err.message })
       }
+
+      // RECOVERY: Check for transcript backup from ErrorBoundary reset
+      try {
+        const backupStr = localStorage.getItem('meetingflow_transcript_backup')
+        if (backupStr) {
+          const backup = JSON.parse(backupStr)
+          const currentMeetingId = window.location.pathname.split('/').pop()
+          // Only restore if it's for this meeting and recent (within 5 minutes)
+          const isRecent = Date.now() - backup.timestamp < 5 * 60 * 1000
+          const isSameMeeting = backup.meetingId === currentMeetingId
+
+          if (isRecent && isSameMeeting && backup.transcript) {
+            debugLog('info', 'Restoring transcript from backup', {
+              meetingId: backup.meetingId,
+              transcriptLength: backup.transcript.length
+            })
+            setTranscript(backup.transcript)
+            if (backup.speakerData) {
+              setSpeakerData(backup.speakerData)
+            }
+            // Notify parent component of restored data
+            if (onTranscriptUpdate) {
+              onTranscriptUpdate(backup.transcript, backup.speakerData)
+            }
+            debugLog('success', 'Transcript restored from backup!')
+          } else {
+            // Clear stale backup
+            localStorage.removeItem('meetingflow_transcript_backup')
+            debugLog('info', 'Cleared stale transcript backup', { isRecent, isSameMeeting })
+          }
+        }
+      } catch (restoreErr) {
+        debugLog('warning', 'Failed to restore transcript backup', { error: restoreErr.message })
+      }
     }
 
     initializeComponent()
@@ -291,6 +325,70 @@ const AudioRecorderSimple = ({
     }
     operationLockRef.current = true
 
+    // CRITICAL FIX: Cleanup MUST complete BEFORE we proceed
+    // This prevents iOS Safari race conditions where old streams interfere with new ones
+    debugLog('info', 'Cleaning up previous state...')
+    try {
+      // Stop audio level monitoring first
+      stopAudioLevelMonitoring()
+
+      // Stop any existing MediaRecorder
+      if (mediaRecorderRef.current) {
+        if (mediaRecorderRef.current.state !== 'inactive') {
+          try {
+            mediaRecorderRef.current.stop()
+          } catch (e) {
+            debugLog('warning', 'MediaRecorder stop warning', { error: e.message })
+          }
+        }
+        mediaRecorderRef.current = null
+      }
+
+      // Stop any existing recording stream (cloned) - wait for tracks to fully stop
+      if (recordingStreamRef.current) {
+        const tracks = recordingStreamRef.current.getTracks()
+        for (const track of tracks) {
+          track.stop()
+          // iOS Safari: wait for track to actually stop
+          let attempts = 0
+          while (track.readyState === 'live' && attempts < 10) {
+            await new Promise(resolve => setTimeout(resolve, 50))
+            attempts++
+          }
+        }
+        recordingStreamRef.current = null
+      }
+
+      // Stop any existing audio stream (original)
+      if (audioStreamRef.current) {
+        const tracks = audioStreamRef.current.getTracks()
+        for (const track of tracks) {
+          track.stop()
+          // iOS Safari: wait for track to actually stop
+          let attempts = 0
+          while (track.readyState === 'live' && attempts < 10) {
+            await new Promise(resolve => setTimeout(resolve, 50))
+            attempts++
+          }
+        }
+        audioStreamRef.current = null
+      }
+
+      // iOS Safari needs extra time for audio context to fully release
+      const isiOS = isIOSSafari()
+      if (isiOS) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+        debugLog('info', 'iOS: Extra cleanup delay completed')
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+
+      debugLog('success', 'Cleanup complete')
+    } catch (cleanupErr) {
+      debugLog('warning', 'Cleanup warning (non-fatal)', { error: cleanupErr.message })
+    }
+
+    // NOW it's safe to reset state for new recording
     try {
       setError(null)
       // DON'T clear transcript/speakerData - we want to APPEND to existing
@@ -299,35 +397,9 @@ const AudioRecorderSimple = ({
       setRecordingDuration(0)
       setProcessingProgress(0)
       setProcessingStatus('')
+      // MOVED: Clear chunks AFTER cleanup is complete (prevents race condition)
       recordedChunksRef.current = []
       chunkIndexRef.current = 0
-
-      // Cleanup any previous recording state that might be lingering
-      debugLog('info', 'Cleaning up previous state...')
-      try {
-        // Stop any existing recording stream (cloned)
-        if (recordingStreamRef.current) {
-          recordingStreamRef.current.getTracks().forEach(track => track.stop())
-          recordingStreamRef.current = null
-        }
-        // Stop any existing audio stream (original)
-        if (audioStreamRef.current) {
-          audioStreamRef.current.getTracks().forEach(track => track.stop())
-          audioStreamRef.current = null
-        }
-        // Stop any existing MediaRecorder
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-          mediaRecorderRef.current.stop()
-          mediaRecorderRef.current = null
-        }
-        // Stop audio level monitoring
-        stopAudioLevelMonitoring()
-        // Small delay to ensure cleanup completes
-        await new Promise(resolve => setTimeout(resolve, 200))
-        debugLog('success', 'Cleanup complete')
-      } catch (cleanupErr) {
-        debugLog('warning', 'Cleanup warning (non-fatal)', { error: cleanupErr.message })
-      }
 
       // Check permissions first
       if (permissions === 'denied') {
@@ -432,6 +504,19 @@ const AudioRecorderSimple = ({
 
       // Start recording with 1-second chunks
       mediaRecorderRef.current.start(1000)
+
+      // iOS Safari: Verify recording actually started (state can be stale)
+      if (isIOSSafari()) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        if (mediaRecorderRef.current?.state !== 'recording') {
+          debugLog('error', 'iOS: MediaRecorder failed to start', {
+            state: mediaRecorderRef.current?.state
+          })
+          throw new Error('Failed to start recording on iOS. Please try again.')
+        }
+        debugLog('success', 'iOS: MediaRecorder state verified as recording')
+      }
+
       setIsRecording(true)
       debugLog('success', 'RECORDING STARTED - capturing 1s chunks')
 
@@ -623,6 +708,21 @@ const AudioRecorderSimple = ({
       setSpeakerData(combinedSpeakerData)
       setProcessingProgress(100)
       setProcessingStatus('Complete!')
+
+      // CRITICAL: Persist transcript to localStorage IMMEDIATELY
+      // This protects against ErrorBoundary resets losing the transcript
+      try {
+        const transcriptBackup = {
+          transcript: combinedTranscript,
+          speakerData: combinedSpeakerData,
+          timestamp: Date.now(),
+          meetingId: window.location.pathname.split('/').pop() // Get meeting ID from URL
+        }
+        localStorage.setItem('meetingflow_transcript_backup', JSON.stringify(transcriptBackup))
+        debugLog('info', 'Transcript backed up to localStorage')
+      } catch (backupErr) {
+        debugLog('warning', 'Failed to backup transcript', { error: backupErr.message })
+      }
 
       // Notify parent component with COMBINED data
       if (onTranscriptUpdate) {

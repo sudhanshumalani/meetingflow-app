@@ -162,6 +162,7 @@ class FirestoreService {
         },
         (error) => {
           console.error('Firestore subscription error:', error)
+          // Don't throw - just log and continue, callback won't be called
         }
       )
 
@@ -169,7 +170,8 @@ class FirestoreService {
       return unsubscribe
     } catch (error) {
       console.error('Error setting up meeting subscription:', error)
-      throw error
+      // Return a no-op function instead of throwing
+      return () => {}
     }
   }
 
@@ -253,26 +255,31 @@ class FirestoreService {
         where('deleted', '==', false)
       )
 
-      const unsubscribe = onSnapshot(q, (querySnapshot) => {
-        const stakeholders = []
-        querySnapshot.forEach((doc) => {
-          const data = doc.data()
-          stakeholders.push({
-            id: doc.id,
-            ...data,
-            lastModified: data.lastModified?.toDate?.() || data.lastModified
+      const unsubscribe = onSnapshot(q,
+        (querySnapshot) => {
+          const stakeholders = []
+          querySnapshot.forEach((doc) => {
+            const data = doc.data()
+            stakeholders.push({
+              id: doc.id,
+              ...data,
+              lastModified: data.lastModified?.toDate?.() || data.lastModified
+            })
           })
-        })
 
-        console.log('Real-time update - stakeholders:', stakeholders.length)
-        callback(stakeholders)
-      })
+          console.log('Real-time update - stakeholders:', stakeholders.length)
+          callback(stakeholders)
+        },
+        (error) => {
+          console.error('Firestore stakeholder subscription error:', error)
+        }
+      )
 
       this.listeners.push(unsubscribe)
       return unsubscribe
     } catch (error) {
       console.error('Error setting up stakeholder subscription:', error)
-      throw error
+      return () => {}
     }
   }
 
@@ -356,26 +363,31 @@ class FirestoreService {
         where('deleted', '==', false)
       )
 
-      const unsubscribe = onSnapshot(q, (querySnapshot) => {
-        const categories = []
-        querySnapshot.forEach((doc) => {
-          const data = doc.data()
-          categories.push({
-            id: doc.id,
-            ...data,
-            lastModified: data.lastModified?.toDate?.() || data.lastModified
+      const unsubscribe = onSnapshot(q,
+        (querySnapshot) => {
+          const categories = []
+          querySnapshot.forEach((doc) => {
+            const data = doc.data()
+            categories.push({
+              id: doc.id,
+              ...data,
+              lastModified: data.lastModified?.toDate?.() || data.lastModified
+            })
           })
-        })
 
-        console.log('Real-time update - categories:', categories.length)
-        callback(categories)
-      })
+          console.log('Real-time update - categories:', categories.length)
+          callback(categories)
+        },
+        (error) => {
+          console.error('Firestore category subscription error:', error)
+        }
+      )
 
       this.listeners.push(unsubscribe)
       return unsubscribe
     } catch (error) {
       console.error('Error setting up category subscription:', error)
-      throw error
+      return () => {}
     }
   }
 

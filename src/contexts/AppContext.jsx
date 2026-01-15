@@ -681,57 +681,74 @@ export function AppProvider({ children }) {
     const setupDelay = setTimeout(() => {
       console.log('🔥 Firestore: Setting up real-time subscriptions (after initial load)...')
 
-      // Subscribe to meetings - MERGE with local, don't replace
-      const unsubMeetings = firestoreService.subscribeMeetings((firestoreMeetings) => {
-        console.log('🔥 Firestore: Received', firestoreMeetings.length, 'meetings from cloud')
+      try {
+        // Subscribe to meetings - MERGE with local, don't replace
+        const unsubMeetings = firestoreService.subscribeMeetings((firestoreMeetings) => {
+          try {
+            console.log('🔥 Firestore: Received', firestoreMeetings.length, 'meetings from cloud')
 
-        // Get current local meetings
-        const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-        console.log('🔥 Firestore: Local meetings count:', localMeetings.length)
+            // Get current local meetings
+            const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+            console.log('🔥 Firestore: Local meetings count:', localMeetings.length)
 
-        // MERGE: Combine local and Firestore data, keeping newer versions
-        const mergedMeetings = mergeMeetingsData(localMeetings, firestoreMeetings)
-        console.log('🔥 Firestore: Merged meetings count:', mergedMeetings.length)
+            // MERGE: Combine local and Firestore data, keeping newer versions
+            const mergedMeetings = mergeMeetingsData(localMeetings, firestoreMeetings)
+            console.log('🔥 Firestore: Merged meetings count:', mergedMeetings.length)
 
-        // Only update if we have data (never overwrite with empty)
-        if (mergedMeetings.length > 0) {
-          dispatch({ type: 'SET_MEETINGS', payload: mergedMeetings })
-          localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
+            // Only update if we have data (never overwrite with empty)
+            if (mergedMeetings.length > 0) {
+              dispatch({ type: 'SET_MEETINGS', payload: mergedMeetings })
+              localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
+            }
+          } catch (callbackErr) {
+            console.error('🔥 Firestore: Error processing meetings callback:', callbackErr)
+          }
+        })
+
+        // Subscribe to stakeholders - MERGE with local
+        const unsubStakeholders = firestoreService.subscribeStakeholders((firestoreStakeholders) => {
+          try {
+            console.log('🔥 Firestore: Received', firestoreStakeholders.length, 'stakeholders from cloud')
+
+            const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+            const mergedStakeholders = mergeByIdKeepNewer(localStakeholders, firestoreStakeholders)
+
+            if (mergedStakeholders.length > 0) {
+              dispatch({ type: 'SET_STAKEHOLDERS', payload: mergedStakeholders })
+              localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
+            }
+          } catch (callbackErr) {
+            console.error('🔥 Firestore: Error processing stakeholders callback:', callbackErr)
+          }
+        })
+
+        // Subscribe to categories - MERGE with local
+        const unsubCategories = firestoreService.subscribeStakeholderCategories((firestoreCategories) => {
+          try {
+            console.log('🔥 Firestore: Received', firestoreCategories.length, 'categories from cloud')
+
+            const localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+            const mergedCategories = mergeByIdKeepNewer(localCategories, firestoreCategories)
+
+            if (mergedCategories.length > 0) {
+              dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: mergedCategories })
+              localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
+            }
+          } catch (callbackErr) {
+            console.error('🔥 Firestore: Error processing categories callback:', callbackErr)
+          }
+        })
+
+        // Store unsubscribe functions for cleanup
+        window._firestoreUnsubscribe = () => {
+          console.log('🔥 Firestore: Cleaning up subscriptions')
+          unsubMeetings?.()
+          unsubStakeholders?.()
+          unsubCategories?.()
         }
-      })
-
-      // Subscribe to stakeholders - MERGE with local
-      const unsubStakeholders = firestoreService.subscribeStakeholders((firestoreStakeholders) => {
-        console.log('🔥 Firestore: Received', firestoreStakeholders.length, 'stakeholders from cloud')
-
-        const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-        const mergedStakeholders = mergeByIdKeepNewer(localStakeholders, firestoreStakeholders)
-
-        if (mergedStakeholders.length > 0) {
-          dispatch({ type: 'SET_STAKEHOLDERS', payload: mergedStakeholders })
-          localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
-        }
-      })
-
-      // Subscribe to categories - MERGE with local
-      const unsubCategories = firestoreService.subscribeStakeholderCategories((firestoreCategories) => {
-        console.log('🔥 Firestore: Received', firestoreCategories.length, 'categories from cloud')
-
-        const localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
-        const mergedCategories = mergeByIdKeepNewer(localCategories, firestoreCategories)
-
-        if (mergedCategories.length > 0) {
-          dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: mergedCategories })
-          localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
-        }
-      })
-
-      // Store unsubscribe functions for cleanup
-      window._firestoreUnsubscribe = () => {
-        console.log('🔥 Firestore: Cleaning up subscriptions')
-        unsubMeetings()
-        unsubStakeholders()
-        unsubCategories()
+      } catch (setupErr) {
+        console.error('🔥 Firestore: Failed to setup subscriptions (app will continue without real-time sync):', setupErr)
+        // App continues to work with localStorage only
       }
     }, 1000) // Wait 1 second for localStorage to load first
 

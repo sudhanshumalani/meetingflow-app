@@ -225,24 +225,20 @@ export default function Settings() {
 
   // Helper to strip large fields from meetings to save storage space
   function stripLargeFields(meeting) {
+    if (!meeting || typeof meeting !== 'object') return meeting
+
     const stripped = { ...meeting }
     // Remove large fields that can be regenerated or aren't critical
     delete stripped.audioBlob
     delete stripped.audioData
     delete stripped.audioUrl
     delete stripped.recordingBlob
-    // Keep transcript but limit size (only if it's a string)
-    if (stripped.transcript && typeof stripped.transcript === 'string' && stripped.transcript.length > 50000) {
-      stripped.transcript = stripped.transcript.substring(0, 50000) + '... [truncated]'
-    }
     // Remove large base64 images
     if (stripped.images && Array.isArray(stripped.images)) {
-      stripped.images = stripped.images.map(img => {
-        if (typeof img === 'string' && img.startsWith('data:') && img.length > 10000) {
-          return null // Remove large base64 images
-        }
-        return img
-      }).filter(Boolean)
+      stripped.images = stripped.images.filter(img => {
+        // Keep non-string images and small string images
+        return typeof img !== 'string' || !img.startsWith('data:') || img.length <= 10000
+      })
     }
     return stripped
   }
@@ -298,57 +294,53 @@ export default function Settings() {
       })
 
       // Merge with local data
+      console.log('🔄 Reading local data...')
       const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
       const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
       const localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
 
+      console.log('🔄 Local data:', {
+        meetings: localMeetings.length,
+        stakeholders: localStakeholders.length,
+        categories: localCategories.length
+      })
+
       // Simple merge: combine by ID, keeping newer versions
+      console.log('🔄 Merging data...')
       const mergedMeetings = mergeById(localMeetings, meetings)
       const mergedStakeholders = mergeById(localStakeholders, stakeholders)
       const mergedCategories = mergeById(localCategories, categories)
 
-      // Strip large fields to save space (especially on iOS with limited quota)
-      const strippedMeetings = mergedMeetings.map(stripLargeFields)
+      console.log('🔄 Merged data:', {
+        meetings: mergedMeetings.length,
+        stakeholders: mergedStakeholders.length,
+        categories: mergedCategories.length
+      })
 
-      // Try to save, handling quota errors
+      // Strip large fields to save space (especially on iOS with limited quota)
+      console.log('🔄 Stripping large fields...')
+      const strippedMeetings = mergedMeetings.map(m => {
+        try {
+          return stripLargeFields(m)
+        } catch (e) {
+          console.error('Error stripping meeting:', m?.id, e)
+          return m // Return original if stripping fails
+        }
+      })
+
+      // Try to save
+      console.log('🔄 Saving to localStorage...')
       try {
         localStorage.setItem('meetingflow_meetings', JSON.stringify(strippedMeetings))
         localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
         localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
+        console.log('🔄 Saved successfully!')
       } catch (storageError) {
+        console.error('🔄 Storage error:', storageError)
         // Check if it's a quota error
         if (storageError.name === 'QuotaExceededError' ||
-            storageError.message?.includes('quota') ||
-            storageError.message?.includes('QuotaExceeded')) {
-          console.warn('Storage quota exceeded, trying to free space...')
-
-          // Try to clear old/unnecessary data
-          localStorage.removeItem('meetingflow_sync_debug')
-          localStorage.removeItem('meetingflow_last_sync')
-
-          // Try again with even more stripped data
-          const minimalMeetings = strippedMeetings.map(m => ({
-            id: m.id,
-            title: m.title,
-            date: m.date,
-            stakeholderIds: m.stakeholderIds,
-            categoryId: m.categoryId,
-            notes: typeof m.notes === 'string' ? m.notes.substring(0, 5000) : m.notes, // Limit notes if string
-            summary: m.summary,
-            actionItems: m.actionItems,
-            aiAnalysis: m.aiAnalysis,
-            createdAt: m.createdAt,
-            updatedAt: m.updatedAt
-          }))
-
-          try {
-            localStorage.setItem('meetingflow_meetings', JSON.stringify(minimalMeetings))
-            localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
-            localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
-            console.log('Saved with minimal data after clearing space')
-          } catch (e) {
-            throw new Error('Storage quota exceeded. Try deleting some old meetings to free space.')
-          }
+            (storageError.message && storageError.message.includes('quota'))) {
+          throw new Error('Storage quota exceeded. Try deleting some old meetings.')
         } else {
           throw storageError
         }

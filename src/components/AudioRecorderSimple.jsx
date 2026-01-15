@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react'
-import { Mic, MicOff, Square, Volume2, Users, Loader2, AlertCircle } from 'lucide-react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { Mic, MicOff, Square, Volume2, Users, Loader2, AlertCircle, ChevronDown, ChevronUp, Bug, Trash2 } from 'lucide-react'
 import assemblyAISpeakerService from '../services/assemblyAISpeakerService'
 import StreamingAudioBuffer from '../utils/StreamingAudioBuffer'
 
@@ -12,8 +12,24 @@ import StreamingAudioBuffer from '../utils/StreamingAudioBuffer'
  * 3. STOP: Audio blob uploaded to AssemblyAI for speaker diarization
  * 4. DONE: Transcript with speaker labels returned
  *
- * This eliminates all WebSocket complexity and race conditions.
+ * iOS Safari Fixes Applied:
+ * - Use stream.clone() to fix Safari MP4 encoding issues (causes "few words only" transcription)
+ * - Simplified audio constraints (iOS ignores sampleRate, echoCancellation, etc.)
+ * - Safe AudioContext initialization with state checking
+ * - Graceful fallback when audio visualization fails
+ *
+ * References:
+ * - https://community.openai.com/t/whisper-problem-with-audio-mp4-blobs-from-safari/322252
+ * - https://webkit.org/blog/11353/mediarecorder-api/
  */
+
+// Detect iOS Safari
+const isIOSSafari = () => {
+  const ua = navigator.userAgent
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream
+  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua)
+  return isIOS || (isSafari && /Macintosh/.test(ua) && navigator.maxTouchPoints > 0)
+}
 const AudioRecorderSimple = ({
   onTranscriptUpdate,
   onAutoSave,
@@ -44,6 +60,7 @@ const AudioRecorderSimple = ({
   const mediaRecorderRef = useRef(null)
   const recordedChunksRef = useRef([])
   const audioStreamRef = useRef(null)
+  const recordingStreamRef = useRef(null) // Cloned stream for MediaRecorder (iOS fix)
   const timerRef = useRef(null)
   const audioSessionIdRef = useRef(null)
   const chunkIndexRef = useRef(0)
@@ -57,21 +74,78 @@ const AudioRecorderSimple = ({
   const analyserRef = useRef(null)
   const animationFrameRef = useRef(null)
 
+  // Debug panel state
+  const [showDebug, setShowDebug] = useState(false)
+  const [debugLogs, setDebugLogs] = useState([])
+  const maxDebugLogs = 50 // Keep last 50 logs
+
+  // Debug logging function - logs to both console and UI
+  const debugLog = useCallback((type, message, data = null) => {
+    const timestamp = new Date().toLocaleTimeString()
+    const logEntry = {
+      id: Date.now(),
+      timestamp,
+      type, // 'info', 'success', 'warning', 'error'
+      message,
+      data: data ? JSON.stringify(data, null, 2) : null
+    }
+
+    // Log to console
+    const consoleMsg = `[${timestamp}] ${message}`
+    if (type === 'error') {
+      console.error(consoleMsg, data || '')
+    } else if (type === 'warning') {
+      console.warn(consoleMsg, data || '')
+    } else {
+      console.log(consoleMsg, data || '')
+    }
+
+    // Add to UI debug logs
+    setDebugLogs(prev => {
+      const newLogs = [...prev, logEntry]
+      // Keep only the last maxDebugLogs entries
+      return newLogs.slice(-maxDebugLogs)
+    })
+  }, [])
+
+  // Clear debug logs
+  const clearDebugLogs = useCallback(() => {
+    setDebugLogs([])
+  }, [])
+
   // Check if AssemblyAI is configured on mount
   useEffect(() => {
     // Wrap all initialization in try-catch to prevent crashes
     const initializeComponent = async () => {
+      // Log device info for debugging
+      const isiOS = isIOSSafari()
+      debugLog('info', 'Component initialized', {
+        userAgent: navigator.userAgent.substring(0, 100),
+        isIOSSafari: isiOS,
+        mediaDevices: !!navigator.mediaDevices,
+        getUserMedia: !!(navigator.mediaDevices?.getUserMedia),
+        MediaRecorder: !!window.MediaRecorder,
+        AudioContext: !!(window.AudioContext || window.webkitAudioContext)
+      })
+
+      // Check AssemblyAI configuration
+      const isConfigured = assemblyAISpeakerService.isConfigured()
+      debugLog(isConfigured ? 'success' : 'warning',
+        `AssemblyAI ${isConfigured ? 'configured' : 'NOT configured'}`)
+
       try {
         await checkPermissions()
+        debugLog('info', `Microphone permission: ${permissions}`)
       } catch (err) {
-        console.warn('Failed to check permissions:', err)
+        debugLog('warning', 'Failed to check permissions', { error: err.message })
       }
 
       // Cleanup orphaned sessions on mount (non-blocking, fire-and-forget)
       try {
-        await StreamingAudioBuffer.cleanupOrphanedSessions()
+        const result = await StreamingAudioBuffer.cleanupOrphanedSessions()
+        debugLog('info', 'IndexedDB cleanup complete', result)
       } catch (err) {
-        console.warn('Failed to cleanup orphaned sessions:', err)
+        debugLog('warning', 'IndexedDB cleanup failed (non-fatal)', { error: err.message })
       }
     }
 
@@ -132,9 +206,31 @@ const AudioRecorderSimple = ({
   }
 
   // Audio level monitoring for visual feedback
+  // NOTE: This is optional - recording works without it
   const startAudioLevelMonitoring = (stream) => {
+    // Skip audio visualization on iOS Safari - it can cause issues and isn't critical
+    if (isIOSSafari()) {
+      console.log('📱 iOS Safari detected - skipping audio level visualization')
+      return
+    }
+
     try {
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)()
+      // Check if AudioContext is available
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext
+      if (!AudioContextClass) {
+        console.warn('AudioContext not available')
+        return
+      }
+
+      audioContextRef.current = new AudioContextClass()
+
+      // iOS Safari requires resume after user gesture
+      if (audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().catch(err => {
+          console.warn('Failed to resume AudioContext:', err)
+        })
+      }
+
       analyserRef.current = audioContextRef.current.createAnalyser()
       const source = audioContextRef.current.createMediaStreamSource(stream)
       source.connect(analyserRef.current)
@@ -150,6 +246,7 @@ const AudioRecorderSimple = ({
       }
       updateLevel()
     } catch (err) {
+      // Non-fatal - recording still works without visualization
       console.warn('Audio level monitoring not available:', err)
     }
   }
@@ -184,6 +281,8 @@ const AudioRecorderSimple = ({
 
   // START RECORDING
   const startRecording = async () => {
+    debugLog('info', 'START RECORDING clicked')
+
     try {
       setError(null)
       // DON'T clear transcript/speakerData - we want to APPEND to existing
@@ -196,9 +295,14 @@ const AudioRecorderSimple = ({
       chunkIndexRef.current = 0
 
       // Cleanup any previous recording state that might be lingering
-      console.log('🧹 Cleaning up any previous recording state...')
+      debugLog('info', 'Cleaning up previous state...')
       try {
-        // Stop any existing audio stream
+        // Stop any existing recording stream (cloned)
+        if (recordingStreamRef.current) {
+          recordingStreamRef.current.getTracks().forEach(track => track.stop())
+          recordingStreamRef.current = null
+        }
+        // Stop any existing audio stream (original)
         if (audioStreamRef.current) {
           audioStreamRef.current.getTracks().forEach(track => track.stop())
           audioStreamRef.current = null
@@ -212,49 +316,84 @@ const AudioRecorderSimple = ({
         stopAudioLevelMonitoring()
         // Small delay to ensure cleanup completes
         await new Promise(resolve => setTimeout(resolve, 200))
+        debugLog('success', 'Cleanup complete')
       } catch (cleanupErr) {
-        console.warn('Cleanup warning (non-fatal):', cleanupErr)
+        debugLog('warning', 'Cleanup warning (non-fatal)', { error: cleanupErr.message })
       }
 
       // Check permissions first
       if (permissions === 'denied') {
+        debugLog('error', 'Microphone permission denied')
         setError('Microphone permission denied. Please allow access in browser settings.')
         return
       }
 
       // Request wake lock for mobile
       await requestWakeLock()
+      debugLog('info', 'Wake lock requested')
 
       // Get microphone stream
-      console.log('🎤 Requesting microphone access...')
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 16000
-        }
-      })
-      audioStreamRef.current = stream
-      console.log('✅ Microphone access granted')
+      // NOTE: iOS Safari ignores most audio constraints - keep it simple
+      const isiOS = isIOSSafari()
+      debugLog('info', `Requesting microphone... (iOS: ${isiOS})`)
 
-      // Start audio level monitoring for visual feedback
-      startAudioLevelMonitoring(stream)
+      // Use simpler constraints for iOS Safari (it ignores most of them anyway)
+      const audioConstraints = isiOS
+        ? { audio: true }  // iOS Safari: just request audio, let it use defaults
+        : {
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+              // NOTE: sampleRate is often ignored - AssemblyAI will resample anyway
+            }
+          }
+
+      const stream = await navigator.mediaDevices.getUserMedia(audioConstraints)
+      audioStreamRef.current = stream
+      debugLog('success', 'Microphone access granted')
+
+      // Log actual audio track settings for debugging
+      const audioTrack = stream.getAudioTracks()[0]
+      if (audioTrack) {
+        const settings = audioTrack.getSettings()
+        debugLog('info', 'Audio track settings', {
+          sampleRate: settings.sampleRate,
+          channelCount: settings.channelCount,
+          label: audioTrack.label?.substring(0, 30)
+        })
+      }
 
       // Determine MIME type
       const mimeType = getSupportedMimeType()
-      console.log('📼 Using MIME type:', mimeType || 'browser default')
+      debugLog('info', `MIME type: ${mimeType || 'browser default'}`)
 
-      // Start IndexedDB session for crash recovery
-      audioSessionIdRef.current = await StreamingAudioBuffer.startSession({
-        audioSource: 'microphone',
-        mimeType: mimeType || 'audio/webm',
-        sampleRate: 16000
-      })
+      // Start IndexedDB session for crash recovery (non-blocking)
+      try {
+        audioSessionIdRef.current = await StreamingAudioBuffer.startSession({
+          audioSource: 'microphone',
+          mimeType: mimeType || 'audio/webm',
+          sampleRate: 16000
+        })
+        debugLog('info', 'IndexedDB session started')
+      } catch (err) {
+        debugLog('warning', 'IndexedDB session failed (non-fatal)', { error: err.message })
+        audioSessionIdRef.current = null
+      }
+
+      // CRITICAL FIX: Use stream.clone() for MediaRecorder
+      // This fixes Safari's MP4 encoding issues that cause "only a few words" transcription
+      // Reference: https://community.openai.com/t/whisper-problem-with-audio-mp4-blobs-from-safari/322252
+      recordingStreamRef.current = stream.clone()
+      debugLog('info', 'Stream cloned for MediaRecorder (iOS fix)')
 
       // Create and configure MediaRecorder
       const options = mimeType ? { mimeType, audioBitsPerSecond: 128000 } : { audioBitsPerSecond: 128000 }
-      mediaRecorderRef.current = new MediaRecorder(stream, options)
+      mediaRecorderRef.current = new MediaRecorder(recordingStreamRef.current, options)
+      debugLog('success', 'MediaRecorder created', { mimeType: mediaRecorderRef.current.mimeType })
+
+      // Start audio level monitoring for visual feedback (after MediaRecorder is set up)
+      startAudioLevelMonitoring(stream)
 
       // Handle audio data chunks
       mediaRecorderRef.current.ondataavailable = async (event) => {
@@ -278,7 +417,7 @@ const AudioRecorderSimple = ({
 
       // Handle recording errors
       mediaRecorderRef.current.onerror = (event) => {
-        console.error('MediaRecorder error:', event.error)
+        debugLog('error', 'MediaRecorder error', { error: event.error?.message })
         setError(`Recording error: ${event.error?.message || 'Unknown error'}`)
         stopRecording()
       }
@@ -286,16 +425,19 @@ const AudioRecorderSimple = ({
       // Start recording with 1-second chunks
       mediaRecorderRef.current.start(1000)
       setIsRecording(true)
+      debugLog('success', 'RECORDING STARTED - capturing 1s chunks')
 
       // Start duration timer
       timerRef.current = setInterval(() => {
         setRecordingDuration(prev => prev + 1)
       }, 1000)
 
-      console.log('🎙️ Recording started')
-
     } catch (err) {
-      console.error('Failed to start recording:', err)
+      debugLog('error', 'Failed to start recording', {
+        name: err.name,
+        message: err.message,
+        stack: err.stack?.substring(0, 200)
+      })
       if (err.name === 'NotAllowedError') {
         setError('Microphone access denied. Please allow microphone permission.')
       } else if (err.name === 'NotFoundError') {
@@ -309,12 +451,12 @@ const AudioRecorderSimple = ({
 
   // STOP RECORDING
   const stopRecording = async () => {
+    debugLog('info', 'STOP RECORDING clicked')
+
     if (!isRecording || !mediaRecorderRef.current) {
-      console.warn('Not recording, nothing to stop')
+      debugLog('warning', 'Not recording, nothing to stop')
       return
     }
-
-    console.log('🛑 Stopping recording...')
 
     // Stop the timer
     if (timerRef.current) {
@@ -349,9 +491,13 @@ const AudioRecorderSimple = ({
         }
       })
 
-      console.log(`📦 Recording stopped. ${recordedChunksRef.current.length} chunks collected.`)
+      debugLog('info', `Recording stopped. ${recordedChunksRef.current.length} chunks collected`)
 
-      // Stop microphone stream
+      // Stop both streams (original and cloned)
+      if (recordingStreamRef.current) {
+        recordingStreamRef.current.getTracks().forEach(track => track.stop())
+        recordingStreamRef.current = null
+      }
       if (audioStreamRef.current) {
         audioStreamRef.current.getTracks().forEach(track => track.stop())
         audioStreamRef.current = null
@@ -362,16 +508,23 @@ const AudioRecorderSimple = ({
 
       // Validate we have audio data
       if (recordedChunksRef.current.length === 0) {
+        debugLog('error', 'No audio chunks captured!')
         throw new Error('No audio data captured. Please try recording again.')
       }
 
       // Create audio blob
       const mimeType = getSupportedMimeType() || 'audio/webm'
       const audioBlob = new Blob(recordedChunksRef.current, { type: mimeType })
-      console.log(`📼 Audio blob created: ${(audioBlob.size / 1024 / 1024).toFixed(2)} MB`)
+      const blobSizeMB = (audioBlob.size / 1024 / 1024).toFixed(2)
+      const blobSizeKB = (audioBlob.size / 1024).toFixed(2)
+      debugLog('info', `Audio blob created: ${blobSizeKB} KB (${blobSizeMB} MB)`, {
+        type: audioBlob.type,
+        chunks: recordedChunksRef.current.length
+      })
 
       // Validate blob size (minimum 1KB)
       if (audioBlob.size < 1000) {
+        debugLog('error', `Recording too short: ${audioBlob.size} bytes`)
         throw new Error('Recording too short. Please record for at least 2 seconds.')
       }
 
@@ -383,6 +536,7 @@ const AudioRecorderSimple = ({
       }
 
       // Process with speaker diarization
+      debugLog('info', 'Uploading to AssemblyAI...')
       setProcessingStatus('Uploading audio...')
       setProcessingProgress(10)
 
@@ -393,11 +547,20 @@ const AudioRecorderSimple = ({
           onProgress: (progress, status) => {
             setProcessingProgress(10 + (progress * 0.9)) // 10% upload, 90% processing
             setProcessingStatus(status || 'Processing...')
+            // Log progress updates
+            if (progress % 20 === 0) {
+              debugLog('info', `AssemblyAI progress: ${progress}% - ${status}`)
+            }
           }
         }
       )
 
-      console.log('✅ Speaker diarization complete:', speakerResult)
+      debugLog('success', 'AssemblyAI transcription complete', {
+        hasText: !!speakerResult.text,
+        textLength: speakerResult.text?.length || 0,
+        utterances: speakerResult.utterances?.length || 0,
+        speakers: speakerResult.speakers_detected || 0
+      })
 
       // Mark session as completed
       if (audioSessionIdRef.current && speakerResult.id) {
@@ -450,10 +613,14 @@ const AudioRecorderSimple = ({
         onAutoSave(combinedTranscript, 'recording_complete')
       }
 
-      console.log('✅ Recording processed successfully')
+      debugLog('success', 'Recording processed successfully!')
 
     } catch (err) {
-      console.error('❌ Failed to process recording:', err)
+      debugLog('error', 'PROCESSING FAILED', {
+        name: err.name,
+        message: err.message,
+        stack: err.stack?.substring(0, 300)
+      })
       setError(`Processing failed: ${err.message}`)
       setProcessingStatus('Failed')
 
@@ -463,6 +630,10 @@ const AudioRecorderSimple = ({
       }
 
       // Cleanup on error
+      if (recordingStreamRef.current) {
+        recordingStreamRef.current.getTracks().forEach(track => track.stop())
+        recordingStreamRef.current = null
+      }
       if (audioStreamRef.current) {
         audioStreamRef.current.getTracks().forEach(track => track.stop())
         audioStreamRef.current = null
@@ -473,6 +644,7 @@ const AudioRecorderSimple = ({
       setIsProcessing(false)
       mediaRecorderRef.current = null
       recordedChunksRef.current = []
+      recordingStreamRef.current = null
     }
   }
 
@@ -667,6 +839,79 @@ const AudioRecorderSimple = ({
           )}
         </div>
       )}
+
+      {/* DEBUG PANEL - Toggle button always visible */}
+      <div className="mt-4">
+        <button
+          onClick={() => setShowDebug(!showDebug)}
+          className="flex items-center gap-2 text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg transition-colors w-full justify-between"
+        >
+          <span className="flex items-center gap-2">
+            <Bug className="w-4 h-4" />
+            Debug Panel ({debugLogs.length} logs)
+          </span>
+          {showDebug ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
+
+        {showDebug && (
+          <div className="mt-2 bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+            {/* Debug Panel Header */}
+            <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
+              <span className="text-xs font-medium text-gray-300">Debug Logs</span>
+              <button
+                onClick={clearDebugLogs}
+                className="flex items-center gap-1 text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+              >
+                <Trash2 className="w-3 h-3" />
+                Clear
+              </button>
+            </div>
+
+            {/* Debug Logs */}
+            <div className="max-h-64 overflow-y-auto p-2 space-y-1 text-xs font-mono">
+              {debugLogs.length === 0 ? (
+                <p className="text-gray-500 text-center py-4">No logs yet</p>
+              ) : (
+                debugLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    className={`p-1.5 rounded ${
+                      log.type === 'error' ? 'bg-red-900/50 text-red-300' :
+                      log.type === 'warning' ? 'bg-yellow-900/50 text-yellow-300' :
+                      log.type === 'success' ? 'bg-green-900/50 text-green-300' :
+                      'bg-gray-800 text-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="text-gray-500 flex-shrink-0">{log.timestamp}</span>
+                      <span className={`flex-shrink-0 px-1 rounded text-[10px] uppercase ${
+                        log.type === 'error' ? 'bg-red-700 text-red-100' :
+                        log.type === 'warning' ? 'bg-yellow-700 text-yellow-100' :
+                        log.type === 'success' ? 'bg-green-700 text-green-100' :
+                        'bg-gray-700 text-gray-100'
+                      }`}>
+                        {log.type}
+                      </span>
+                      <span className="break-all">{log.message}</span>
+                    </div>
+                    {log.data && (
+                      <pre className="mt-1 ml-16 text-[10px] text-gray-400 overflow-x-auto whitespace-pre-wrap">
+                        {log.data}
+                      </pre>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Device Info Footer */}
+            <div className="px-3 py-2 bg-gray-800 border-t border-gray-700 text-[10px] text-gray-500">
+              <div>iOS: {isIOSSafari() ? 'Yes' : 'No'} | MediaRecorder: {window.MediaRecorder ? 'Yes' : 'No'}</div>
+              <div className="truncate">UA: {navigator.userAgent.substring(0, 80)}...</div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -343,7 +343,16 @@ class FirestoreRestService {
 
       if (!response.ok) {
         const errorText = await response.text()
-        throw new Error(`HTTP ${response.status}: ${errorText}`)
+        debugLog(`Query error response: ${errorText}`, 'error')
+
+        // Parse error for better message
+        try {
+          const errorJson = JSON.parse(errorText)
+          const errorMessage = errorJson?.error?.message || errorText
+          throw new Error(errorMessage)
+        } catch (parseErr) {
+          throw new Error(`HTTP ${response.status}: ${errorText}`)
+        }
       }
 
       const results = await response.json()

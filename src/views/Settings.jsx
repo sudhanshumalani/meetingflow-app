@@ -223,6 +223,30 @@ export default function Settings() {
     }
   }
 
+  // Helper to strip large fields from meetings to save storage space
+  function stripLargeFields(meeting) {
+    const stripped = { ...meeting }
+    // Remove large fields that can be regenerated or aren't critical
+    delete stripped.audioBlob
+    delete stripped.audioData
+    delete stripped.audioUrl
+    delete stripped.recordingBlob
+    // Keep transcript but limit size
+    if (stripped.transcript && stripped.transcript.length > 50000) {
+      stripped.transcript = stripped.transcript.substring(0, 50000) + '... [truncated]'
+    }
+    // Remove large base64 images
+    if (stripped.images && Array.isArray(stripped.images)) {
+      stripped.images = stripped.images.map(img => {
+        if (typeof img === 'string' && img.startsWith('data:') && img.length > 10000) {
+          return null // Remove large base64 images
+        }
+        return img
+      }).filter(Boolean)
+    }
+    return stripped
+  }
+
   // Manual sync - fetches data from Firestore on demand (iOS safe)
   const handleManualSync = async () => {
     setManualSyncing(true)
@@ -230,6 +254,7 @@ export default function Settings() {
 
     try {
       console.log('🔄 Manual sync starting...')
+      console.log('🔄 Current userId:', localStorage.getItem('meetingflow_firestore_user_id'))
 
       // Dynamically load the appropriate firestore service
       const firestoreService = await getFirestoreService()
@@ -237,12 +262,34 @@ export default function Settings() {
         throw new Error('Failed to load Firestore service')
       }
 
-      // Fetch all data from Firestore
-      const [meetings, stakeholders, categories] = await Promise.all([
-        firestoreService.getMeetings(),
-        firestoreService.getStakeholders(),
-        firestoreService.getStakeholderCategories()
-      ])
+      console.log('🔄 Firestore service loaded, fetching data...')
+
+      // Fetch all data from Firestore - catch individual errors
+      let meetings = [], stakeholders = [], categories = []
+
+      try {
+        meetings = await firestoreService.getMeetings()
+        console.log('🔄 Meetings fetched:', meetings.length)
+      } catch (e) {
+        console.error('🔄 Failed to fetch meetings:', e)
+        throw new Error(`Failed to fetch meetings: ${e.message}`)
+      }
+
+      try {
+        stakeholders = await firestoreService.getStakeholders()
+        console.log('🔄 Stakeholders fetched:', stakeholders.length)
+      } catch (e) {
+        console.error('🔄 Failed to fetch stakeholders:', e)
+        throw new Error(`Failed to fetch stakeholders: ${e.message}`)
+      }
+
+      try {
+        categories = await firestoreService.getStakeholderCategories()
+        console.log('🔄 Categories fetched:', categories.length)
+      } catch (e) {
+        console.error('🔄 Failed to fetch categories:', e)
+        throw new Error(`Failed to fetch categories: ${e.message}`)
+      }
 
       console.log('🔄 Fetched from Firestore:', {
         meetings: meetings.length,
@@ -260,10 +307,52 @@ export default function Settings() {
       const mergedStakeholders = mergeById(localStakeholders, stakeholders)
       const mergedCategories = mergeById(localCategories, categories)
 
-      // Save merged data to localStorage
-      localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
-      localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
-      localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
+      // Strip large fields to save space (especially on iOS with limited quota)
+      const strippedMeetings = mergedMeetings.map(stripLargeFields)
+
+      // Try to save, handling quota errors
+      try {
+        localStorage.setItem('meetingflow_meetings', JSON.stringify(strippedMeetings))
+        localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
+        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
+      } catch (storageError) {
+        // Check if it's a quota error
+        if (storageError.name === 'QuotaExceededError' ||
+            storageError.message?.includes('quota') ||
+            storageError.message?.includes('QuotaExceeded')) {
+          console.warn('Storage quota exceeded, trying to free space...')
+
+          // Try to clear old/unnecessary data
+          localStorage.removeItem('meetingflow_sync_debug')
+          localStorage.removeItem('meetingflow_last_sync')
+
+          // Try again with even more stripped data
+          const minimalMeetings = strippedMeetings.map(m => ({
+            id: m.id,
+            title: m.title,
+            date: m.date,
+            stakeholderIds: m.stakeholderIds,
+            categoryId: m.categoryId,
+            notes: m.notes?.substring(0, 5000), // Limit notes
+            summary: m.summary,
+            actionItems: m.actionItems,
+            aiAnalysis: m.aiAnalysis,
+            createdAt: m.createdAt,
+            updatedAt: m.updatedAt
+          }))
+
+          try {
+            localStorage.setItem('meetingflow_meetings', JSON.stringify(minimalMeetings))
+            localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
+            localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
+            console.log('Saved with minimal data after clearing space')
+          } catch (e) {
+            throw new Error('Storage quota exceeded. Try deleting some old meetings to free space.')
+          }
+        } else {
+          throw storageError
+        }
+      }
 
       // Trigger app reload to reflect changes
       window.dispatchEvent(new Event('meetingflow-storage-updated'))

@@ -2,26 +2,63 @@
  * Firestore Service for Meetingflow App
  * Handles all database operations - saving, loading, deleting meetings
  *
- * iOS Strategy:
- * - Uses memory cache instead of IndexedDB persistence
- * - Real-time sync (onSnapshot) works on all platforms
- * - Full Firestore functionality enabled everywhere
+ * iOS Safety:
+ * - NO module-level Firebase imports
+ * - All Firestore operations are wrapped in try-catch
+ * - Debug logging for diagnosing iOS issues
+ * - Graceful degradation if Firestore unavailable
  *
  * References:
- * - https://github.com/firebase/firebase-js-sdk/issues/4076
- * - https://firebase.google.com/docs/firestore/manage-data/enable-offline
+ * - https://github.com/firebase/firebase-js-sdk/issues/7780
+ * - https://github.com/firebase/firebase-js-sdk/issues/2581
  */
 
-import { IS_IOS, initializeFirebase } from '../config/firebase'
+// Debug log storage
+const debugLogs = []
 
-// Firestore module and db instance - loaded lazily
+function debugLog(message, type = 'info') {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    message,
+    type
+  }
+  debugLogs.push(entry)
+
+  if (debugLogs.length > 100) {
+    debugLogs.shift()
+  }
+
+  const prefix = '🔥 Firestore:'
+  if (type === 'error') {
+    console.error(`${prefix} ${message}`)
+  } else if (type === 'warn') {
+    console.warn(`${prefix} ${message}`)
+  } else {
+    console.log(`${prefix} ${message}`)
+  }
+}
+
+// Export debug logs for UI
+export function getFirestoreDebugLogs() {
+  return [...debugLogs]
+}
+
+// Lazy-loaded modules - NOT imported at module level for iOS safety
 let firestoreModule = null
 let db = null
 let isInitialized = false
 let initPromise = null
+let lastError = null
+
+// Detect iOS (simple check, full detection in firebase.js)
+const IS_IOS = typeof navigator !== 'undefined' &&
+  (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 0))
+
+debugLog(`Service created. iOS: ${IS_IOS}`)
 
 /**
- * Lazy load Firestore - works on ALL platforms (iOS uses memory cache)
+ * Lazy load Firestore - SAFE for iOS
  */
 async function ensureFirestoreLoaded() {
   if (isInitialized && db) {
@@ -34,21 +71,42 @@ async function ensureFirestoreLoaded() {
 
   initPromise = (async () => {
     try {
-      console.log('🔥 Loading Firestore...')
-      const firebase = await initializeFirebase()
-      db = firebase.db
+      debugLog('Loading Firestore lazily...')
 
-      if (!db) {
-        console.warn('⚠️ Firebase db is null')
+      // Import firebase config lazily
+      const firebaseConfig = await import('../config/firebase')
+      const { initializeFirebase } = firebaseConfig
+
+      debugLog('Calling initializeFirebase()...')
+      const firebase = await initializeFirebase()
+
+      if (!firebase.db) {
+        debugLog('Firebase.db is null - Firestore unavailable', 'warn')
+        lastError = new Error('Firebase.db is null')
         return false
       }
 
-      firestoreModule = await import('firebase/firestore')
+      db = firebase.db
+      debugLog('Got db instance, importing firestore functions...')
+
+      // Import Firestore functions
+      try {
+        firestoreModule = await import('firebase/firestore')
+        debugLog('Firestore module imported successfully')
+      } catch (importErr) {
+        debugLog(`Failed to import firestore module: ${importErr.message}`, 'error')
+        lastError = importErr
+        return false
+      }
+
       isInitialized = true
-      console.log('✅ Firestore loaded successfully')
+      debugLog('Firestore fully loaded and ready')
       return true
+
     } catch (error) {
-      console.error('❌ Failed to load Firestore:', error)
+      debugLog(`Failed to load Firestore: ${error.message}`, 'error')
+      debugLog(`Stack: ${error.stack}`, 'error')
+      lastError = error
       return false
     }
   })()
@@ -58,45 +116,75 @@ async function ensureFirestoreLoaded() {
 
 class FirestoreService {
   constructor() {
-    this.isAvailable = true // Firestore works on all platforms now
+    this.isAvailable = true // Will be updated after first load attempt
     this.listeners = []
     this.userId = this.getOrCreateUserId()
 
-    if (IS_IOS) {
-      console.log('📱 FirestoreService: iOS detected - using memory cache')
-    }
-    console.log('FirestoreService created with userId:', this.userId)
+    debugLog(`FirestoreService instance created. UserId: ${this.userId}`)
   }
 
   getOrCreateUserId() {
-    let userId = localStorage.getItem('meetingflow_firestore_user_id')
-    if (!userId) {
-      userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      localStorage.setItem('meetingflow_firestore_user_id', userId)
-      console.log('Created new Firestore user ID:', userId)
+    try {
+      let userId = localStorage.getItem('meetingflow_firestore_user_id')
+      if (!userId) {
+        userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        localStorage.setItem('meetingflow_firestore_user_id', userId)
+        debugLog(`Created new user ID: ${userId}`)
+      }
+      return userId
+    } catch (e) {
+      debugLog(`Error getting userId: ${e.message}`, 'error')
+      return `user_fallback_${Date.now()}`
     }
-    return userId
   }
 
   setUserId(newUserId) {
     this.userId = newUserId
-    localStorage.setItem('meetingflow_firestore_user_id', newUserId)
-    console.log('Updated Firestore user ID to:', newUserId)
+    try {
+      localStorage.setItem('meetingflow_firestore_user_id', newUserId)
+    } catch (e) {
+      debugLog(`Error setting userId: ${e.message}`, 'error')
+    }
+    debugLog(`Updated user ID to: ${newUserId}`)
   }
 
   getUserId() {
     return this.userId
   }
 
+  // Get service status for debugging
+  getStatus() {
+    return {
+      isAvailable: this.isAvailable,
+      isInitialized,
+      hasError: lastError !== null,
+      lastError: lastError?.message || null,
+      listenersCount: this.listeners.length,
+      userId: this.userId,
+      logsCount: debugLogs.length
+    }
+  }
+
+  // Get debug logs
+  getDebugLogs() {
+    return [...debugLogs]
+  }
+
   // ==================== MEETINGS ====================
 
   async saveMeeting(meeting) {
+    debugLog(`saveMeeting called: ${meeting?.id}`)
+
     const ready = await ensureFirestoreLoaded()
-    if (!ready) return { success: false, reason: 'firestore_unavailable' }
+    if (!ready) {
+      debugLog('saveMeeting: Firestore not ready', 'warn')
+      this.isAvailable = false
+      return { success: false, reason: 'firestore_unavailable' }
+    }
 
     try {
       if (!meeting?.id) {
-        console.warn('Skipping meeting without ID')
+        debugLog('saveMeeting: No meeting ID', 'warn')
         return { success: false, reason: 'no_id' }
       }
 
@@ -109,17 +197,21 @@ class FirestoreService {
         deleted: false
       }, { merge: true })
 
-      console.log('Meeting saved to Firestore:', meeting.id)
+      debugLog(`Meeting saved: ${meeting.id}`)
       return { success: true }
     } catch (error) {
-      console.error('Error saving meeting:', error)
+      debugLog(`saveMeeting error: ${error.message}`, 'error')
       return { success: false, reason: error.message }
     }
   }
 
   async deleteMeeting(meetingId) {
+    debugLog(`deleteMeeting called: ${meetingId}`)
+
     const ready = await ensureFirestoreLoaded()
-    if (!ready) return { success: false, reason: 'firestore_unavailable' }
+    if (!ready) {
+      return { success: false, reason: 'firestore_unavailable' }
+    }
 
     try {
       const { doc, setDoc, serverTimestamp } = firestoreModule
@@ -130,17 +222,22 @@ class FirestoreService {
         lastModified: serverTimestamp()
       }, { merge: true })
 
-      console.log('Meeting deleted in Firestore:', meetingId)
+      debugLog(`Meeting deleted: ${meetingId}`)
       return { success: true }
     } catch (error) {
-      console.error('Error deleting meeting:', error)
+      debugLog(`deleteMeeting error: ${error.message}`, 'error')
       return { success: false, reason: error.message }
     }
   }
 
   async getMeetings() {
+    debugLog('getMeetings called')
+
     const ready = await ensureFirestoreLoaded()
-    if (!ready) return []
+    if (!ready) {
+      debugLog('getMeetings: Firestore not ready', 'warn')
+      return []
+    }
 
     try {
       const { collection, query, where, getDocs } = firestoreModule
@@ -161,19 +258,21 @@ class FirestoreService {
         })
       })
 
-      console.log('Fetched meetings from Firestore:', meetings.length)
+      debugLog(`getMeetings: Fetched ${meetings.length} meetings`)
       return meetings
     } catch (error) {
-      console.error('Error getting meetings:', error)
+      debugLog(`getMeetings error: ${error.message}`, 'error')
       return []
     }
   }
 
   subscribeMeetings(callback) {
+    debugLog('subscribeMeetings called')
+
     // Use async initialization inside
     ensureFirestoreLoaded().then(ready => {
       if (!ready) {
-        console.log('⏭️ Firestore not ready, skipping subscription')
+        debugLog('subscribeMeetings: Firestore not ready, skipping', 'warn')
         return
       }
 
@@ -185,32 +284,41 @@ class FirestoreService {
           where('deleted', '==', false)
         )
 
+        debugLog('Setting up meetings onSnapshot listener...')
+
         const unsubscribe = onSnapshot(q,
           (querySnapshot) => {
-            const meetings = []
-            querySnapshot.forEach((docSnap) => {
-              const data = docSnap.data()
-              meetings.push({
-                id: docSnap.id,
-                ...data,
-                lastModified: data.lastModified?.toDate?.() || data.lastModified
+            try {
+              const meetings = []
+              querySnapshot.forEach((docSnap) => {
+                const data = docSnap.data()
+                meetings.push({
+                  id: docSnap.id,
+                  ...data,
+                  lastModified: data.lastModified?.toDate?.() || data.lastModified
+                })
               })
-            })
-            console.log('Real-time update - meetings:', meetings.length)
-            callback(meetings)
+              debugLog(`onSnapshot: Received ${meetings.length} meetings`)
+              callback(meetings)
+            } catch (callbackErr) {
+              debugLog(`onSnapshot callback error: ${callbackErr.message}`, 'error')
+            }
           },
           (error) => {
-            console.error('Firestore subscription error:', error)
+            debugLog(`onSnapshot error: ${error.message}`, 'error')
           }
         )
 
         this.listeners.push(unsubscribe)
+        debugLog('Meetings subscription active')
       } catch (error) {
-        console.error('Error setting up subscription:', error)
+        debugLog(`subscribeMeetings setup error: ${error.message}`, 'error')
       }
+    }).catch(err => {
+      debugLog(`subscribeMeetings promise error: ${err.message}`, 'error')
     })
 
-    return () => {} // Return immediate no-op, actual unsubscribe stored in listeners
+    return () => {} // Return no-op, actual unsubscribe stored in listeners
   }
 
   // ==================== STAKEHOLDERS ====================
@@ -231,9 +339,10 @@ class FirestoreService {
         deleted: false
       }, { merge: true })
 
+      debugLog(`Stakeholder saved: ${stakeholder.id}`)
       return { success: true }
     } catch (error) {
-      console.error('Error saving stakeholder:', error)
+      debugLog(`saveStakeholder error: ${error.message}`, 'error')
       return { success: false, reason: error.message }
     }
   }
@@ -250,8 +359,10 @@ class FirestoreService {
         deletedAt: serverTimestamp(),
         lastModified: serverTimestamp()
       }, { merge: true })
+      debugLog(`Stakeholder deleted: ${stakeholderId}`)
       return { success: true }
     } catch (error) {
+      debugLog(`deleteStakeholder error: ${error.message}`, 'error')
       return { success: false, reason: error.message }
     }
   }
@@ -272,8 +383,10 @@ class FirestoreService {
       querySnapshot.forEach((docSnap) => {
         items.push({ id: docSnap.id, ...docSnap.data() })
       })
+      debugLog(`getStakeholders: Fetched ${items.length}`)
       return items
     } catch (error) {
+      debugLog(`getStakeholders error: ${error.message}`, 'error')
       return []
     }
   }
@@ -290,16 +403,25 @@ class FirestoreService {
           where('deleted', '==', false)
         )
         const unsubscribe = onSnapshot(q, (snapshot) => {
-          const items = []
-          snapshot.forEach((docSnap) => {
-            items.push({ id: docSnap.id, ...docSnap.data() })
-          })
-          callback(items)
-        }, (error) => console.error('Stakeholder subscription error:', error))
+          try {
+            const items = []
+            snapshot.forEach((docSnap) => {
+              items.push({ id: docSnap.id, ...docSnap.data() })
+            })
+            debugLog(`Stakeholders onSnapshot: ${items.length}`)
+            callback(items)
+          } catch (err) {
+            debugLog(`Stakeholders callback error: ${err.message}`, 'error')
+          }
+        }, (error) => {
+          debugLog(`Stakeholders subscription error: ${error.message}`, 'error')
+        })
         this.listeners.push(unsubscribe)
       } catch (error) {
-        console.error('Error setting up stakeholder subscription:', error)
+        debugLog(`subscribeStakeholders setup error: ${error.message}`, 'error')
       }
+    }).catch(err => {
+      debugLog(`subscribeStakeholders promise error: ${err.message}`, 'error')
     })
 
     return () => {}
@@ -322,8 +444,10 @@ class FirestoreService {
         lastModified: serverTimestamp(),
         deleted: false
       }, { merge: true })
+      debugLog(`Category saved: ${category.id}`)
       return { success: true }
     } catch (error) {
+      debugLog(`saveStakeholderCategory error: ${error.message}`, 'error')
       return { success: false, reason: error.message }
     }
   }
@@ -340,8 +464,10 @@ class FirestoreService {
         deletedAt: serverTimestamp(),
         lastModified: serverTimestamp()
       }, { merge: true })
+      debugLog(`Category deleted: ${categoryId}`)
       return { success: true }
     } catch (error) {
+      debugLog(`deleteStakeholderCategory error: ${error.message}`, 'error')
       return { success: false, reason: error.message }
     }
   }
@@ -362,8 +488,10 @@ class FirestoreService {
       snapshot.forEach((docSnap) => {
         items.push({ id: docSnap.id, ...docSnap.data() })
       })
+      debugLog(`getStakeholderCategories: Fetched ${items.length}`)
       return items
     } catch (error) {
+      debugLog(`getStakeholderCategories error: ${error.message}`, 'error')
       return []
     }
   }
@@ -380,16 +508,25 @@ class FirestoreService {
           where('deleted', '==', false)
         )
         const unsubscribe = onSnapshot(q, (snapshot) => {
-          const items = []
-          snapshot.forEach((docSnap) => {
-            items.push({ id: docSnap.id, ...docSnap.data() })
-          })
-          callback(items)
-        }, (error) => console.error('Category subscription error:', error))
+          try {
+            const items = []
+            snapshot.forEach((docSnap) => {
+              items.push({ id: docSnap.id, ...docSnap.data() })
+            })
+            debugLog(`Categories onSnapshot: ${items.length}`)
+            callback(items)
+          } catch (err) {
+            debugLog(`Categories callback error: ${err.message}`, 'error')
+          }
+        }, (error) => {
+          debugLog(`Categories subscription error: ${error.message}`, 'error')
+        })
         this.listeners.push(unsubscribe)
       } catch (error) {
-        console.error('Error setting up category subscription:', error)
+        debugLog(`subscribeStakeholderCategories setup error: ${error.message}`, 'error')
       }
+    }).catch(err => {
+      debugLog(`subscribeStakeholderCategories promise error: ${err.message}`, 'error')
     })
 
     return () => {}
@@ -431,10 +568,10 @@ class FirestoreService {
       }
 
       await batch.commit()
-      console.log('Batch import completed! Total items:', count)
+      debugLog(`Batch import completed: ${count} items`)
       return { success: true, imported: count }
     } catch (error) {
-      console.error('Batch import failed:', error)
+      debugLog(`importAllData error: ${error.message}`, 'error')
       return { success: false, reason: error.message }
     }
   }
@@ -442,7 +579,7 @@ class FirestoreService {
   // ==================== UTILITIES ====================
 
   cleanup() {
-    console.log('Cleaning up Firestore listeners:', this.listeners.length)
+    debugLog(`Cleaning up ${this.listeners.length} listeners`)
     this.listeners.forEach(unsubscribe => {
       try { unsubscribe() } catch (e) { /* ignore */ }
     })
@@ -456,8 +593,10 @@ class FirestoreService {
     try {
       const { doc, getDoc } = firestoreModule
       await getDoc(doc(db, 'connectionTest', 'test'))
+      debugLog('Connection check: SUCCESS')
       return { connected: true }
     } catch (error) {
+      debugLog(`Connection check failed: ${error.message}`, 'error')
       return { connected: false, error: error.message }
     }
   }

@@ -19,7 +19,8 @@ import SyncSetup from '../components/sync/SyncSetup'
 import SyncStatusIndicator from '../components/sync/SyncStatusIndicator'
 import SyncConflictResolver from '../components/sync/SyncConflictResolver'
 import firestoreService from '../utils/firestoreService'
-import { Database, Upload, CheckCircle } from 'lucide-react'
+import { Database, Upload, CheckCircle, Bug } from 'lucide-react'
+import FirebaseDebugPanel from '../components/FirebaseDebugPanel'
 
 export default function Settings() {
   const navigate = useNavigate()
@@ -1035,6 +1036,9 @@ export default function Settings() {
                 <li>• Deletions sync across devices too</li>
               </ul>
             </div>
+
+            {/* Firebase Debug Panel */}
+            <FirebaseDebugPanel />
           </div>
         )}
 

@@ -295,34 +295,19 @@ class FirestoreRestService {
 
   /**
    * Query documents in a collection
+   * Note: Using simple userId filter only, deleted check done in JS
+   * This avoids needing composite indexes in Firestore
    */
   async queryCollection(collection, filters = []) {
-    // Build structured query
+    // Build structured query - only filter by userId to avoid index requirements
     const query = {
       structuredQuery: {
         from: [{ collectionId: collection }],
         where: {
-          compositeFilter: {
-            op: 'AND',
-            filters: [
-              // Always filter by userId
-              {
-                fieldFilter: {
-                  field: { fieldPath: 'userId' },
-                  op: 'EQUAL',
-                  value: { stringValue: this.userId }
-                }
-              },
-              // Always filter deleted = false
-              {
-                fieldFilter: {
-                  field: { fieldPath: 'deleted' },
-                  op: 'EQUAL',
-                  value: { booleanValue: false }
-                }
-              },
-              ...filters
-            ]
+          fieldFilter: {
+            field: { fieldPath: 'userId' },
+            op: 'EQUAL',
+            value: { stringValue: this.userId }
           }
         }
       }
@@ -331,7 +316,7 @@ class FirestoreRestService {
     const url = `${FIRESTORE_BASE_URL}:runQuery?key=${FIREBASE_API_KEY}`
 
     try {
-      debugLog(`Querying ${collection}...`)
+      debugLog(`Querying ${collection} for userId: ${this.userId}...`)
 
       const response = await fetch(url, {
         method: 'POST',
@@ -361,13 +346,14 @@ class FirestoreRestService {
       for (const result of results) {
         if (result.document) {
           const doc = fromFirestoreDocument(result.document)
-          if (doc) {
+          // Filter out deleted documents in JS (avoids needing composite index)
+          if (doc && doc.deleted !== true) {
             documents.push(doc)
           }
         }
       }
 
-      debugLog(`Query ${collection}: Found ${documents.length} documents`)
+      debugLog(`Query ${collection}: Found ${documents.length} documents (after filtering deleted)`)
       return documents
     } catch (error) {
       debugLog(`Query ${collection} failed: ${error.message}`, 'error')

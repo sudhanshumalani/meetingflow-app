@@ -293,7 +293,7 @@ export default function Settings() {
         categories: categories.length
       })
 
-      // Merge with local data
+      // Read local data
       console.log('🔄 Reading local data...')
       const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
       const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
@@ -305,39 +305,80 @@ export default function Settings() {
         categories: localCategories.length
       })
 
-      // Simple merge: combine by ID, keeping newer versions
-      console.log('🔄 Merging data...')
-      const mergedMeetings = mergeById(localMeetings, meetings)
-      const mergedStakeholders = mergeById(localStakeholders, stakeholders)
-      const mergedCategories = mergeById(localCategories, categories)
+      // Merge with timestamp-based conflict resolution
+      console.log('🔄 Merging data with timestamp comparison...')
+      const meetingsMerge = mergeByIdWithTracking(localMeetings, meetings)
+      const stakeholdersMerge = mergeByIdWithTracking(localStakeholders, stakeholders)
+      const categoriesMerge = mergeByIdWithTracking(localCategories, categories)
 
-      console.log('🔄 Merged data:', {
-        meetings: mergedMeetings.length,
-        stakeholders: mergedStakeholders.length,
-        categories: mergedCategories.length
+      console.log('🔄 Merge results:', {
+        meetings: { total: meetingsMerge.merged.length, toUpload: meetingsMerge.toUpload.length, toDownload: meetingsMerge.toDownload.length },
+        stakeholders: { total: stakeholdersMerge.merged.length, toUpload: stakeholdersMerge.toUpload.length, toDownload: stakeholdersMerge.toDownload.length },
+        categories: { total: categoriesMerge.merged.length, toUpload: categoriesMerge.toUpload.length, toDownload: categoriesMerge.toDownload.length }
       })
 
-      // Strip large fields to save space (especially on iOS with limited quota)
+      // Upload local changes to Firestore (two-way sync)
+      let uploadedCount = 0
+      const uploadErrors = []
+
+      // Upload meetings that are newer locally
+      console.log('🔄 Uploading newer local meetings...')
+      for (const meeting of meetingsMerge.toUpload) {
+        try {
+          const result = await firestoreService.saveMeeting(meeting)
+          if (result.success) uploadedCount++
+          else uploadErrors.push(`Meeting ${meeting.id}: ${result.reason}`)
+        } catch (e) {
+          uploadErrors.push(`Meeting ${meeting.id}: ${e.message}`)
+        }
+      }
+
+      // Upload stakeholders that are newer locally
+      console.log('🔄 Uploading newer local stakeholders...')
+      for (const stakeholder of stakeholdersMerge.toUpload) {
+        try {
+          const result = await firestoreService.saveStakeholder(stakeholder)
+          if (result.success) uploadedCount++
+          else uploadErrors.push(`Stakeholder ${stakeholder.id}: ${result.reason}`)
+        } catch (e) {
+          uploadErrors.push(`Stakeholder ${stakeholder.id}: ${e.message}`)
+        }
+      }
+
+      // Upload categories that are newer locally
+      console.log('🔄 Uploading newer local categories...')
+      for (const category of categoriesMerge.toUpload) {
+        try {
+          const result = await firestoreService.saveStakeholderCategory(category)
+          if (result.success) uploadedCount++
+          else uploadErrors.push(`Category ${category.id}: ${result.reason}`)
+        } catch (e) {
+          uploadErrors.push(`Category ${category.id}: ${e.message}`)
+        }
+      }
+
+      console.log('🔄 Upload complete:', { uploadedCount, errors: uploadErrors.length })
+
+      // Strip large fields before saving locally
       console.log('🔄 Stripping large fields...')
-      const strippedMeetings = mergedMeetings.map(m => {
+      const strippedMeetings = meetingsMerge.merged.map(m => {
         try {
           return stripLargeFields(m)
         } catch (e) {
           console.error('Error stripping meeting:', m?.id, e)
-          return m // Return original if stripping fails
+          return m
         }
       })
 
-      // Try to save
+      // Save merged data to localStorage
       console.log('🔄 Saving to localStorage...')
       try {
         localStorage.setItem('meetingflow_meetings', JSON.stringify(strippedMeetings))
-        localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
-        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
+        localStorage.setItem('meetingflow_stakeholders', JSON.stringify(stakeholdersMerge.merged))
+        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(categoriesMerge.merged))
         console.log('🔄 Saved successfully!')
       } catch (storageError) {
         console.error('🔄 Storage error:', storageError)
-        // Check if it's a quota error
         if (storageError.name === 'QuotaExceededError' ||
             (storageError.message && storageError.message.includes('quota'))) {
           throw new Error('Storage quota exceeded. Try deleting some old meetings.')
@@ -349,9 +390,12 @@ export default function Settings() {
       // Trigger app reload to reflect changes
       window.dispatchEvent(new Event('meetingflow-storage-updated'))
 
+      // Build result message
+      const downloaded = meetingsMerge.toDownload.length + stakeholdersMerge.toDownload.length + categoriesMerge.toDownload.length
+      const uploaded = uploadedCount
       setManualSyncResult({
         success: true,
-        message: `Synced! Found ${meetings.length} meetings, ${stakeholders.length} stakeholders, ${categories.length} categories.`
+        message: `Synced! ↓${downloaded} downloaded, ↑${uploaded} uploaded. Total: ${meetingsMerge.merged.length} meetings, ${stakeholdersMerge.merged.length} stakeholders, ${categoriesMerge.merged.length} categories.`
       })
 
       console.log('✅ Manual sync complete')
@@ -366,31 +410,77 @@ export default function Settings() {
     }
   }
 
-  // Helper function to merge arrays by ID
-  function mergeById(localItems, cloudItems) {
-    const merged = new Map()
+  // Helper to get timestamp from an item (handles various field names)
+  function getTimestamp(item) {
+    if (!item) return 0
+    // Try various timestamp fields
+    const ts = item.updatedAt || item.lastModified || item.createdAt || item.timestamp || 0
+    if (ts instanceof Date) return ts.getTime()
+    if (typeof ts === 'string') return new Date(ts).getTime()
+    if (typeof ts === 'number') return ts
+    return 0
+  }
 
-    // Add local items first
+  // Helper function to merge arrays by ID with timestamp-based conflict resolution
+  // Returns: { merged: [], toUpload: [], toDownload: [] }
+  function mergeByIdWithTracking(localItems, cloudItems) {
+    const merged = new Map()
+    const toUpload = [] // Local items newer than cloud
+    const toDownload = [] // Cloud items newer than local
+
+    // Create maps for quick lookup
+    const localMap = new Map()
+    const cloudMap = new Map()
+
     localItems.forEach(item => {
-      if (item.id) merged.set(item.id, item)
+      if (item && item.id) localMap.set(item.id, item)
+    })
+    cloudItems.forEach(item => {
+      if (item && item.id) cloudMap.set(item.id, item)
     })
 
-    // Merge cloud items, keeping newer
-    cloudItems.forEach(cloudItem => {
-      if (!cloudItem.id) return
-      const existing = merged.get(cloudItem.id)
-      if (!existing) {
-        merged.set(cloudItem.id, cloudItem)
+    // Process all local items
+    for (const [id, localItem] of localMap) {
+      const cloudItem = cloudMap.get(id)
+
+      if (!cloudItem) {
+        // Only in local - needs to be uploaded
+        merged.set(id, localItem)
+        toUpload.push(localItem)
       } else {
-        const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime()
-        const cloudTime = new Date(cloudItem.updatedAt || cloudItem.createdAt || cloudItem.lastModified || 0).getTime()
-        if (cloudTime > existingTime) {
-          merged.set(cloudItem.id, cloudItem)
+        // Exists in both - compare timestamps
+        const localTime = getTimestamp(localItem)
+        const cloudTime = getTimestamp(cloudItem)
+
+        if (localTime > cloudTime) {
+          // Local is newer - use local and upload it
+          merged.set(id, localItem)
+          toUpload.push(localItem)
+        } else if (cloudTime > localTime) {
+          // Cloud is newer - use cloud
+          merged.set(id, cloudItem)
+          toDownload.push(cloudItem)
+        } else {
+          // Same time - keep local (arbitrary choice)
+          merged.set(id, localItem)
         }
       }
-    })
+    }
 
-    return Array.from(merged.values())
+    // Process cloud items not in local
+    for (const [id, cloudItem] of cloudMap) {
+      if (!localMap.has(id)) {
+        // Only in cloud - needs to be downloaded
+        merged.set(id, cloudItem)
+        toDownload.push(cloudItem)
+      }
+    }
+
+    return {
+      merged: Array.from(merged.values()),
+      toUpload,
+      toDownload
+    }
   }
 
   return (

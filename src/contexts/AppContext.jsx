@@ -2,10 +2,33 @@ import { createContext, useContext, useReducer, useEffect, useRef, useCallback }
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
 import n8nService from '../utils/n8nService'
-import firestoreService from '../utils/firestoreService'
+
+// IMPORTANT: firestoreService is NOT imported at module level for iOS compatibility
+// It is dynamically imported when needed to prevent iOS Safari crashes
+// See: https://github.com/firebase/firebase-js-sdk/issues/7780
 
 // Feature flag for Firestore - set to true to enable
 const ENABLE_FIRESTORE = true
+
+// Lazy-loaded firestoreService reference
+let firestoreServiceInstance = null
+
+// Get firestoreService lazily
+async function getFirestoreService() {
+  if (firestoreServiceInstance) {
+    return firestoreServiceInstance
+  }
+
+  try {
+    const module = await import('../utils/firestoreService')
+    firestoreServiceInstance = module.default
+    console.log('🔥 AppContext: firestoreService loaded dynamically')
+    return firestoreServiceInstance
+  } catch (err) {
+    console.error('🔥 AppContext: Failed to load firestoreService:', err)
+    return null
+  }
+}
 
 const AppContext = createContext()
 
@@ -29,10 +52,10 @@ function appReducer(state, action) {
   switch (action.type) {
     case 'SET_LOADING':
       return { ...state, isLoading: action.payload }
-    
+
     case 'SET_ERROR':
       return { ...state, error: action.payload, isLoading: false }
-    
+
     case 'LOAD_DATA':
       console.log('🔍 LOAD_DATA REDUCER: Processing data load...')
       console.log('🔍 LOAD_DATA REDUCER: Payload:', {
@@ -58,7 +81,7 @@ function appReducer(state, action) {
       })
 
       return loadedState
-    
+
     case 'ADD_MEETING':
       // UUID must be provided - never generate inside reducer to avoid duplicates
       if (!action.payload.id) {
@@ -89,7 +112,7 @@ function appReducer(state, action) {
 
       console.log('🔥 ADD_MEETING REDUCER: New count:', newState.meetings.length)
       return newState
-    
+
     case 'UPDATE_MEETING':
       return {
         ...state,
@@ -102,7 +125,7 @@ function appReducer(state, action) {
           ? { ...state.currentMeeting, ...action.payload, updatedAt: new Date().toISOString() }
           : state.currentMeeting
       }
-    
+
     case 'DELETE_MEETING':
       const deletedMeeting = state.meetings.find(meeting => meeting.id === action.payload)
       return {
@@ -123,13 +146,13 @@ function appReducer(state, action) {
         ],
         currentMeeting: state.currentMeeting?.id === action.payload ? null : state.currentMeeting
       }
-    
+
     case 'SET_CURRENT_MEETING':
       return {
         ...state,
         currentMeeting: action.payload
       }
-    
+
     case 'ADD_STAKEHOLDER':
       const timestamp = new Date().toISOString()
       const newStakeholder = {
@@ -142,7 +165,7 @@ function appReducer(state, action) {
         ...state,
         stakeholders: [newStakeholder, ...state.stakeholders]
       }
-    
+
     case 'UPDATE_STAKEHOLDER':
       return {
         ...state,
@@ -152,7 +175,7 @@ function appReducer(state, action) {
             : stakeholder
         )
       }
-    
+
     case 'DELETE_STAKEHOLDER':
       const deletedStakeholder = state.stakeholders.find(stakeholder => stakeholder.id === action.payload)
       return {
@@ -280,7 +303,7 @@ function appReducer(state, action) {
         ...note,
         timestamp: new Date().toISOString()
       }
-      
+
       return {
         ...state,
         meetings: state.meetings.map(meeting =>
@@ -300,10 +323,10 @@ function appReducer(state, action) {
             }
           : state.currentMeeting
       }
-    
+
     case 'UPDATE_NOTE_IN_MEETING':
       const { meetingId: updateMeetingId, noteId, updatedNote } = action.payload
-      
+
       return {
         ...state,
         meetings: state.meetings.map(meeting =>
@@ -327,7 +350,7 @@ function appReducer(state, action) {
             }
           : state.currentMeeting
       }
-    
+
 
     case 'SET_N8N_SYNCING':
       return {
@@ -470,6 +493,7 @@ export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(appReducer, initialState)
   const saveTimeoutRef = useRef(null)
   const isLoadingRef = useRef(false)
+  const firestoreSetupRef = useRef(false)
 
   useEffect(() => {
     console.log('🚀 AppContext: Initial mount, checking localStorage before load:', {
@@ -610,7 +634,7 @@ export function AppProvider({ children }) {
       }
 
       console.log('📂 LOAD: After localStorage section, about to process meetings...')
-      
+
       // Deduplicate meetings before loading
       console.log('📂 LOAD: Raw meetings from storage:', meetings?.length || 0)
       const deduplicatedMeetings = deduplicateMeetings(meetings || [])
@@ -633,7 +657,7 @@ export function AppProvider({ children }) {
           deletedItems: deletedItems || []
         }
       })
-      
+
       // Skip n8n cache for now to avoid interference with core functionality
       console.log('🔄 LOAD: Skipping n8n cache to focus on core persistence')
     } catch (error) {
@@ -670,18 +694,34 @@ export function AppProvider({ children }) {
   // ==================== FIRESTORE REAL-TIME SYNC ====================
   // This subscribes to Firestore and MERGES data with local state
   // CRITICAL: We must NOT overwrite local data with empty Firestore results
+  // IMPORTANT: Firestore is loaded DYNAMICALLY to prevent iOS crashes
   useEffect(() => {
     if (!ENABLE_FIRESTORE) {
       console.log('🔥 Firestore: Disabled by feature flag')
       return
     }
 
+    // Prevent multiple setups
+    if (firestoreSetupRef.current) {
+      console.log('🔥 Firestore: Already setting up, skipping')
+      return
+    }
+    firestoreSetupRef.current = true
+
     // Wait a bit for initial localStorage load to complete before setting up subscriptions
     // This prevents race conditions where Firestore overwrites local data
-    const setupDelay = setTimeout(() => {
+    const setupDelay = setTimeout(async () => {
       console.log('🔥 Firestore: Setting up real-time subscriptions (after initial load)...')
 
       try {
+        // DYNAMIC IMPORT - Critical for iOS compatibility
+        const firestoreService = await getFirestoreService()
+
+        if (!firestoreService) {
+          console.log('🔥 Firestore: Service not available, skipping subscriptions')
+          return
+        }
+
         // Subscribe to meetings - MERGE with local, don't replace
         const unsubMeetings = firestoreService.subscribeMeetings((firestoreMeetings) => {
           try {
@@ -945,8 +985,11 @@ export function AppProvider({ children }) {
       // 3. Save to Firestore for cloud sync (await to ensure it completes)
       if (ENABLE_FIRESTORE) {
         try {
-          await firestoreService.saveMeeting(meetingWithId)
-          console.log('✅ AppContext: Meeting saved to Firestore:', meetingWithId.id)
+          const firestoreService = await getFirestoreService()
+          if (firestoreService) {
+            await firestoreService.saveMeeting(meetingWithId)
+            console.log('✅ AppContext: Meeting saved to Firestore:', meetingWithId.id)
+          }
           return { success: true, meeting: meetingWithId }
         } catch (err) {
           console.error('❌ AppContext: Failed to save to Firestore:', meetingWithId.id, err.message)
@@ -984,8 +1027,11 @@ export function AppProvider({ children }) {
       // 3. Save to Firestore for cloud sync
       if (ENABLE_FIRESTORE) {
         try {
-          await firestoreService.saveMeeting(updatedMeeting)
-          console.log('✅ AppContext: Meeting updated in Firestore:', updatedMeeting.id)
+          const firestoreService = await getFirestoreService()
+          if (firestoreService) {
+            await firestoreService.saveMeeting(updatedMeeting)
+            console.log('✅ AppContext: Meeting updated in Firestore:', updatedMeeting.id)
+          }
           return { success: true, meeting: updatedMeeting }
         } catch (err) {
           console.error('❌ AppContext: Failed to update Firestore:', updatedMeeting.id, err.message)
@@ -995,78 +1041,113 @@ export function AppProvider({ children }) {
 
       return { success: true, meeting: updatedMeeting }
     },
-    deleteMeeting: (meetingId) => {
+    deleteMeeting: async (meetingId) => {
       dispatch({ type: 'DELETE_MEETING', payload: meetingId })
       // Also delete from Firestore
       if (ENABLE_FIRESTORE) {
-        firestoreService.deleteMeeting(meetingId).catch(err => {
+        try {
+          const firestoreService = await getFirestoreService()
+          if (firestoreService) {
+            await firestoreService.deleteMeeting(meetingId)
+          }
+        } catch (err) {
           console.warn('🔥 Firestore: Failed to delete meeting:', meetingId, err.message)
-        })
+        }
       }
     },
     setCurrentMeeting: (meeting) => dispatch({ type: 'SET_CURRENT_MEETING', payload: meeting }),
-    
-    addStakeholder: (stakeholder) => {
+
+    addStakeholder: async (stakeholder) => {
       dispatch({ type: 'ADD_STAKEHOLDER', payload: stakeholder })
       // Save to Firestore for cloud sync
       if (ENABLE_FIRESTORE && stakeholder.id) {
-        firestoreService.saveStakeholder(stakeholder).catch(err => {
+        try {
+          const firestoreService = await getFirestoreService()
+          if (firestoreService) {
+            await firestoreService.saveStakeholder(stakeholder)
+          }
+        } catch (err) {
           console.warn('🔥 Firestore: Failed to save stakeholder:', stakeholder.id, err.message)
-        })
+        }
       }
     },
-    updateStakeholder: (stakeholder) => {
+    updateStakeholder: async (stakeholder) => {
       dispatch({ type: 'UPDATE_STAKEHOLDER', payload: stakeholder })
       // Save to Firestore for cloud sync
       if (ENABLE_FIRESTORE && stakeholder.id) {
-        firestoreService.saveStakeholder(stakeholder).catch(err => {
+        try {
+          const firestoreService = await getFirestoreService()
+          if (firestoreService) {
+            await firestoreService.saveStakeholder(stakeholder)
+          }
+        } catch (err) {
           console.warn('🔥 Firestore: Failed to update stakeholder:', stakeholder.id, err.message)
-        })
+        }
       }
     },
-    deleteStakeholder: (stakeholderId) => {
+    deleteStakeholder: async (stakeholderId) => {
       dispatch({ type: 'DELETE_STAKEHOLDER', payload: stakeholderId })
       // Also delete from Firestore
       if (ENABLE_FIRESTORE) {
-        firestoreService.deleteStakeholder(stakeholderId).catch(err => {
+        try {
+          const firestoreService = await getFirestoreService()
+          if (firestoreService) {
+            await firestoreService.deleteStakeholder(stakeholderId)
+          }
+        } catch (err) {
           console.warn('🔥 Firestore: Failed to delete stakeholder:', stakeholderId, err.message)
-        })
+        }
       }
     },
 
-    addStakeholderCategory: (category) => {
+    addStakeholderCategory: async (category) => {
       dispatch({ type: 'ADD_STAKEHOLDER_CATEGORY', payload: category })
       // Save to Firestore for cloud sync
       if (ENABLE_FIRESTORE && category.id) {
-        firestoreService.saveStakeholderCategory(category).catch(err => {
+        try {
+          const firestoreService = await getFirestoreService()
+          if (firestoreService) {
+            await firestoreService.saveStakeholderCategory(category)
+          }
+        } catch (err) {
           console.warn('🔥 Firestore: Failed to save category:', category.id, err.message)
-        })
+        }
       }
     },
-    updateStakeholderCategory: (category) => {
+    updateStakeholderCategory: async (category) => {
       dispatch({ type: 'UPDATE_STAKEHOLDER_CATEGORY', payload: category })
       // Save to Firestore for cloud sync
       if (ENABLE_FIRESTORE && category.id) {
-        firestoreService.saveStakeholderCategory(category).catch(err => {
+        try {
+          const firestoreService = await getFirestoreService()
+          if (firestoreService) {
+            await firestoreService.saveStakeholderCategory(category)
+          }
+        } catch (err) {
           console.warn('🔥 Firestore: Failed to update category:', category.id, err.message)
-        })
+        }
       }
     },
-    deleteStakeholderCategory: (categoryKey) => {
+    deleteStakeholderCategory: async (categoryKey) => {
       dispatch({ type: 'DELETE_STAKEHOLDER_CATEGORY', payload: categoryKey })
       // Also delete from Firestore
       if (ENABLE_FIRESTORE) {
-        firestoreService.deleteStakeholderCategory(categoryKey).catch(err => {
+        try {
+          const firestoreService = await getFirestoreService()
+          if (firestoreService) {
+            await firestoreService.deleteStakeholderCategory(categoryKey)
+          }
+        } catch (err) {
           console.warn('🔥 Firestore: Failed to delete category:', categoryKey, err.message)
-        })
+        }
       }
     },
     setStakeholderCategories: (categories) => dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: categories }),
 
     addNoteToMeeting: (meetingId, note) => dispatch({ type: 'ADD_NOTE_TO_MEETING', payload: { meetingId, note } }),
-    updateNoteInMeeting: (meetingId, noteId, updatedNote) => 
+    updateNoteInMeeting: (meetingId, noteId, updatedNote) =>
       dispatch({ type: 'UPDATE_NOTE_IN_MEETING', payload: { meetingId, noteId, updatedNote } }),
-    
+
     clearError: () => dispatch({ type: 'SET_ERROR', payload: null }),
 
     // Storage management

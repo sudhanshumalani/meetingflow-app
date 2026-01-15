@@ -18,9 +18,24 @@ import { useSyncContext } from '../contexts/SyncProvider'
 import SyncSetup from '../components/sync/SyncSetup'
 import SyncStatusIndicator from '../components/sync/SyncStatusIndicator'
 import SyncConflictResolver from '../components/sync/SyncConflictResolver'
-import firestoreService from '../utils/firestoreService'
+// IMPORTANT: firestoreService is NOT imported at module level for iOS compatibility
+// It is dynamically imported when needed
 import { Database, Upload, CheckCircle, Bug } from 'lucide-react'
 import FirebaseDebugPanel from '../components/FirebaseDebugPanel'
+
+// Lazy-load firestoreService
+let firestoreServiceInstance = null
+async function getFirestoreService() {
+  if (firestoreServiceInstance) return firestoreServiceInstance
+  try {
+    const module = await import('../utils/firestoreService')
+    firestoreServiceInstance = module.default
+    return firestoreServiceInstance
+  } catch (err) {
+    console.error('Failed to load firestoreService:', err)
+    return null
+  }
+}
 
 export default function Settings() {
   const navigate = useNavigate()
@@ -46,7 +61,16 @@ export default function Settings() {
   // Firestore import state
   const [firestoreImporting, setFirestoreImporting] = useState(false)
   const [firestoreImportResult, setFirestoreImportResult] = useState(null)
-  const [firestoreUserId, setFirestoreUserId] = useState(firestoreService.getUserId())
+  const [firestoreUserId, setFirestoreUserId] = useState('')
+
+  // Load firestoreService userId on mount
+  useEffect(() => {
+    getFirestoreService().then(service => {
+      if (service) {
+        setFirestoreUserId(service.getUserId())
+      }
+    })
+  }, [])
 
   // Initialize OCR API key on component mount
   useEffect(() => {
@@ -130,12 +154,22 @@ export default function Settings() {
         return
       }
 
+      // Get firestoreService dynamically
+      const firestoreService = await getFirestoreService()
+      if (!firestoreService) {
+        setFirestoreImportResult({
+          success: false,
+          message: 'Firestore service not available'
+        })
+        return
+      }
+
       // Import to Firestore
       const result = await firestoreService.importAllData(meetings, stakeholders, categories)
 
       setFirestoreImportResult({
         success: true,
-        message: `Successfully imported ${result.meetings} meetings, ${result.stakeholders} stakeholders, and ${result.categories} categories to Firestore!`
+        message: `Successfully imported ${result.imported || 0} items to Firestore!`
       })
 
       console.log('✅ Firestore import complete:', result)
@@ -151,9 +185,12 @@ export default function Settings() {
   }
 
   // Update userId when linking devices
-  const handleLinkDevice = (newUserId) => {
+  const handleLinkDevice = async (newUserId) => {
     if (newUserId && newUserId.trim()) {
-      firestoreService.setUserId(newUserId.trim())
+      const firestoreService = await getFirestoreService()
+      if (firestoreService) {
+        firestoreService.setUserId(newUserId.trim())
+      }
       setFirestoreUserId(newUserId.trim())
       // Reload the page to fetch data with new userId
       window.location.reload()

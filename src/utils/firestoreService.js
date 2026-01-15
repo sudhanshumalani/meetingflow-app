@@ -2,32 +2,28 @@
  * Firestore Service for Meetingflow App
  * Handles all database operations - saving, loading, deleting meetings
  *
- * CRITICAL: iOS Safari has severe bugs with Firestore that cause app crashes.
- * On iOS, this service is completely disabled and returns no-op functions.
- * The app uses localStorage only on iOS devices.
+ * iOS Strategy:
+ * - Uses memory cache instead of IndexedDB persistence
+ * - Real-time sync (onSnapshot) works on all platforms
+ * - Full Firestore functionality enabled everywhere
  *
  * References:
  * - https://github.com/firebase/firebase-js-sdk/issues/4076
- * - https://github.com/firebase/firebase-js-sdk/issues/2581
+ * - https://firebase.google.com/docs/firestore/manage-data/enable-offline
  */
 
 import { IS_IOS, initializeFirebase } from '../config/firebase'
 
-// Firestore module and db instance - loaded lazily on non-iOS only
+// Firestore module and db instance - loaded lazily
 let firestoreModule = null
 let db = null
 let isInitialized = false
 let initPromise = null
 
 /**
- * Lazy load Firestore - ONLY on non-iOS platforms
+ * Lazy load Firestore - works on ALL platforms (iOS uses memory cache)
  */
 async function ensureFirestoreLoaded() {
-  if (IS_IOS) {
-    console.log('📱 Firestore disabled on iOS')
-    return false
-  }
-
   if (isInitialized && db) {
     return true
   }
@@ -62,20 +58,17 @@ async function ensureFirestoreLoaded() {
 
 class FirestoreService {
   constructor() {
-    this.isAvailable = !IS_IOS
+    this.isAvailable = true // Firestore works on all platforms now
     this.listeners = []
+    this.userId = this.getOrCreateUserId()
 
     if (IS_IOS) {
-      console.log('📱 FirestoreService: iOS detected - Firestore DISABLED')
-      this.userId = null
-    } else {
-      this.userId = this.getOrCreateUserId()
-      console.log('FirestoreService created with userId:', this.userId)
+      console.log('📱 FirestoreService: iOS detected - using memory cache')
     }
+    console.log('FirestoreService created with userId:', this.userId)
   }
 
   getOrCreateUserId() {
-    if (IS_IOS) return null
     let userId = localStorage.getItem('meetingflow_firestore_user_id')
     if (!userId) {
       userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -86,7 +79,6 @@ class FirestoreService {
   }
 
   setUserId(newUserId) {
-    if (IS_IOS) return
     this.userId = newUserId
     localStorage.setItem('meetingflow_firestore_user_id', newUserId)
     console.log('Updated Firestore user ID to:', newUserId)
@@ -99,8 +91,6 @@ class FirestoreService {
   // ==================== MEETINGS ====================
 
   async saveMeeting(meeting) {
-    if (IS_IOS) return { success: false, reason: 'ios_disabled' }
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return { success: false, reason: 'firestore_unavailable' }
 
@@ -128,8 +118,6 @@ class FirestoreService {
   }
 
   async deleteMeeting(meetingId) {
-    if (IS_IOS) return { success: false, reason: 'ios_disabled' }
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return { success: false, reason: 'firestore_unavailable' }
 
@@ -151,8 +139,6 @@ class FirestoreService {
   }
 
   async getMeetings() {
-    if (IS_IOS) return []
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return []
 
@@ -184,11 +170,6 @@ class FirestoreService {
   }
 
   subscribeMeetings(callback) {
-    if (IS_IOS) {
-      console.log('📱 Skipping Firestore subscription on iOS')
-      return () => {}
-    }
-
     // Use async initialization inside
     ensureFirestoreLoaded().then(ready => {
       if (!ready) {
@@ -235,8 +216,6 @@ class FirestoreService {
   // ==================== STAKEHOLDERS ====================
 
   async saveStakeholder(stakeholder) {
-    if (IS_IOS) return { success: false, reason: 'ios_disabled' }
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return { success: false, reason: 'firestore_unavailable' }
 
@@ -260,8 +239,6 @@ class FirestoreService {
   }
 
   async deleteStakeholder(stakeholderId) {
-    if (IS_IOS) return { success: false, reason: 'ios_disabled' }
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return { success: false, reason: 'firestore_unavailable' }
 
@@ -280,8 +257,6 @@ class FirestoreService {
   }
 
   async getStakeholders() {
-    if (IS_IOS) return []
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return []
 
@@ -304,8 +279,6 @@ class FirestoreService {
   }
 
   subscribeStakeholders(callback) {
-    if (IS_IOS) return () => {}
-
     ensureFirestoreLoaded().then(ready => {
       if (!ready) return
 
@@ -335,8 +308,6 @@ class FirestoreService {
   // ==================== STAKEHOLDER CATEGORIES ====================
 
   async saveStakeholderCategory(category) {
-    if (IS_IOS) return { success: false, reason: 'ios_disabled' }
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return { success: false, reason: 'firestore_unavailable' }
 
@@ -358,8 +329,6 @@ class FirestoreService {
   }
 
   async deleteStakeholderCategory(categoryId) {
-    if (IS_IOS) return { success: false, reason: 'ios_disabled' }
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return { success: false, reason: 'firestore_unavailable' }
 
@@ -378,8 +347,6 @@ class FirestoreService {
   }
 
   async getStakeholderCategories() {
-    if (IS_IOS) return []
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return []
 
@@ -402,8 +369,6 @@ class FirestoreService {
   }
 
   subscribeStakeholderCategories(callback) {
-    if (IS_IOS) return () => {}
-
     ensureFirestoreLoaded().then(ready => {
       if (!ready) return
 
@@ -433,8 +398,6 @@ class FirestoreService {
   // ==================== BATCH IMPORT ====================
 
   async importAllData(meetings, stakeholders, categories) {
-    if (IS_IOS) return { success: false, reason: 'ios_disabled' }
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return { success: false, reason: 'firestore_unavailable' }
 
@@ -487,8 +450,6 @@ class FirestoreService {
   }
 
   async checkConnection() {
-    if (IS_IOS) return { connected: false, reason: 'ios_disabled' }
-
     const ready = await ensureFirestoreLoaded()
     if (!ready) return { connected: false, reason: 'firestore_unavailable' }
 

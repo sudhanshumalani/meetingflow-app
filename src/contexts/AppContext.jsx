@@ -201,12 +201,14 @@ function appReducer(state, action) {
       }
 
     case 'ADD_STAKEHOLDER':
-      const timestamp = new Date().toISOString()
+      // Stakeholder should already have id, createdAt, updatedAt from the action creator
+      // But handle legacy case where it might not
+      const newStakeholderTs = new Date().toISOString()
       const newStakeholder = {
-        id: uuidv4(),
+        id: action.payload.id || uuidv4(),
         ...action.payload,
-        createdAt: timestamp,
-        updatedAt: timestamp // Ensure all stakeholders have updatedAt from creation
+        createdAt: action.payload.createdAt || newStakeholderTs,
+        updatedAt: action.payload.updatedAt || newStakeholderTs
       }
       return {
         ...state,
@@ -244,11 +246,15 @@ function appReducer(state, action) {
       }
 
     case 'ADD_STAKEHOLDER_CATEGORY':
+      // Category should already have id, key, createdAt, updatedAt from the action creator
+      // But handle legacy case where it might not
+      const newCategoryTs = new Date().toISOString()
       const newCategory = {
+        id: action.payload.id || uuidv4(),
         key: action.payload.key || (action.payload.label || '').toLowerCase().replace(/\s+/g, '-'),
         ...action.payload,
-        id: uuidv4(),
-        createdAt: new Date().toISOString()
+        createdAt: action.payload.createdAt || newCategoryTs,
+        updatedAt: action.payload.updatedAt || newCategoryTs
       }
       return {
         ...state,
@@ -1105,16 +1111,25 @@ export function AppProvider({ children }) {
     setCurrentMeeting: (meeting) => dispatch({ type: 'SET_CURRENT_MEETING', payload: meeting }),
 
     addStakeholder: async (stakeholder) => {
-      dispatch({ type: 'ADD_STAKEHOLDER', payload: stakeholder })
+      // Generate ID before dispatch so we can save to Firestore with the same ID
+      const timestamp = new Date().toISOString()
+      const stakeholderWithId = {
+        id: uuidv4(),
+        ...stakeholder,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+      dispatch({ type: 'ADD_STAKEHOLDER', payload: stakeholderWithId })
       // Save to Firestore for cloud sync
-      if (ENABLE_FIRESTORE && stakeholder.id) {
+      if (ENABLE_FIRESTORE) {
         try {
           const firestoreService = await getFirestoreService()
           if (firestoreService) {
-            await firestoreService.saveStakeholder(stakeholder)
+            await firestoreService.saveStakeholder(stakeholderWithId)
+            console.log('🔥 Firestore: Saved new stakeholder:', stakeholderWithId.id)
           }
         } catch (err) {
-          console.warn('🔥 Firestore: Failed to save stakeholder:', stakeholder.id, err.message)
+          console.warn('🔥 Firestore: Failed to save stakeholder:', stakeholderWithId.id, err.message)
         }
       }
     },
@@ -1148,16 +1163,26 @@ export function AppProvider({ children }) {
     },
 
     addStakeholderCategory: async (category) => {
-      dispatch({ type: 'ADD_STAKEHOLDER_CATEGORY', payload: category })
+      // Generate ID before dispatch so we can save to Firestore with the same ID
+      const timestamp = new Date().toISOString()
+      const categoryWithId = {
+        id: uuidv4(),
+        key: category.key || (category.label || '').toLowerCase().replace(/\s+/g, '-'),
+        ...category,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+      dispatch({ type: 'ADD_STAKEHOLDER_CATEGORY', payload: categoryWithId })
       // Save to Firestore for cloud sync
-      if (ENABLE_FIRESTORE && category.id) {
+      if (ENABLE_FIRESTORE) {
         try {
           const firestoreService = await getFirestoreService()
           if (firestoreService) {
-            await firestoreService.saveStakeholderCategory(category)
+            await firestoreService.saveStakeholderCategory(categoryWithId)
+            console.log('🔥 Firestore: Saved new category:', categoryWithId.id)
           }
         } catch (err) {
-          console.warn('🔥 Firestore: Failed to save category:', category.id, err.message)
+          console.warn('🔥 Firestore: Failed to save category:', categoryWithId.id, err.message)
         }
       }
     },

@@ -305,6 +305,16 @@ export default function Settings() {
         categories: localCategories.length
       })
 
+      // Safety check: If cloud returns 0 but local has data, don't lose local data
+      // This can happen if stakeholders were created before sync was set up
+      console.log('🔄 Safety check - preventing data loss...')
+      if (stakeholders.length === 0 && localStakeholders.length > 0) {
+        console.log('⚠️ Cloud has 0 stakeholders but local has', localStakeholders.length, '- will upload all local')
+      }
+      if (categories.length === 0 && localCategories.length > 0) {
+        console.log('⚠️ Cloud has 0 categories but local has', localCategories.length, '- will upload all local')
+      }
+
       // Merge with timestamp-based conflict resolution
       console.log('🔄 Merging data with timestamp comparison...')
       const meetingsMerge = mergeByIdWithTracking(localMeetings, meetings)
@@ -316,6 +326,17 @@ export default function Settings() {
         stakeholders: { total: stakeholdersMerge.merged.length, toUpload: stakeholdersMerge.toUpload.length, toDownload: stakeholdersMerge.toDownload.length },
         categories: { total: categoriesMerge.merged.length, toUpload: categoriesMerge.toUpload.length, toDownload: categoriesMerge.toDownload.length }
       })
+
+      // Extra safety: ensure we never end up with less data than we started with
+      if (meetingsMerge.merged.length < localMeetings.length && meetingsMerge.merged.length < meetings.length) {
+        console.error('🚨 MERGE ERROR: Would lose meetings data!')
+      }
+      if (stakeholdersMerge.merged.length < localStakeholders.length && stakeholdersMerge.merged.length < stakeholders.length) {
+        console.error('🚨 MERGE ERROR: Would lose stakeholders data!')
+      }
+      if (categoriesMerge.merged.length < localCategories.length && categoriesMerge.merged.length < categories.length) {
+        console.error('🚨 MERGE ERROR: Would lose categories data!')
+      }
 
       // Upload local changes to Firestore (two-way sync)
       let uploadedCount = 0

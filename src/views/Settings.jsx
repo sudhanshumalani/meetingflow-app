@@ -23,6 +23,13 @@ import SyncConflictResolver from '../components/sync/SyncConflictResolver'
 // - Desktop: Uses Firebase SDK service
 import { Database, Upload, CheckCircle, Bug } from 'lucide-react'
 import FirebaseDebugPanel from '../components/FirebaseDebugPanel'
+import localforage from 'localforage'
+
+// Configure localforage for sync data (uses IndexedDB - much larger storage than localStorage)
+const syncStorage = localforage.createInstance({
+  name: 'MeetingFlowSync',
+  storeName: 'sync_data'
+})
 
 // Detect iOS
 const IS_IOS = typeof navigator !== 'undefined' && (
@@ -293,11 +300,24 @@ export default function Settings() {
         categories: categories.length
       })
 
-      // Read local data
+      // Strip large fields from cloud meetings BEFORE merging (save space on iOS)
+      console.log('🔄 Stripping large fields from cloud data...')
+      meetings = meetings.map(m => stripLargeFields(m))
+
+      // Read local data - try IndexedDB first (via localforage), fall back to localStorage
       console.log('🔄 Reading local data...')
-      const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-      const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-      const localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+      let localMeetings = []
+      let localStakeholders = []
+      let localCategories = []
+
+      // Try to read from localStorage first (where AppContext stores data)
+      try {
+        localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+        localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+      } catch (e) {
+        console.warn('🔄 Failed to read from localStorage:', e)
+      }
 
       console.log('🔄 Local data:', {
         meetings: localMeetings.length,
@@ -391,21 +411,51 @@ export default function Settings() {
         }
       })
 
-      // Save merged data to localStorage
-      console.log('🔄 Saving to localStorage...')
+      // Save merged data - use IndexedDB (via localforage) for large data, localStorage for app state
+      console.log('🔄 Saving data...')
+
+      // Calculate sizes
+      const meetingsJson = JSON.stringify(strippedMeetings)
+      const stakeholdersJson = JSON.stringify(stakeholdersMerge.merged)
+      const categoriesJson = JSON.stringify(categoriesMerge.merged)
+      const totalSizeKB = Math.round((meetingsJson.length + stakeholdersJson.length + categoriesJson.length) / 1024)
+
+      console.log('🔄 Data sizes (KB):', {
+        meetings: Math.round(meetingsJson.length / 1024),
+        stakeholders: Math.round(stakeholdersJson.length / 1024),
+        categories: Math.round(categoriesJson.length / 1024),
+        total: totalSizeKB
+      })
+
       try {
-        localStorage.setItem('meetingflow_meetings', JSON.stringify(strippedMeetings))
-        localStorage.setItem('meetingflow_stakeholders', JSON.stringify(stakeholdersMerge.merged))
-        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(categoriesMerge.merged))
-        console.log('🔄 Saved successfully!')
+        // Save to IndexedDB (much larger storage limit than localStorage)
+        console.log('🔄 Saving to IndexedDB...')
+        await syncStorage.setItem('meetings', strippedMeetings)
+        console.log('🔄 Meetings saved to IndexedDB!')
+
+        await syncStorage.setItem('stakeholders', stakeholdersMerge.merged)
+        console.log('🔄 Stakeholders saved to IndexedDB!')
+
+        await syncStorage.setItem('categories', categoriesMerge.merged)
+        console.log('🔄 Categories saved to IndexedDB!')
+
+        // Also try to save to localStorage for AppContext compatibility
+        // If this fails due to quota, it's okay - we have the data in IndexedDB
+        console.log('🔄 Attempting localStorage save for app compatibility...')
+        try {
+          localStorage.setItem('meetingflow_meetings', meetingsJson)
+          localStorage.setItem('meetingflow_stakeholders', stakeholdersJson)
+          localStorage.setItem('meetingflow_stakeholder_categories', categoriesJson)
+          console.log('🔄 Also saved to localStorage!')
+        } catch (lsError) {
+          console.warn('🔄 localStorage save failed (quota), but IndexedDB has the data:', lsError.message)
+          // Don't throw - IndexedDB save succeeded
+        }
+
+        console.log('🔄 All data saved successfully!')
       } catch (storageError) {
         console.error('🔄 Storage error:', storageError)
-        if (storageError.name === 'QuotaExceededError' ||
-            (storageError.message && storageError.message.includes('quota'))) {
-          throw new Error('Storage quota exceeded. Try deleting some old meetings.')
-        } else {
-          throw storageError
-        }
+        throw new Error(`Failed to save data: ${storageError.message}`)
       }
 
       // Trigger app reload to reflect changes

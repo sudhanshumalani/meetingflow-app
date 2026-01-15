@@ -187,13 +187,20 @@ export default function Settings() {
   // Update userId when linking devices
   const handleLinkDevice = async (newUserId) => {
     if (newUserId && newUserId.trim()) {
-      const firestoreService = await getFirestoreService()
-      if (firestoreService) {
-        firestoreService.setUserId(newUserId.trim())
+      try {
+        // Save to localStorage directly (no Firestore needed)
+        localStorage.setItem('meetingflow_firestore_user_id', newUserId.trim())
+        setFirestoreUserId(newUserId.trim())
+
+        // Show success message instead of reloading (iOS safe)
+        alert('Device ID saved! Please close and reopen the app to sync with the new device.')
+
+        // Don't reload - let user manually refresh when ready
+        // This avoids potential iOS crashes on reload
+      } catch (err) {
+        console.error('Failed to link device:', err)
+        alert('Failed to save device ID: ' + err.message)
       }
-      setFirestoreUserId(newUserId.trim())
-      // Reload the page to fetch data with new userId
-      window.location.reload()
     }
   }
 

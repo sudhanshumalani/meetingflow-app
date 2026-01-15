@@ -7,8 +7,22 @@ import n8nService from '../utils/n8nService'
 // It is dynamically imported when needed to prevent iOS Safari crashes
 // See: https://github.com/firebase/firebase-js-sdk/issues/7780
 
-// Feature flag for Firestore - set to true to enable
-const ENABLE_FIRESTORE = true
+// Detect iOS to potentially disable Firestore
+const IS_IOS = typeof navigator !== 'undefined' && (
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 0) ||
+  (typeof window !== 'undefined' && window.navigator?.standalone === true)
+)
+
+// Feature flag for Firestore
+// TEMPORARILY DISABLED ON iOS to diagnose crash
+const ENABLE_FIRESTORE = !IS_IOS
+
+if (IS_IOS) {
+  console.log('📱 iOS detected - Firestore DISABLED for diagnostic testing')
+} else {
+  console.log('💻 Non-iOS detected - Firestore enabled')
+}
 
 // Lazy-loaded firestoreService reference
 let firestoreServiceInstance = null

@@ -231,8 +231,8 @@ export default function Settings() {
     delete stripped.audioData
     delete stripped.audioUrl
     delete stripped.recordingBlob
-    // Keep transcript but limit size
-    if (stripped.transcript && stripped.transcript.length > 50000) {
+    // Keep transcript but limit size (only if it's a string)
+    if (stripped.transcript && typeof stripped.transcript === 'string' && stripped.transcript.length > 50000) {
       stripped.transcript = stripped.transcript.substring(0, 50000) + '... [truncated]'
     }
     // Remove large base64 images
@@ -333,7 +333,7 @@ export default function Settings() {
             date: m.date,
             stakeholderIds: m.stakeholderIds,
             categoryId: m.categoryId,
-            notes: m.notes?.substring(0, 5000), // Limit notes
+            notes: typeof m.notes === 'string' ? m.notes.substring(0, 5000) : m.notes, // Limit notes if string
             summary: m.summary,
             actionItems: m.actionItems,
             aiAnalysis: m.aiAnalysis,

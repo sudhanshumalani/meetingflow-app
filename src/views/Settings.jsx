@@ -18,6 +18,8 @@ import { useSyncContext } from '../contexts/SyncProvider'
 import SyncSetup from '../components/sync/SyncSetup'
 import SyncStatusIndicator from '../components/sync/SyncStatusIndicator'
 import SyncConflictResolver from '../components/sync/SyncConflictResolver'
+import firestoreService from '../utils/firestoreService'
+import { Database, Upload, CheckCircle } from 'lucide-react'
 
 export default function Settings() {
   const navigate = useNavigate()
@@ -39,6 +41,11 @@ export default function Settings() {
   const [claudeApiKey, setClaudeApiKey] = useState(localStorage.getItem('claudeApiKey') || '')
   const [claudeKeySaved, setClaudeKeySaved] = useState(false)
   const [capabilities, setCapabilities] = useState(getCapabilities())
+
+  // Firestore import state
+  const [firestoreImporting, setFirestoreImporting] = useState(false)
+  const [firestoreImportResult, setFirestoreImportResult] = useState(null)
+  const [firestoreUserId, setFirestoreUserId] = useState(firestoreService.getUserId())
 
   // Initialize OCR API key on component mount
   useEffect(() => {
@@ -97,6 +104,60 @@ export default function Settings() {
     setCapabilities(getCapabilities())
   }
 
+  // Firestore import function
+  const handleFirestoreImport = async () => {
+    setFirestoreImporting(true)
+    setFirestoreImportResult(null)
+
+    try {
+      // Get data from localStorage
+      const meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+      const stakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+      const categories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+
+      console.log('🔥 Starting Firestore import:', {
+        meetings: meetings.length,
+        stakeholders: stakeholders.length,
+        categories: categories.length
+      })
+
+      if (meetings.length === 0 && stakeholders.length === 0 && categories.length === 0) {
+        setFirestoreImportResult({
+          success: false,
+          message: 'No data to import. Your local storage is empty.'
+        })
+        return
+      }
+
+      // Import to Firestore
+      const result = await firestoreService.importAllData(meetings, stakeholders, categories)
+
+      setFirestoreImportResult({
+        success: true,
+        message: `Successfully imported ${result.meetings} meetings, ${result.stakeholders} stakeholders, and ${result.categories} categories to Firestore!`
+      })
+
+      console.log('✅ Firestore import complete:', result)
+    } catch (error) {
+      console.error('❌ Firestore import failed:', error)
+      setFirestoreImportResult({
+        success: false,
+        message: `Import failed: ${error.message}`
+      })
+    } finally {
+      setFirestoreImporting(false)
+    }
+  }
+
+  // Update userId when linking devices
+  const handleLinkDevice = (newUserId) => {
+    if (newUserId && newUserId.trim()) {
+      firestoreService.setUserId(newUserId.trim())
+      setFirestoreUserId(newUserId.trim())
+      // Reload the page to fetch data with new userId
+      window.location.reload()
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -200,6 +261,19 @@ export default function Settings() {
                     size={12}
                   />
                 )}
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('firestore')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'firestore'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4" />
+                Firestore Sync
               </div>
             </button>
           </nav>
@@ -793,6 +867,174 @@ export default function Settings() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Firestore Sync Tab */}
+        {activeTab === 'firestore' && (
+          <div className="space-y-6">
+            {/* Firestore Status Overview */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">Firestore Cloud Sync</h3>
+                  <p className="text-sm text-gray-600">Real-time sync across all your devices using Google Firestore</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                  <span className="text-sm font-medium text-gray-700">Connected</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-lg border-2 border-green-200 bg-green-50">
+                  <div className="flex items-center gap-3 mb-2">
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <h4 className="font-medium text-gray-900">Real-Time Sync</h4>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Changes sync instantly across all devices
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-lg border-2 border-green-200 bg-green-50">
+                  <div className="flex items-center gap-3 mb-2">
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <h4 className="font-medium text-gray-900">Offline Support</h4>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Works offline, syncs when back online
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Your Device ID */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Device ID</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                This ID links all your data together. Copy it to use on another device.
+              </p>
+
+              <div className="flex gap-3 items-center">
+                <div className="flex-1 p-3 bg-gray-100 rounded-lg font-mono text-sm break-all">
+                  {firestoreUserId}
+                </div>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(firestoreUserId)
+                    alert('Device ID copied to clipboard!')
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Copy
+                </button>
+              </div>
+
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-blue-800">
+                  <strong>To sync another device:</strong> Copy this ID, then paste it on your other device in the "Link Device" section below.
+                </p>
+              </div>
+            </div>
+
+            {/* Link Another Device */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Link Another Device</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                If you have a Device ID from another device, paste it here to sync with that device's data.
+              </p>
+
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  placeholder="Paste Device ID from another device"
+                  className="flex-1 p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleLinkDevice(e.target.value)
+                    }
+                  }}
+                  id="link-device-input"
+                />
+                <button
+                  onClick={() => {
+                    const input = document.getElementById('link-device-input')
+                    if (input.value.trim()) {
+                      if (confirm('This will replace your current data with data from the linked device. Continue?')) {
+                        handleLinkDevice(input.value)
+                      }
+                    }
+                  }}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                >
+                  Link Device
+                </button>
+              </div>
+            </div>
+
+            {/* Import Existing Data */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Import Local Data to Firestore</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                If you have existing meetings saved locally, click the button below to upload them to Firestore.
+                This is a one-time migration to move your data to the cloud.
+              </p>
+
+              {/* Import Result Message */}
+              {firestoreImportResult && (
+                <div className={`mb-4 p-4 rounded-lg ${firestoreImportResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                  <div className="flex items-center gap-2">
+                    {firestoreImportResult.success ? (
+                      <CheckCircle className="w-5 h-5 text-green-600" />
+                    ) : (
+                      <Info className="w-5 h-5 text-red-600" />
+                    )}
+                    <p className={`text-sm ${firestoreImportResult.success ? 'text-green-800' : 'text-red-800'}`}>
+                      {firestoreImportResult.message}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={handleFirestoreImport}
+                disabled={firestoreImporting}
+                className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-colors ${
+                  firestoreImporting
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-orange-600 hover:bg-orange-700 text-white'
+                }`}
+              >
+                {firestoreImporting ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                    Importing...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5" />
+                    Import Local Data to Firestore
+                  </>
+                )}
+              </button>
+
+              <p className="mt-3 text-xs text-gray-500">
+                Note: This will upload all your local meetings, stakeholders, and categories to Firestore.
+                Existing data in Firestore will be merged with your local data.
+              </p>
+            </div>
+
+            {/* How Firestore Sync Works */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h4 className="font-medium text-blue-900 mb-2">How Firestore Sync Works</h4>
+              <ul className="text-sm text-blue-800 space-y-1">
+                <li>• Data syncs automatically in real-time - no manual sync needed</li>
+                <li>• Works offline - changes sync when you're back online</li>
+                <li>• All devices with the same Device ID share the same data</li>
+                <li>• Deletions sync across devices too</li>
+              </ul>
+            </div>
           </div>
         )}
 

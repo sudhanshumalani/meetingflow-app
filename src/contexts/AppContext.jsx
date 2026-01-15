@@ -2,6 +2,10 @@ import { createContext, useContext, useReducer, useEffect, useRef, useCallback }
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
 import n8nService from '../utils/n8nService'
+import firestoreService from '../utils/firestoreService'
+
+// Feature flag for Firestore - set to true to enable
+const ENABLE_FIRESTORE = true
 
 const AppContext = createContext()
 
@@ -507,6 +511,31 @@ export function AppProvider({ children }) {
         meetingsSize: localStorage.getItem('meetingflow_meetings')?.length || 0,
         categoriesSize: localStorage.getItem('meetingflow_stakeholder_categories')?.length || 0
       })
+
+      // ==================== FIRESTORE SYNC ON SAVE ====================
+      // Also save to Firestore for cloud sync (non-blocking)
+      if (ENABLE_FIRESTORE) {
+        // Save meetings to Firestore (in background, don't wait)
+        state.meetings.forEach(meeting => {
+          firestoreService.saveMeeting(meeting).catch(err => {
+            console.warn('🔥 Firestore: Failed to save meeting:', meeting.id, err.message)
+          })
+        })
+
+        // Save stakeholders to Firestore
+        state.stakeholders.forEach(stakeholder => {
+          firestoreService.saveStakeholder(stakeholder).catch(err => {
+            console.warn('🔥 Firestore: Failed to save stakeholder:', stakeholder.id, err.message)
+          })
+        })
+
+        // Save categories to Firestore
+        state.stakeholderCategories.forEach(category => {
+          firestoreService.saveStakeholderCategory(category).catch(err => {
+            console.warn('🔥 Firestore: Failed to save category:', category.id, err.message)
+          })
+        })
+      }
     }
   }, [state.meetings, state.stakeholders, state.stakeholderCategories, state.deletedItems, state.isLoading])
 
@@ -659,6 +688,53 @@ export function AppProvider({ children }) {
     }
   }, [loadData])
 
+  // ==================== FIRESTORE REAL-TIME SYNC ====================
+  // This subscribes to Firestore and updates local state when data changes
+  useEffect(() => {
+    if (!ENABLE_FIRESTORE) {
+      console.log('🔥 Firestore: Disabled by feature flag')
+      return
+    }
+
+    console.log('🔥 Firestore: Setting up real-time subscriptions...')
+
+    // Subscribe to meetings - when Firestore data changes, update local state
+    const unsubMeetings = firestoreService.subscribeMeetings((firestoreMeetings) => {
+      console.log('🔥 Firestore: Received', firestoreMeetings.length, 'meetings')
+      if (firestoreMeetings.length > 0) {
+        dispatch({ type: 'SET_MEETINGS', payload: firestoreMeetings })
+        // Also save to localStorage for offline access
+        localStorage.setItem('meetingflow_meetings', JSON.stringify(firestoreMeetings))
+      }
+    })
+
+    // Subscribe to stakeholders
+    const unsubStakeholders = firestoreService.subscribeStakeholders((firestoreStakeholders) => {
+      console.log('🔥 Firestore: Received', firestoreStakeholders.length, 'stakeholders')
+      if (firestoreStakeholders.length > 0) {
+        dispatch({ type: 'SET_STAKEHOLDERS', payload: firestoreStakeholders })
+        localStorage.setItem('meetingflow_stakeholders', JSON.stringify(firestoreStakeholders))
+      }
+    })
+
+    // Subscribe to categories
+    const unsubCategories = firestoreService.subscribeStakeholderCategories((firestoreCategories) => {
+      console.log('🔥 Firestore: Received', firestoreCategories.length, 'categories')
+      if (firestoreCategories.length > 0) {
+        dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: firestoreCategories })
+        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(firestoreCategories))
+      }
+    })
+
+    // Cleanup subscriptions when component unmounts
+    return () => {
+      console.log('🔥 Firestore: Cleaning up subscriptions')
+      unsubMeetings()
+      unsubStakeholders()
+      unsubCategories()
+    }
+  }, []) // Empty deps - only run once on mount
+
   // saveData is now inline in debouncedSave to prevent stale closure issues
 
   // Helper function to merge stakeholders and avoid duplicates
@@ -777,16 +853,40 @@ export function AppProvider({ children }) {
 
       // Save will be triggered automatically by useEffect when state changes
     },
-    deleteMeeting: (meetingId) => dispatch({ type: 'DELETE_MEETING', payload: meetingId }),
+    deleteMeeting: (meetingId) => {
+      dispatch({ type: 'DELETE_MEETING', payload: meetingId })
+      // Also delete from Firestore
+      if (ENABLE_FIRESTORE) {
+        firestoreService.deleteMeeting(meetingId).catch(err => {
+          console.warn('🔥 Firestore: Failed to delete meeting:', meetingId, err.message)
+        })
+      }
+    },
     setCurrentMeeting: (meeting) => dispatch({ type: 'SET_CURRENT_MEETING', payload: meeting }),
     
     addStakeholder: (stakeholder) => dispatch({ type: 'ADD_STAKEHOLDER', payload: stakeholder }),
     updateStakeholder: (stakeholder) => dispatch({ type: 'UPDATE_STAKEHOLDER', payload: stakeholder }),
-    deleteStakeholder: (stakeholderId) => dispatch({ type: 'DELETE_STAKEHOLDER', payload: stakeholderId }),
+    deleteStakeholder: (stakeholderId) => {
+      dispatch({ type: 'DELETE_STAKEHOLDER', payload: stakeholderId })
+      // Also delete from Firestore
+      if (ENABLE_FIRESTORE) {
+        firestoreService.deleteStakeholder(stakeholderId).catch(err => {
+          console.warn('🔥 Firestore: Failed to delete stakeholder:', stakeholderId, err.message)
+        })
+      }
+    },
 
     addStakeholderCategory: (category) => dispatch({ type: 'ADD_STAKEHOLDER_CATEGORY', payload: category }),
     updateStakeholderCategory: (category) => dispatch({ type: 'UPDATE_STAKEHOLDER_CATEGORY', payload: category }),
-    deleteStakeholderCategory: (categoryKey) => dispatch({ type: 'DELETE_STAKEHOLDER_CATEGORY', payload: categoryKey }),
+    deleteStakeholderCategory: (categoryKey) => {
+      dispatch({ type: 'DELETE_STAKEHOLDER_CATEGORY', payload: categoryKey })
+      // Also delete from Firestore
+      if (ENABLE_FIRESTORE) {
+        firestoreService.deleteStakeholderCategory(categoryKey).catch(err => {
+          console.warn('🔥 Firestore: Failed to delete category:', categoryKey, err.message)
+        })
+      }
+    },
     setStakeholderCategories: (categories) => dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: categories }),
 
     addNoteToMeeting: (meetingId, note) => dispatch({ type: 'ADD_NOTE_TO_MEETING', payload: { meetingId, note } }),

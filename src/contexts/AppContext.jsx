@@ -3,40 +3,48 @@ import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
 import n8nService from '../utils/n8nService'
 
-// IMPORTANT: firestoreService is NOT imported at module level for iOS compatibility
-// It is dynamically imported when needed to prevent iOS Safari crashes
+// IMPORTANT: Firestore services are loaded based on platform
+// - iOS: Uses REST API service (firestoreRestService) - works on iOS Safari
+// - Desktop: Uses Firebase SDK service (firestoreService) - has real-time sync
 // See: https://github.com/firebase/firebase-js-sdk/issues/7780
 
-// Detect iOS to potentially disable Firestore
+// Detect iOS
 const IS_IOS = typeof navigator !== 'undefined' && (
   /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 0) ||
   (typeof window !== 'undefined' && window.navigator?.standalone === true)
 )
 
-// Feature flag for Firestore
-// TEMPORARILY DISABLED ON iOS to diagnose crash
-const ENABLE_FIRESTORE = !IS_IOS
+// Feature flag for Firestore - enabled on all platforms now
+const ENABLE_FIRESTORE = true
 
 if (IS_IOS) {
-  console.log('📱 iOS detected - Firestore DISABLED for diagnostic testing')
+  console.log('📱 iOS detected - Using Firestore REST API (iOS-safe)')
 } else {
-  console.log('💻 Non-iOS detected - Firestore enabled')
+  console.log('💻 Desktop detected - Using Firestore SDK (real-time sync)')
 }
 
 // Lazy-loaded firestoreService reference
 let firestoreServiceInstance = null
 
-// Get firestoreService lazily
+// Get firestoreService lazily - uses REST API on iOS, SDK on desktop
 async function getFirestoreService() {
   if (firestoreServiceInstance) {
     return firestoreServiceInstance
   }
 
   try {
-    const module = await import('../utils/firestoreService')
-    firestoreServiceInstance = module.default
-    console.log('🔥 AppContext: firestoreService loaded dynamically')
+    if (IS_IOS) {
+      // iOS: Use REST API service (no SDK crashes)
+      const module = await import('../utils/firestoreRestService')
+      firestoreServiceInstance = module.default
+      console.log('🔥 AppContext: firestoreRestService loaded (iOS REST API)')
+    } else {
+      // Desktop: Use SDK service (real-time sync)
+      const module = await import('../utils/firestoreService')
+      firestoreServiceInstance = module.default
+      console.log('🔥 AppContext: firestoreService loaded (SDK)')
+    }
     return firestoreServiceInstance
   } catch (err) {
     console.error('🔥 AppContext: Failed to load firestoreService:', err)

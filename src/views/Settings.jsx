@@ -18,18 +18,33 @@ import { useSyncContext } from '../contexts/SyncProvider'
 import SyncSetup from '../components/sync/SyncSetup'
 import SyncStatusIndicator from '../components/sync/SyncStatusIndicator'
 import SyncConflictResolver from '../components/sync/SyncConflictResolver'
-// IMPORTANT: firestoreService is NOT imported at module level for iOS compatibility
-// It is dynamically imported when needed
+// IMPORTANT: Firestore service is loaded based on platform
+// - iOS: Uses REST API service (works on iOS Safari)
+// - Desktop: Uses Firebase SDK service
 import { Database, Upload, CheckCircle, Bug } from 'lucide-react'
 import FirebaseDebugPanel from '../components/FirebaseDebugPanel'
 
-// Lazy-load firestoreService
+// Detect iOS
+const IS_IOS = typeof navigator !== 'undefined' && (
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 0) ||
+  (typeof window !== 'undefined' && window.navigator?.standalone === true)
+)
+
+// Lazy-load firestoreService - uses REST API on iOS, SDK on desktop
 let firestoreServiceInstance = null
 async function getFirestoreService() {
   if (firestoreServiceInstance) return firestoreServiceInstance
   try {
-    const module = await import('../utils/firestoreService')
-    firestoreServiceInstance = module.default
+    if (IS_IOS) {
+      const module = await import('../utils/firestoreRestService')
+      firestoreServiceInstance = module.default
+      console.log('📱 Settings: Using REST API service (iOS)')
+    } else {
+      const module = await import('../utils/firestoreService')
+      firestoreServiceInstance = module.default
+      console.log('💻 Settings: Using SDK service (Desktop)')
+    }
     return firestoreServiceInstance
   } catch (err) {
     console.error('Failed to load firestoreService:', err)

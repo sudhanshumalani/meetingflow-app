@@ -7,6 +7,13 @@
 import React, { useState, useEffect } from 'react'
 import { Bug, RefreshCw, Clipboard, CheckCircle, XCircle, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
 
+// Detect iOS
+const IS_IOS = typeof navigator !== 'undefined' && (
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 0) ||
+  (typeof window !== 'undefined' && window.navigator?.standalone === true)
+)
+
 export default function FirebaseDebugPanel() {
   const [firebaseStatus, setFirebaseStatus] = useState(null)
   const [firestoreStatus, setFirestoreStatus] = useState(null)
@@ -16,31 +23,55 @@ export default function FirebaseDebugPanel() {
   const [copied, setCopied] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [testing, setTesting] = useState(false)
+  const [serviceType, setServiceType] = useState(IS_IOS ? 'REST API' : 'SDK')
 
   const loadDebugInfo = async () => {
     try {
-      // Import debug functions lazily
-      const firebaseModule = await import('../config/firebase')
-      const firestoreModule = await import('../utils/firestoreService')
+      if (IS_IOS) {
+        // iOS: Load REST service debug info
+        const firestoreRestModule = await import('../utils/firestoreRestService')
 
-      // Get Firebase status
-      if (firebaseModule.getFirebaseStatus) {
-        setFirebaseStatus(firebaseModule.getFirebaseStatus())
-      }
+        // Get REST service status
+        if (firestoreRestModule.default?.getStatus) {
+          setFirestoreStatus(firestoreRestModule.default.getStatus())
+        }
 
-      // Get Firebase logs
-      if (firebaseModule.getFirebaseDebugLogs) {
-        setFirebaseLogs(firebaseModule.getFirebaseDebugLogs())
-      }
+        // Get REST service logs
+        if (firestoreRestModule.getFirestoreRestDebugLogs) {
+          setFirestoreLogs(firestoreRestModule.getFirestoreRestDebugLogs())
+        }
 
-      // Get Firestore status
-      if (firestoreModule.default?.getStatus) {
-        setFirestoreStatus(firestoreModule.default.getStatus())
-      }
+        // No Firebase SDK logs on iOS
+        setFirebaseStatus({ isIOS: true, usingRestApi: true })
+        setFirebaseLogs([{
+          timestamp: new Date().toISOString(),
+          message: 'iOS detected - Using REST API (no Firebase SDK)',
+          type: 'info'
+        }])
+      } else {
+        // Desktop: Load SDK debug info
+        const firebaseModule = await import('../config/firebase')
+        const firestoreModule = await import('../utils/firestoreService')
 
-      // Get Firestore logs
-      if (firestoreModule.getFirestoreDebugLogs) {
-        setFirestoreLogs(firestoreModule.getFirestoreDebugLogs())
+        // Get Firebase status
+        if (firebaseModule.getFirebaseStatus) {
+          setFirebaseStatus(firebaseModule.getFirebaseStatus())
+        }
+
+        // Get Firebase logs
+        if (firebaseModule.getFirebaseDebugLogs) {
+          setFirebaseLogs(firebaseModule.getFirebaseDebugLogs())
+        }
+
+        // Get Firestore status
+        if (firestoreModule.default?.getStatus) {
+          setFirestoreStatus(firestoreModule.default.getStatus())
+        }
+
+        // Get Firestore logs
+        if (firestoreModule.getFirestoreDebugLogs) {
+          setFirestoreLogs(firestoreModule.getFirestoreDebugLogs())
+        }
       }
     } catch (err) {
       console.error('Error loading debug info:', err)
@@ -61,7 +92,12 @@ export default function FirebaseDebugPanel() {
     setTestResult(null)
 
     try {
-      const firestoreModule = await import('../utils/firestoreService')
+      let firestoreModule
+      if (IS_IOS) {
+        firestoreModule = await import('../utils/firestoreRestService')
+      } else {
+        firestoreModule = await import('../utils/firestoreService')
+      }
       const result = await firestoreModule.default.checkConnection()
       setTestResult(result)
     } catch (err) {
@@ -152,16 +188,16 @@ export default function FirebaseDebugPanel() {
           {/* Quick Status */}
           <div className="flex flex-wrap gap-2">
             <StatusBadge
-              status={firebaseStatus?.isInitialized ? 'success' : 'error'}
-              label={firebaseStatus?.isInitialized ? 'Firebase OK' : 'Firebase Not Init'}
+              status={IS_IOS ? 'info' : (firebaseStatus?.isInitialized ? 'success' : 'error')}
+              label={IS_IOS ? 'REST API' : (firebaseStatus?.isInitialized ? 'SDK OK' : 'SDK Not Init')}
             />
             <StatusBadge
-              status={firestoreStatus?.isInitialized ? 'success' : 'error'}
-              label={firestoreStatus?.isInitialized ? 'Firestore OK' : 'Firestore Not Init'}
+              status={firestoreStatus?.isAvailable || firestoreStatus?.isInitialized ? 'success' : 'warning'}
+              label={firestoreStatus?.isAvailable || firestoreStatus?.isInitialized ? 'Firestore OK' : 'Firestore Loading'}
             />
             <StatusBadge
-              status={firebaseStatus?.isIOS ? 'warning' : 'info'}
-              label={firebaseStatus?.isIOS ? 'iOS Device' : 'Non-iOS'}
+              status={IS_IOS ? 'warning' : 'info'}
+              label={IS_IOS ? 'iOS Device' : 'Desktop'}
             />
             {firebaseStatus?.hasError && (
               <StatusBadge status="error" label="Has Errors" />

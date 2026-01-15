@@ -1,11 +1,17 @@
 /**
  * SyncProvider - Cross-device sync integration for AppContext
  * Wraps the app with sync capabilities and handles sync state management
+ *
+ * NOTE: When ENABLE_FIRESTORE is true, Google Drive sync is disabled
+ * to prevent conflicts. Use the Firestore Sync tab in Settings instead.
  */
 
 import { createContext, useContext, useEffect, useCallback } from 'react'
 import { useApp } from './AppContext'
 import useSync from '../hooks/useSync'
+
+// Feature flag - when Firestore is enabled, disable Google Drive sync
+const ENABLE_FIRESTORE = true
 
 const SyncContext = createContext()
 
@@ -17,6 +23,11 @@ export function SyncProvider({ children }) {
    * Sync app data to cloud when data changes
    */
   const handleDataChange = useCallback(async () => {
+    // Skip Google Drive sync when Firestore is enabled
+    if (ENABLE_FIRESTORE) {
+      return
+    }
+
     // Only sync if sync is configured and we have data
     if (!sync.isConfigured || !sync.canSync) {
       return
@@ -83,6 +94,11 @@ export function SyncProvider({ children }) {
    * Critical: Ensures deletions are synced immediately without waiting
    */
   useEffect(() => {
+    // Skip Google Drive sync when Firestore is enabled
+    if (ENABLE_FIRESTORE) {
+      return
+    }
+
     // Skip if not configured or offline
     if (!sync.isConfigured || !sync.canSync) {
       console.log('⏸️ Deletion sync skipped - sync not configured or offline')
@@ -125,6 +141,11 @@ export function SyncProvider({ children }) {
    * Ensures pending deletions are synced before user closes the app
    */
   useEffect(() => {
+    // Skip Google Drive sync when Firestore is enabled
+    if (ENABLE_FIRESTORE) {
+      return
+    }
+
     const handleBeforeUnload = async (e) => {
       if (app.deletedItems.length > 0 && sync.canSync) {
         console.log('⚠️ APP CLOSING WITH PENDING DELETIONS - forcing emergency sync')

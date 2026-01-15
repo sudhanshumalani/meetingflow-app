@@ -21,6 +21,15 @@ import { db } from '../config/firebase'
 
 class FirestoreService {
   constructor() {
+    // Check if Firestore is available
+    this.isAvailable = !!db
+    if (!this.isAvailable) {
+      console.warn('⚠️ FirestoreService: Firestore not available, running in offline-only mode')
+      this.userId = null
+      this.listeners = []
+      return
+    }
+
     // Generate or retrieve a unique ID for this device/user
     this.userId = this.getOrCreateUserId()
     this.listeners = []
@@ -57,6 +66,12 @@ class FirestoreService {
    * Save a meeting to Firestore
    */
   async saveMeeting(meeting) {
+    // Skip if Firestore not available
+    if (!this.isAvailable) {
+      console.log('⏭️ Firestore unavailable, skipping cloud save for meeting:', meeting.id)
+      return { success: false, reason: 'firestore_unavailable' }
+    }
+
     try {
       // Validate meeting has an ID
       if (!meeting.id) {
@@ -138,6 +153,12 @@ class FirestoreService {
    * This is the magic - changes appear instantly on all devices!
    */
   subscribeMeetings(callback) {
+    // Skip if Firestore not available
+    if (!this.isAvailable) {
+      console.log('⏭️ Firestore unavailable, skipping meeting subscription')
+      return () => {} // Return no-op unsubscribe
+    }
+
     try {
       const q = query(
         collection(db, 'meetings'),
@@ -248,6 +269,12 @@ class FirestoreService {
   }
 
   subscribeStakeholders(callback) {
+    // Skip if Firestore not available
+    if (!this.isAvailable) {
+      console.log('⏭️ Firestore unavailable, skipping stakeholder subscription')
+      return () => {}
+    }
+
     try {
       const q = query(
         collection(db, 'stakeholders'),
@@ -356,6 +383,12 @@ class FirestoreService {
   }
 
   subscribeStakeholderCategories(callback) {
+    // Skip if Firestore not available
+    if (!this.isAvailable) {
+      console.log('⏭️ Firestore unavailable, skipping category subscription')
+      return () => {}
+    }
+
     try {
       const q = query(
         collection(db, 'stakeholderCategories'),
@@ -512,5 +545,35 @@ class FirestoreService {
 }
 
 // Create a single instance to use throughout the app
-const firestoreService = new FirestoreService()
+// Wrapped in try-catch to prevent app crashes on initialization
+let firestoreService
+try {
+  firestoreService = new FirestoreService()
+} catch (error) {
+  console.error('❌ Failed to create FirestoreService:', error)
+  // Create a dummy service that does nothing
+  firestoreService = {
+    isAvailable: false,
+    userId: null,
+    listeners: [],
+    saveMeeting: async () => ({ success: false, reason: 'service_unavailable' }),
+    deleteMeeting: async () => ({ success: false }),
+    getMeetings: async () => [],
+    subscribeMeetings: () => () => {},
+    saveStakeholder: async () => ({ success: false }),
+    deleteStakeholder: async () => ({ success: false }),
+    getStakeholders: async () => [],
+    subscribeStakeholders: () => () => {},
+    saveStakeholderCategory: async () => ({ success: false }),
+    deleteStakeholderCategory: async () => ({ success: false }),
+    getStakeholderCategories: async () => [],
+    subscribeStakeholderCategories: () => () => {},
+    importAllData: async () => ({ success: false }),
+    cleanup: () => {},
+    checkConnection: async () => ({ connected: false }),
+    getUserId: () => null,
+    setUserId: () => {},
+    getOrCreateUserId: () => null
+  }
+}
 export default firestoreService

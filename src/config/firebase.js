@@ -17,27 +17,35 @@ const firebaseConfig = {
   measurementId: "G-RYV2L2BJ8B"
 }
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig)
+let app = null
+let db = null
 
-// Initialize Firestore (the database)
-const db = getFirestore(app)
+try {
+  // Initialize Firebase
+  app = initializeApp(firebaseConfig)
 
-// Enable offline support - your app works even without internet!
-enableIndexedDbPersistence(db)
-  .then(() => {
-    console.log('Firestore offline persistence enabled')
-  })
-  .catch((err) => {
-    if (err.code === 'failed-precondition') {
-      // Multiple tabs open - only one can have persistence
-      console.warn('Firestore persistence unavailable - multiple tabs open')
-    } else if (err.code === 'unimplemented') {
-      // Browser doesn't support persistence
-      console.warn('Firestore persistence not supported in this browser')
-    } else {
-      console.error('Firestore persistence error:', err)
-    }
-  })
+  // Initialize Firestore (the database)
+  db = getFirestore(app)
+
+  // Enable offline support - your app works even without internet!
+  enableIndexedDbPersistence(db)
+    .then(() => {
+      console.log('Firestore offline persistence enabled')
+    })
+    .catch((err) => {
+      if (err.code === 'failed-precondition') {
+        // Multiple tabs open - only one can have persistence
+        console.warn('Firestore persistence unavailable - multiple tabs open')
+      } else if (err.code === 'unimplemented') {
+        // Browser doesn't support persistence
+        console.warn('Firestore persistence not supported in this browser')
+      } else {
+        console.error('Firestore persistence error:', err)
+      }
+    })
+} catch (error) {
+  console.error('❌ Firebase initialization failed:', error)
+  // App will continue without Firestore - localStorage will still work
+}
 
 export { db, app }

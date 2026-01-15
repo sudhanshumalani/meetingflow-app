@@ -59,12 +59,23 @@ const AudioRecorderSimple = ({
 
   // Check if AssemblyAI is configured on mount
   useEffect(() => {
-    checkPermissions()
+    // Wrap all initialization in try-catch to prevent crashes
+    const initializeComponent = async () => {
+      try {
+        await checkPermissions()
+      } catch (err) {
+        console.warn('Failed to check permissions:', err)
+      }
 
-    // Cleanup orphaned sessions on mount
-    StreamingAudioBuffer.cleanupOrphanedSessions().catch(err => {
-      console.warn('Failed to cleanup orphaned sessions:', err)
-    })
+      // Cleanup orphaned sessions on mount (non-blocking, fire-and-forget)
+      try {
+        await StreamingAudioBuffer.cleanupOrphanedSessions()
+      } catch (err) {
+        console.warn('Failed to cleanup orphaned sessions:', err)
+      }
+    }
+
+    initializeComponent()
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)

@@ -10,18 +10,23 @@ import localforage from 'localforage'
 class StreamingAudioBuffer {
   constructor() {
     // Create separate IndexedDB instance for audio chunks
+    // Include fallback drivers for mobile compatibility
     this.db = localforage.createInstance({
       name: 'MeetingFlow',
       storeName: 'audio_chunks',
-      driver: [localforage.INDEXEDDB]
+      driver: [localforage.INDEXEDDB, localforage.WEBSQL, localforage.LOCALSTORAGE]
     })
 
     // Session-level audio metadata
     this.sessionDb = localforage.createInstance({
       name: 'MeetingFlow',
       storeName: 'audio_sessions',
-      driver: [localforage.INDEXEDDB]
+      driver: [localforage.INDEXEDDB, localforage.WEBSQL, localforage.LOCALSTORAGE]
     })
+
+    // Track initialization status
+    this.initialized = false
+    this.initPromise = null
 
     this.currentSessionId = null
     this.chunkBuffer = []
@@ -30,33 +35,84 @@ class StreamingAudioBuffer {
   }
 
   /**
+   * Ensure databases are ready before use
+   * @returns {Promise<boolean>} True if initialized successfully
+   */
+  async ensureInitialized() {
+    if (this.initialized) return true
+
+    if (this.initPromise) {
+      return this.initPromise
+    }
+
+    this.initPromise = (async () => {
+      try {
+        // Force driver initialization by calling ready() on both instances
+        await Promise.all([
+          this.db.ready(),
+          this.sessionDb.ready()
+        ])
+        this.initialized = true
+        console.log('✅ StreamingAudioBuffer initialized successfully')
+        return true
+      } catch (error) {
+        console.error('❌ Failed to initialize StreamingAudioBuffer:', error)
+        this.initialized = false
+        return false
+      }
+    })()
+
+    return this.initPromise
+  }
+
+  /**
    * Initialize a new audio recording session
    * @param {Object} options - Session configuration
    * @returns {string} sessionId
    */
   async startSession(options = {}) {
-    const sessionId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    try {
+      // Ensure database is ready before starting session
+      const isReady = await this.ensureInitialized()
 
-    const sessionMetadata = {
-      sessionId,
-      startTime: Date.now(),
-      audioSource: options.audioSource || 'unknown',
-      mimeType: options.mimeType || 'audio/webm',
-      sampleRate: options.sampleRate || 16000,
-      chunkCount: 0,
-      totalBytes: 0,
-      lastUpdateTime: Date.now(),
-      isActive: true,
-      uploadStatus: 'pending', // pending | uploading | completed | failed
-      assemblyAITranscriptId: null
+      const sessionId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+
+      // If DB not ready, return session ID but skip persistence
+      if (!isReady) {
+        console.warn('⚠️ StreamingAudioBuffer not initialized, session will not be persisted')
+        this.currentSessionId = sessionId
+        this.totalBytesBuffered = 0
+        return sessionId
+      }
+
+      const sessionMetadata = {
+        sessionId,
+        startTime: Date.now(),
+        audioSource: options.audioSource || 'unknown',
+        mimeType: options.mimeType || 'audio/webm',
+        sampleRate: options.sampleRate || 16000,
+        chunkCount: 0,
+        totalBytes: 0,
+        lastUpdateTime: Date.now(),
+        isActive: true,
+        uploadStatus: 'pending', // pending | uploading | completed | failed
+        assemblyAITranscriptId: null
+      }
+
+      await this.sessionDb.setItem(sessionId, sessionMetadata)
+      this.currentSessionId = sessionId
+      this.totalBytesBuffered = 0
+
+      console.log(`🎙️ Started audio buffer session: ${sessionId}`)
+      return sessionId
+    } catch (error) {
+      console.error('❌ Error starting audio buffer session:', error)
+      // Return a session ID anyway so recording can proceed
+      const fallbackSessionId = `audio_${Date.now()}_fallback`
+      this.currentSessionId = fallbackSessionId
+      this.totalBytesBuffered = 0
+      return fallbackSessionId
     }
-
-    await this.sessionDb.setItem(sessionId, sessionMetadata)
-    this.currentSessionId = sessionId
-    this.totalBytesBuffered = 0
-
-    console.log(`🎙️ Started audio buffer session: ${sessionId}`)
-    return sessionId
   }
 
   /**
@@ -71,21 +127,30 @@ class StreamingAudioBuffer {
       return
     }
 
-    const chunk = {
-      sessionId,
-      chunkIndex,
-      blob: chunkBlob,
-      size: chunkBlob.size,
-      timestamp: Date.now(),
-      mimeType: chunkBlob.type
+    // Skip storage if not initialized (recording will still work in memory)
+    if (!this.initialized) {
+      return
     }
 
-    this.chunkBuffer.push(chunk)
-    this.totalBytesBuffered += chunkBlob.size
+    try {
+      const chunk = {
+        sessionId,
+        chunkIndex,
+        blob: chunkBlob,
+        size: chunkBlob.size,
+        timestamp: Date.now(),
+        mimeType: chunkBlob.type
+      }
 
-    // Flush buffer if size threshold reached
-    if (this.chunkBuffer.length >= this.bufferSize) {
-      await this.flushChunkBuffer()
+      this.chunkBuffer.push(chunk)
+      this.totalBytesBuffered += chunkBlob.size
+
+      // Flush buffer if size threshold reached
+      if (this.chunkBuffer.length >= this.bufferSize) {
+        await this.flushChunkBuffer()
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to store chunk (non-fatal):', error)
     }
   }
 
@@ -94,6 +159,13 @@ class StreamingAudioBuffer {
    */
   async flushChunkBuffer() {
     if (this.chunkBuffer.length === 0) return
+
+    // Skip if not initialized
+    if (!this.initialized) {
+      this.chunkBuffer = []
+      this.totalBytesBuffered = 0
+      return
+    }
 
     try {
       // Write all buffered chunks
@@ -128,22 +200,37 @@ class StreamingAudioBuffer {
    * @param {Object} finalStatus - Final status info
    */
   async completeSession(sessionId, finalStatus = {}) {
-    // Flush any remaining chunks
-    await this.flushChunkBuffer()
+    try {
+      // Flush any remaining chunks
+      await this.flushChunkBuffer()
 
-    // Update session metadata
-    const session = await this.sessionDb.getItem(sessionId)
-    if (session) {
-      session.isActive = false
-      session.completedTime = Date.now()
-      session.uploadStatus = finalStatus.uploadStatus || session.uploadStatus
-      session.assemblyAITranscriptId = finalStatus.assemblyAITranscriptId || session.assemblyAITranscriptId
-      await this.sessionDb.setItem(sessionId, session)
-      console.log(`✅ Completed audio buffer session: ${sessionId}`)
-    }
+      // Skip metadata update if not initialized
+      if (!this.initialized) {
+        if (this.currentSessionId === sessionId) {
+          this.currentSessionId = null
+        }
+        return
+      }
 
-    if (this.currentSessionId === sessionId) {
-      this.currentSessionId = null
+      // Update session metadata
+      const session = await this.sessionDb.getItem(sessionId)
+      if (session) {
+        session.isActive = false
+        session.completedTime = Date.now()
+        session.uploadStatus = finalStatus.uploadStatus || session.uploadStatus
+        session.assemblyAITranscriptId = finalStatus.assemblyAITranscriptId || session.assemblyAITranscriptId
+        await this.sessionDb.setItem(sessionId, session)
+        console.log(`✅ Completed audio buffer session: ${sessionId}`)
+      }
+
+      if (this.currentSessionId === sessionId) {
+        this.currentSessionId = null
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to complete session (non-fatal):', error)
+      if (this.currentSessionId === sessionId) {
+        this.currentSessionId = null
+      }
     }
   }
 
@@ -219,13 +306,19 @@ class StreamingAudioBuffer {
    * @param {string} transcriptId - AssemblyAI transcript ID
    */
   async markUploaded(sessionId, transcriptId) {
-    const session = await this.sessionDb.getItem(sessionId)
-    if (session) {
-      session.uploadStatus = 'completed'
-      session.assemblyAITranscriptId = transcriptId
-      session.uploadCompletedTime = Date.now()
-      await this.sessionDb.setItem(sessionId, session)
-      console.log(`✅ Marked session ${sessionId} as uploaded (transcript: ${transcriptId})`)
+    if (!this.initialized) return
+
+    try {
+      const session = await this.sessionDb.getItem(sessionId)
+      if (session) {
+        session.uploadStatus = 'completed'
+        session.assemblyAITranscriptId = transcriptId
+        session.uploadCompletedTime = Date.now()
+        await this.sessionDb.setItem(sessionId, session)
+        console.log(`✅ Marked session ${sessionId} as uploaded (transcript: ${transcriptId})`)
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to mark session as uploaded (non-fatal):', error)
     }
   }
 
@@ -235,14 +328,20 @@ class StreamingAudioBuffer {
    * @param {string} errorMessage - Error description
    */
   async markUploadFailed(sessionId, errorMessage) {
-    const session = await this.sessionDb.getItem(sessionId)
-    if (session) {
-      session.uploadStatus = 'failed'
-      session.uploadError = errorMessage
-      session.lastUploadAttempt = Date.now()
-      session.uploadRetryCount = (session.uploadRetryCount || 0) + 1
-      await this.sessionDb.setItem(sessionId, session)
-      console.error(`❌ Marked session ${sessionId} upload as failed: ${errorMessage}`)
+    if (!this.initialized) return
+
+    try {
+      const session = await this.sessionDb.getItem(sessionId)
+      if (session) {
+        session.uploadStatus = 'failed'
+        session.uploadError = errorMessage
+        session.lastUploadAttempt = Date.now()
+        session.uploadRetryCount = (session.uploadRetryCount || 0) + 1
+        await this.sessionDb.setItem(sessionId, session)
+        console.error(`❌ Marked session ${sessionId} upload as failed: ${errorMessage}`)
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to mark session as failed (non-fatal):', error)
     }
   }
 
@@ -299,37 +398,49 @@ class StreamingAudioBuffer {
    * app crashes, or iOS backgrounding issues.
    */
   async cleanupOrphanedSessions() {
+    // CRITICAL: Ensure database is initialized before iterating
+    const isReady = await this.ensureInitialized()
+    if (!isReady) {
+      console.warn('⚠️ StreamingAudioBuffer not initialized, skipping cleanup')
+      return { orphanedSessions: 0, failedSessions: 0 }
+    }
+
     const oneHourAgo = Date.now() - (60 * 60 * 1000)
     const orphanedSessions = []
     const failedSessions = []
 
-    await this.sessionDb.iterate((value, key) => {
-      // Orphaned: marked active but not updated for over an hour
-      const isOrphaned = value.isActive &&
-        value.lastUpdateTime &&
-        value.lastUpdateTime < oneHourAgo
+    try {
+      await this.sessionDb.iterate((value, key) => {
+        // Orphaned: marked active but not updated for over an hour
+        const isOrphaned = value.isActive &&
+          value.lastUpdateTime &&
+          value.lastUpdateTime < oneHourAgo
 
-      // Old failed uploads: failed more than 24 hours ago with multiple retry attempts
-      const isOldFailed = value.uploadStatus === 'failed' &&
-        value.lastUploadAttempt &&
-        value.lastUploadAttempt < (Date.now() - 24 * 60 * 60 * 1000) &&
-        (value.uploadRetryCount || 0) >= 3
+        // Old failed uploads: failed more than 24 hours ago with multiple retry attempts
+        const isOldFailed = value.uploadStatus === 'failed' &&
+          value.lastUploadAttempt &&
+          value.lastUploadAttempt < (Date.now() - 24 * 60 * 60 * 1000) &&
+          (value.uploadRetryCount || 0) >= 3
 
-      if (isOrphaned) {
-        orphanedSessions.push(value.sessionId)
+        if (isOrphaned) {
+          orphanedSessions.push(value.sessionId)
+        }
+        if (isOldFailed) {
+          failedSessions.push(value.sessionId)
+        }
+      })
+
+      if (orphanedSessions.length > 0 || failedSessions.length > 0) {
+        console.log(`🧹 Cleaning up ${orphanedSessions.length} orphaned and ${failedSessions.length} old failed audio sessions`)
+        const allToDelete = [...orphanedSessions, ...failedSessions]
+        await Promise.all(allToDelete.map(id => this.deleteSession(id)))
       }
-      if (isOldFailed) {
-        failedSessions.push(value.sessionId)
-      }
-    })
 
-    if (orphanedSessions.length > 0 || failedSessions.length > 0) {
-      console.log(`🧹 Cleaning up ${orphanedSessions.length} orphaned and ${failedSessions.length} old failed audio sessions`)
-      const allToDelete = [...orphanedSessions, ...failedSessions]
-      await Promise.all(allToDelete.map(id => this.deleteSession(id)))
+      return { orphanedSessions: orphanedSessions.length, failedSessions: failedSessions.length }
+    } catch (error) {
+      console.error('❌ Error during cleanup of orphaned sessions:', error)
+      return { orphanedSessions: 0, failedSessions: 0, error: error.message }
     }
-
-    return { orphanedSessions: orphanedSessions.length, failedSessions: failedSessions.length }
   }
 
   /**

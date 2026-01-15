@@ -824,13 +824,23 @@ export function AppProvider({ children }) {
       console.log('📝 AppContext: Current meetings count before add:', state.meetings.length)
       dispatch({ type: 'ADD_MEETING', payload: meetingWithId })
 
-      // Save will be triggered automatically by useEffect when state changes
+      // Save to Firestore for cloud sync (localStorage save happens via useEffect)
+      if (ENABLE_FIRESTORE) {
+        firestoreService.saveMeeting(meetingWithId).catch(err => {
+          console.warn('🔥 Firestore: Failed to save new meeting:', meetingWithId.id, err.message)
+        })
+      }
     },
     updateMeeting: async (meeting) => {
       console.log('📝 AppContext: Updating meeting with ID:', meeting.id)
       dispatch({ type: 'UPDATE_MEETING', payload: meeting })
 
-      // Save will be triggered automatically by useEffect when state changes
+      // Save to Firestore for cloud sync (localStorage save happens via useEffect)
+      if (ENABLE_FIRESTORE) {
+        firestoreService.saveMeeting(meeting).catch(err => {
+          console.warn('🔥 Firestore: Failed to update meeting:', meeting.id, err.message)
+        })
+      }
     },
     deleteMeeting: (meetingId) => {
       dispatch({ type: 'DELETE_MEETING', payload: meetingId })
@@ -843,8 +853,24 @@ export function AppProvider({ children }) {
     },
     setCurrentMeeting: (meeting) => dispatch({ type: 'SET_CURRENT_MEETING', payload: meeting }),
     
-    addStakeholder: (stakeholder) => dispatch({ type: 'ADD_STAKEHOLDER', payload: stakeholder }),
-    updateStakeholder: (stakeholder) => dispatch({ type: 'UPDATE_STAKEHOLDER', payload: stakeholder }),
+    addStakeholder: (stakeholder) => {
+      dispatch({ type: 'ADD_STAKEHOLDER', payload: stakeholder })
+      // Save to Firestore for cloud sync
+      if (ENABLE_FIRESTORE && stakeholder.id) {
+        firestoreService.saveStakeholder(stakeholder).catch(err => {
+          console.warn('🔥 Firestore: Failed to save stakeholder:', stakeholder.id, err.message)
+        })
+      }
+    },
+    updateStakeholder: (stakeholder) => {
+      dispatch({ type: 'UPDATE_STAKEHOLDER', payload: stakeholder })
+      // Save to Firestore for cloud sync
+      if (ENABLE_FIRESTORE && stakeholder.id) {
+        firestoreService.saveStakeholder(stakeholder).catch(err => {
+          console.warn('🔥 Firestore: Failed to update stakeholder:', stakeholder.id, err.message)
+        })
+      }
+    },
     deleteStakeholder: (stakeholderId) => {
       dispatch({ type: 'DELETE_STAKEHOLDER', payload: stakeholderId })
       // Also delete from Firestore
@@ -855,8 +881,24 @@ export function AppProvider({ children }) {
       }
     },
 
-    addStakeholderCategory: (category) => dispatch({ type: 'ADD_STAKEHOLDER_CATEGORY', payload: category }),
-    updateStakeholderCategory: (category) => dispatch({ type: 'UPDATE_STAKEHOLDER_CATEGORY', payload: category }),
+    addStakeholderCategory: (category) => {
+      dispatch({ type: 'ADD_STAKEHOLDER_CATEGORY', payload: category })
+      // Save to Firestore for cloud sync
+      if (ENABLE_FIRESTORE && category.id) {
+        firestoreService.saveStakeholderCategory(category).catch(err => {
+          console.warn('🔥 Firestore: Failed to save category:', category.id, err.message)
+        })
+      }
+    },
+    updateStakeholderCategory: (category) => {
+      dispatch({ type: 'UPDATE_STAKEHOLDER_CATEGORY', payload: category })
+      // Save to Firestore for cloud sync
+      if (ENABLE_FIRESTORE && category.id) {
+        firestoreService.saveStakeholderCategory(category).catch(err => {
+          console.warn('🔥 Firestore: Failed to update category:', category.id, err.message)
+        })
+      }
+    },
     deleteStakeholderCategory: (categoryKey) => {
       dispatch({ type: 'DELETE_STAKEHOLDER_CATEGORY', payload: categoryKey })
       // Also delete from Firestore

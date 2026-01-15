@@ -668,51 +668,137 @@ export function AppProvider({ children }) {
   }, [loadData])
 
   // ==================== FIRESTORE REAL-TIME SYNC ====================
-  // This subscribes to Firestore and updates local state when data changes
+  // This subscribes to Firestore and MERGES data with local state
+  // CRITICAL: We must NOT overwrite local data with empty Firestore results
   useEffect(() => {
     if (!ENABLE_FIRESTORE) {
       console.log('🔥 Firestore: Disabled by feature flag')
       return
     }
 
-    console.log('🔥 Firestore: Setting up real-time subscriptions...')
+    // Wait a bit for initial localStorage load to complete before setting up subscriptions
+    // This prevents race conditions where Firestore overwrites local data
+    const setupDelay = setTimeout(() => {
+      console.log('🔥 Firestore: Setting up real-time subscriptions (after initial load)...')
 
-    // Subscribe to meetings - when Firestore data changes, update local state
-    const unsubMeetings = firestoreService.subscribeMeetings((firestoreMeetings) => {
-      console.log('🔥 Firestore: Received', firestoreMeetings.length, 'meetings')
-      if (firestoreMeetings.length > 0) {
-        dispatch({ type: 'SET_MEETINGS', payload: firestoreMeetings })
-        // Also save to localStorage for offline access
-        localStorage.setItem('meetingflow_meetings', JSON.stringify(firestoreMeetings))
-      }
-    })
+      // Subscribe to meetings - MERGE with local, don't replace
+      const unsubMeetings = firestoreService.subscribeMeetings((firestoreMeetings) => {
+        console.log('🔥 Firestore: Received', firestoreMeetings.length, 'meetings from cloud')
 
-    // Subscribe to stakeholders
-    const unsubStakeholders = firestoreService.subscribeStakeholders((firestoreStakeholders) => {
-      console.log('🔥 Firestore: Received', firestoreStakeholders.length, 'stakeholders')
-      if (firestoreStakeholders.length > 0) {
-        dispatch({ type: 'SET_STAKEHOLDERS', payload: firestoreStakeholders })
-        localStorage.setItem('meetingflow_stakeholders', JSON.stringify(firestoreStakeholders))
-      }
-    })
+        // Get current local meetings
+        const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        console.log('🔥 Firestore: Local meetings count:', localMeetings.length)
 
-    // Subscribe to categories
-    const unsubCategories = firestoreService.subscribeStakeholderCategories((firestoreCategories) => {
-      console.log('🔥 Firestore: Received', firestoreCategories.length, 'categories')
-      if (firestoreCategories.length > 0) {
-        dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: firestoreCategories })
-        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(firestoreCategories))
+        // MERGE: Combine local and Firestore data, keeping newer versions
+        const mergedMeetings = mergeMeetingsData(localMeetings, firestoreMeetings)
+        console.log('🔥 Firestore: Merged meetings count:', mergedMeetings.length)
+
+        // Only update if we have data (never overwrite with empty)
+        if (mergedMeetings.length > 0) {
+          dispatch({ type: 'SET_MEETINGS', payload: mergedMeetings })
+          localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
+        }
+      })
+
+      // Subscribe to stakeholders - MERGE with local
+      const unsubStakeholders = firestoreService.subscribeStakeholders((firestoreStakeholders) => {
+        console.log('🔥 Firestore: Received', firestoreStakeholders.length, 'stakeholders from cloud')
+
+        const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+        const mergedStakeholders = mergeByIdKeepNewer(localStakeholders, firestoreStakeholders)
+
+        if (mergedStakeholders.length > 0) {
+          dispatch({ type: 'SET_STAKEHOLDERS', payload: mergedStakeholders })
+          localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
+        }
+      })
+
+      // Subscribe to categories - MERGE with local
+      const unsubCategories = firestoreService.subscribeStakeholderCategories((firestoreCategories) => {
+        console.log('🔥 Firestore: Received', firestoreCategories.length, 'categories from cloud')
+
+        const localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+        const mergedCategories = mergeByIdKeepNewer(localCategories, firestoreCategories)
+
+        if (mergedCategories.length > 0) {
+          dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: mergedCategories })
+          localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
+        }
+      })
+
+      // Store unsubscribe functions for cleanup
+      window._firestoreUnsubscribe = () => {
+        console.log('🔥 Firestore: Cleaning up subscriptions')
+        unsubMeetings()
+        unsubStakeholders()
+        unsubCategories()
       }
-    })
+    }, 1000) // Wait 1 second for localStorage to load first
 
     // Cleanup subscriptions when component unmounts
     return () => {
-      console.log('🔥 Firestore: Cleaning up subscriptions')
-      unsubMeetings()
-      unsubStakeholders()
-      unsubCategories()
+      clearTimeout(setupDelay)
+      if (window._firestoreUnsubscribe) {
+        window._firestoreUnsubscribe()
+      }
     }
   }, []) // Empty deps - only run once on mount
+
+  // Helper: Merge meetings, keeping newer versions and avoiding duplicates
+  function mergeMeetingsData(localMeetings, cloudMeetings) {
+    const merged = new Map()
+
+    // Add all local meetings first
+    localMeetings.forEach(meeting => {
+      if (meeting.id) {
+        merged.set(meeting.id, meeting)
+      }
+    })
+
+    // Merge cloud meetings, keeping newer version
+    cloudMeetings.forEach(cloudMeeting => {
+      if (!cloudMeeting.id) return
+
+      const existing = merged.get(cloudMeeting.id)
+      if (!existing) {
+        merged.set(cloudMeeting.id, cloudMeeting)
+      } else {
+        // Keep the one with newer updatedAt
+        const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime()
+        const cloudTime = new Date(cloudMeeting.updatedAt || cloudMeeting.createdAt || 0).getTime()
+        if (cloudTime > existingTime) {
+          merged.set(cloudMeeting.id, cloudMeeting)
+        }
+      }
+    })
+
+    return Array.from(merged.values())
+  }
+
+  // Helper: Generic merge by ID, keeping newer versions
+  function mergeByIdKeepNewer(localItems, cloudItems) {
+    const merged = new Map()
+
+    localItems.forEach(item => {
+      if (item.id) merged.set(item.id, item)
+    })
+
+    cloudItems.forEach(cloudItem => {
+      if (!cloudItem.id) return
+      const existing = merged.get(cloudItem.id)
+      if (!existing) {
+        merged.set(cloudItem.id, cloudItem)
+      } else {
+        const existingTime = new Date(existing.updatedAt || existing.createdAt || existing.lastModified || 0).getTime()
+        const cloudTime = new Date(cloudItem.updatedAt || cloudItem.createdAt || cloudItem.lastModified || 0).getTime()
+        if (cloudTime > existingTime) {
+          merged.set(cloudItem.id, cloudItem)
+        }
+      }
+    })
+
+    return Array.from(merged.values())
+  }
 
   // saveData is now inline in debouncedSave to prevent stale closure issues
 
@@ -818,29 +904,79 @@ export function AppProvider({ children }) {
       // Always generate UUID before dispatch to prevent duplicates
       const meetingWithId = {
         ...meeting,
-        id: meeting.id || uuidv4()
+        id: meeting.id || uuidv4(),
+        createdAt: meeting.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       }
       console.log('📝 AppContext: Adding meeting with ID:', meetingWithId.id)
       console.log('📝 AppContext: Current meetings count before add:', state.meetings.length)
+
+      // 1. First dispatch to update React state
       dispatch({ type: 'ADD_MEETING', payload: meetingWithId })
 
-      // Save to Firestore for cloud sync (localStorage save happens via useEffect)
-      if (ENABLE_FIRESTORE) {
-        firestoreService.saveMeeting(meetingWithId).catch(err => {
-          console.warn('🔥 Firestore: Failed to save new meeting:', meetingWithId.id, err.message)
-        })
+      // 2. Immediately save to localStorage (sync, guaranteed)
+      try {
+        const currentMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        // Add to front, avoid duplicates
+        const updatedMeetings = [meetingWithId, ...currentMeetings.filter(m => m.id !== meetingWithId.id)]
+        localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
+        console.log('✅ AppContext: Meeting saved to localStorage:', meetingWithId.id)
+      } catch (localErr) {
+        console.error('❌ AppContext: Failed to save to localStorage:', localErr)
       }
+
+      // 3. Save to Firestore for cloud sync (await to ensure it completes)
+      if (ENABLE_FIRESTORE) {
+        try {
+          await firestoreService.saveMeeting(meetingWithId)
+          console.log('✅ AppContext: Meeting saved to Firestore:', meetingWithId.id)
+          return { success: true, meeting: meetingWithId }
+        } catch (err) {
+          console.error('❌ AppContext: Failed to save to Firestore:', meetingWithId.id, err.message)
+          // Still return success since localStorage save worked
+          return { success: true, meeting: meetingWithId, firestoreError: err.message }
+        }
+      }
+
+      return { success: true, meeting: meetingWithId }
     },
+
     updateMeeting: async (meeting) => {
       console.log('📝 AppContext: Updating meeting with ID:', meeting.id)
-      dispatch({ type: 'UPDATE_MEETING', payload: meeting })
 
-      // Save to Firestore for cloud sync (localStorage save happens via useEffect)
-      if (ENABLE_FIRESTORE) {
-        firestoreService.saveMeeting(meeting).catch(err => {
-          console.warn('🔥 Firestore: Failed to update meeting:', meeting.id, err.message)
-        })
+      const updatedMeeting = {
+        ...meeting,
+        updatedAt: new Date().toISOString()
       }
+
+      // 1. Dispatch to update React state
+      dispatch({ type: 'UPDATE_MEETING', payload: updatedMeeting })
+
+      // 2. Immediately save to localStorage
+      try {
+        const currentMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        const updatedMeetings = currentMeetings.map(m =>
+          m.id === updatedMeeting.id ? updatedMeeting : m
+        )
+        localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
+        console.log('✅ AppContext: Meeting updated in localStorage:', updatedMeeting.id)
+      } catch (localErr) {
+        console.error('❌ AppContext: Failed to update localStorage:', localErr)
+      }
+
+      // 3. Save to Firestore for cloud sync
+      if (ENABLE_FIRESTORE) {
+        try {
+          await firestoreService.saveMeeting(updatedMeeting)
+          console.log('✅ AppContext: Meeting updated in Firestore:', updatedMeeting.id)
+          return { success: true, meeting: updatedMeeting }
+        } catch (err) {
+          console.error('❌ AppContext: Failed to update Firestore:', updatedMeeting.id, err.message)
+          return { success: true, meeting: updatedMeeting, firestoreError: err.message }
+        }
+      }
+
+      return { success: true, meeting: updatedMeeting }
     },
     deleteMeeting: (meetingId) => {
       dispatch({ type: 'DELETE_MEETING', payload: meetingId })

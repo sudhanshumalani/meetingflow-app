@@ -1,5 +1,11 @@
 import { createContext, useContext, useReducer, useEffect, useRef, useCallback } from 'react'
 import localforage from 'localforage'
+
+// Configure localforage instance for sync data (same as Settings.jsx)
+const syncStorage = localforage.createInstance({
+  name: 'MeetingFlowSync',
+  storeName: 'sync_data'
+})
 import { v4 as uuidv4 } from 'uuid'
 import n8nService from '../utils/n8nService'
 
@@ -656,33 +662,55 @@ export function AppProvider({ children }) {
         localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
         deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
 
-        // No default categories - user must create their own
-        console.log('🔍 DEBUG: Loaded categories from localStorage:', localCategories.length)
-
         console.log('🔍 DEBUG: Initial load from localStorage:', {
           meetings: meetings.length,
           stakeholders: localStakeholders.length,
-          categories: localCategories.length,
-          categoryNames: localCategories.map(c => c?.name || 'unnamed')
+          categories: localCategories.length
         })
 
-        console.log('🔍 DEBUG: Sample category structure:', localCategories[0])
-        console.log('🔍 DEBUG: Sample stakeholder structure:', localStakeholders[0])
+        // If localStorage is empty, check IndexedDB (where manual sync saves data on iOS)
+        if (meetings.length === 0) {
+          console.log('📂 LOAD: localStorage empty, checking IndexedDB...')
+          // Use async IIFE to load from IndexedDB
+          ;(async () => {
+            try {
+              const idbMeetings = await syncStorage.getItem('meetings')
+              const idbStakeholders = await syncStorage.getItem('stakeholders')
+              const idbCategories = await syncStorage.getItem('categories')
 
-        // Note: We removed the automatic background storage sync that was overriding
-        // active sync operations. Storage consistency is now maintained by the save function
-        // that writes to both localStorage and localforage simultaneously.
+              console.log('📂 LOAD: IndexedDB data:', {
+                meetings: idbMeetings?.length || 0,
+                stakeholders: idbStakeholders?.length || 0,
+                categories: idbCategories?.length || 0
+              })
+
+              if (idbMeetings && idbMeetings.length > 0) {
+                console.log('📂 LOAD: Found data in IndexedDB, loading...')
+                dispatch({
+                  type: 'LOAD_DATA',
+                  payload: {
+                    meetings: deduplicateMeetings(idbMeetings || []),
+                    stakeholders: idbStakeholders || [],
+                    stakeholderCategories: idbCategories || [],
+                    deletedItems: []
+                  }
+                })
+                dispatch({ type: 'SET_LOADING', payload: false })
+              }
+            } catch (idbError) {
+              console.warn('📂 LOAD: IndexedDB check failed:', idbError)
+            }
+          })()
+        }
 
         console.log('📂 LOAD: Loaded from localStorage - meetings:', meetings.length)
-        console.log('📂 LOAD: Meeting IDs loaded:', meetings.map(m => m.id))
-        console.log('📂 LOAD: About to exit localStorage try block successfully')
 
       } catch (error) {
         console.error('❌ localStorage failed, using defaults:', error)
         console.error('❌ Error stack:', error.stack)
         meetings = []
         localStakeholders = []
-        localCategories = [] // Don't load defaults on error, let them be set properly
+        localCategories = []
         deletedItems = []
       }
 

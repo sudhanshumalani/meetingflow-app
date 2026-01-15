@@ -1,12 +1,18 @@
 import { createContext, useContext, useReducer, useEffect, useRef, useCallback } from 'react'
 import localforage from 'localforage'
-
-// Configure localforage instance for sync data (same as Settings.jsx)
-const syncStorage = localforage.createInstance({
-  name: 'MeetingFlowSync',
-  storeName: 'sync_data'
-})
 import { v4 as uuidv4 } from 'uuid'
+
+// Lazy-loaded IndexedDB instance - only created when needed to avoid iOS crashes
+let syncStorageInstance = null
+async function getSyncStorage() {
+  if (!syncStorageInstance) {
+    syncStorageInstance = localforage.createInstance({
+      name: 'MeetingFlowSync',
+      storeName: 'sync_data'
+    })
+  }
+  return syncStorageInstance
+}
 import n8nService from '../utils/n8nService'
 
 // IMPORTANT: Firestore services are loaded based on platform
@@ -671,9 +677,10 @@ export function AppProvider({ children }) {
         // If localStorage is empty, check IndexedDB (where manual sync saves data on iOS)
         if (meetings.length === 0) {
           console.log('📂 LOAD: localStorage empty, checking IndexedDB...')
-          // Use async IIFE to load from IndexedDB
+          // Use async IIFE to load from IndexedDB - lazy init to avoid iOS crashes
           ;(async () => {
             try {
+              const syncStorage = await getSyncStorage()
               const idbMeetings = await syncStorage.getItem('meetings')
               const idbStakeholders = await syncStorage.getItem('stakeholders')
               const idbCategories = await syncStorage.getItem('categories')

@@ -25,11 +25,17 @@ import { Database, Upload, CheckCircle, Bug } from 'lucide-react'
 import FirebaseDebugPanel from '../components/FirebaseDebugPanel'
 import localforage from 'localforage'
 
-// Configure localforage for sync data (uses IndexedDB - much larger storage than localStorage)
-const syncStorage = localforage.createInstance({
-  name: 'MeetingFlowSync',
-  storeName: 'sync_data'
-})
+// Lazy-loaded IndexedDB instance - only created when needed to avoid iOS crashes
+let syncStorageInstance = null
+async function getSyncStorage() {
+  if (!syncStorageInstance) {
+    syncStorageInstance = localforage.createInstance({
+      name: 'MeetingFlowSync',
+      storeName: 'sync_data'
+    })
+  }
+  return syncStorageInstance
+}
 
 // Detect iOS
 const IS_IOS = typeof navigator !== 'undefined' && (
@@ -429,7 +435,10 @@ export default function Settings() {
 
       try {
         // Save to IndexedDB (much larger storage limit than localStorage)
+        // Use lazy initialization to avoid iOS crashes
         console.log('🔄 Saving to IndexedDB...')
+        const syncStorage = await getSyncStorage()
+
         await syncStorage.setItem('meetings', strippedMeetings)
         console.log('🔄 Meetings saved to IndexedDB!')
 

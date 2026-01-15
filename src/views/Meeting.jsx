@@ -1879,33 +1879,55 @@ Example notes you might paste:
 
                   <AudioRecorderSimple
                     onTranscriptUpdate={(transcript, speakers = null) => {
-                      console.log('📝 Meeting: Received transcript:', transcript?.substring(0, 100) + '...')
-                      console.log('👥 Meeting: Received speaker data:', speakers ? `${speakers.speakers_detected} speakers` : 'none')
-                      setAudioTranscript(transcript)
-                      if (speakers) {
-                        setSpeakerData(speakers)
-                      }
-                      // Automatically populate digital notes when we have transcript
-                      if (transcript && transcript.length > 50) {
-                        setDigitalNotes(prev => ({
-                          ...prev,
-                          summary: transcript
-                        }))
-                      }
-                    }}
-                    onAutoSave={(transcript, reason) => {
-                      // Auto-save for existing meetings
-                      if (id !== 'new') {
-                        const updatedMeetingData = {
-                          ...buildMeetingData(id),
-                          audioTranscript: transcript,
-                          lastAutoSaved: new Date().toISOString()
+                      // WRAPPED IN TRY-CATCH to prevent crashes from bubbling to ErrorBoundary
+                      try {
+                        console.log('📝 Meeting: Received transcript:', transcript?.substring(0, 100) + '...')
+                        console.log('👥 Meeting: Received speaker data:', speakers ? `${speakers.speakers_detected} speakers` : 'none')
+                        setAudioTranscript(transcript)
+                        if (speakers) {
+                          setSpeakerData(speakers)
                         }
-                        updateMeeting(updatedMeetingData)
-                        console.log(`✅ Auto-saved transcript (${reason})`)
+                        // Automatically populate digital notes when we have transcript
+                        if (transcript && transcript.length > 50) {
+                          setDigitalNotes(prev => ({
+                            ...prev,
+                            summary: transcript
+                          }))
+                        }
+                      } catch (err) {
+                        console.error('❌ Error in onTranscriptUpdate:', err)
+                        // Don't rethrow - let recording continue
                       }
                     }}
-                    onProcessingStateChange={setIsProcessingSpeakers}
+                    onAutoSave={async (transcript, reason) => {
+                      // CRITICAL FIX: Properly handle async operation with try-catch
+                      // This was causing crashes when stop→start recording rapidly
+                      if (id !== 'new') {
+                        try {
+                          // Capture state synchronously BEFORE any async operations
+                          const meetingDataSnapshot = {
+                            ...buildMeetingData(id),
+                            audioTranscript: transcript,
+                            lastAutoSaved: new Date().toISOString()
+                          }
+                          // Await the update and catch any errors
+                          await updateMeeting(meetingDataSnapshot)
+                          console.log(`✅ Auto-saved transcript (${reason})`)
+                        } catch (err) {
+                          // CRITICAL: Don't throw - this would crash the app
+                          console.error(`❌ Auto-save failed (${reason}):`, err?.message || err)
+                          // User can still continue recording/using the app
+                        }
+                      }
+                    }}
+                    onProcessingStateChange={(isProcessing) => {
+                      // WRAPPED IN TRY-CATCH for safety
+                      try {
+                        setIsProcessingSpeakers(isProcessing)
+                      } catch (err) {
+                        console.error('❌ Error in onProcessingStateChange:', err)
+                      }
+                    }}
                     className="w-full"
                   />
 

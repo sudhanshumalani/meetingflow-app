@@ -64,6 +64,7 @@ const AudioRecorderSimple = ({
   const timerRef = useRef(null)
   const audioSessionIdRef = useRef(null)
   const chunkIndexRef = useRef(0)
+  const operationLockRef = useRef(false) // Prevents rapid start/stop race conditions
 
   // Mobile wake lock
   const [wakeLock, setWakeLock] = useState(null)
@@ -283,6 +284,13 @@ const AudioRecorderSimple = ({
   const startRecording = async () => {
     debugLog('info', 'START RECORDING clicked')
 
+    // CRITICAL: Prevent rapid start/stop race conditions
+    if (operationLockRef.current) {
+      debugLog('warning', 'Operation in progress, please wait...')
+      return
+    }
+    operationLockRef.current = true
+
     try {
       setError(null)
       // DON'T clear transcript/speakerData - we want to APPEND to existing
@@ -432,6 +440,9 @@ const AudioRecorderSimple = ({
         setRecordingDuration(prev => prev + 1)
       }, 1000)
 
+      // Release lock after successful start
+      operationLockRef.current = false
+
     } catch (err) {
       debugLog('error', 'Failed to start recording', {
         name: err.name,
@@ -446,6 +457,8 @@ const AudioRecorderSimple = ({
         setError(`Failed to start recording: ${err.message}`)
       }
       await releaseWakeLock()
+      // Release lock on error too
+      operationLockRef.current = false
     }
   }
 
@@ -453,10 +466,18 @@ const AudioRecorderSimple = ({
   const stopRecording = async () => {
     debugLog('info', 'STOP RECORDING clicked')
 
+    // CRITICAL: Prevent rapid start/stop race conditions
+    if (operationLockRef.current) {
+      debugLog('warning', 'Operation in progress, please wait...')
+      return
+    }
+
     if (!isRecording || !mediaRecorderRef.current) {
       debugLog('warning', 'Not recording, nothing to stop')
       return
     }
+
+    operationLockRef.current = true
 
     // Stop the timer
     if (timerRef.current) {
@@ -645,6 +666,9 @@ const AudioRecorderSimple = ({
       mediaRecorderRef.current = null
       recordedChunksRef.current = []
       recordingStreamRef.current = null
+      // CRITICAL: Always release the lock
+      operationLockRef.current = false
+      debugLog('info', 'Operation lock released')
     }
   }
 

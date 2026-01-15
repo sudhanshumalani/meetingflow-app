@@ -15,13 +15,15 @@ const IS_IOS = typeof navigator !== 'undefined' && (
   (typeof window !== 'undefined' && window.navigator?.standalone === true)
 )
 
-// Feature flag for Firestore - enabled on all platforms now
-const ENABLE_FIRESTORE = true
+// Feature flag for Firestore
+// On iOS: Disabled by default to prevent crashes - user must enable manually
+// On Desktop: Enabled with real-time sync
+const ENABLE_FIRESTORE = !IS_IOS  // Disable auto-start on iOS
 
 if (IS_IOS) {
-  console.log('📱 iOS detected - Using Firestore REST API (iOS-safe)')
+  console.log('📱 iOS detected - Firestore sync disabled by default (use Settings to enable)')
 } else {
-  console.log('💻 Desktop detected - Using Firestore SDK (real-time sync)')
+  console.log('💻 Desktop detected - Firestore sync enabled (real-time)')
 }
 
 // Lazy-loaded firestoreService reference
@@ -33,21 +35,44 @@ async function getFirestoreService() {
     return firestoreServiceInstance
   }
 
+  // Extra safety: wrap everything in try-catch
   try {
+    console.log('🔥 AppContext: Loading firestore service... iOS:', IS_IOS)
+
     if (IS_IOS) {
       // iOS: Use REST API service (no SDK crashes)
-      const module = await import('../utils/firestoreRestService')
-      firestoreServiceInstance = module.default
-      console.log('🔥 AppContext: firestoreRestService loaded (iOS REST API)')
+      try {
+        const module = await import('../utils/firestoreRestService')
+        if (module && module.default) {
+          firestoreServiceInstance = module.default
+          console.log('🔥 AppContext: firestoreRestService loaded (iOS REST API)')
+        } else {
+          console.error('🔥 AppContext: REST module loaded but no default export')
+          return null
+        }
+      } catch (restErr) {
+        console.error('🔥 AppContext: Failed to load REST service:', restErr)
+        return null
+      }
     } else {
       // Desktop: Use SDK service (real-time sync)
-      const module = await import('../utils/firestoreService')
-      firestoreServiceInstance = module.default
-      console.log('🔥 AppContext: firestoreService loaded (SDK)')
+      try {
+        const module = await import('../utils/firestoreService')
+        if (module && module.default) {
+          firestoreServiceInstance = module.default
+          console.log('🔥 AppContext: firestoreService loaded (SDK)')
+        } else {
+          console.error('🔥 AppContext: SDK module loaded but no default export')
+          return null
+        }
+      } catch (sdkErr) {
+        console.error('🔥 AppContext: Failed to load SDK service:', sdkErr)
+        return null
+      }
     }
     return firestoreServiceInstance
   } catch (err) {
-    console.error('🔥 AppContext: Failed to load firestoreService:', err)
+    console.error('🔥 AppContext: Unexpected error loading firestoreService:', err)
     return null
   }
 }

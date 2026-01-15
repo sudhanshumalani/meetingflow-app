@@ -77,14 +77,21 @@ export default function Settings() {
   const [firestoreImporting, setFirestoreImporting] = useState(false)
   const [firestoreImportResult, setFirestoreImportResult] = useState(null)
   const [firestoreUserId, setFirestoreUserId] = useState('')
+  const [manualSyncing, setManualSyncing] = useState(false)
+  const [manualSyncResult, setManualSyncResult] = useState(null)
 
-  // Load firestoreService userId on mount
+  // Load userId from localStorage directly (no Firestore service needed)
   useEffect(() => {
-    getFirestoreService().then(service => {
-      if (service) {
-        setFirestoreUserId(service.getUserId())
-      }
-    })
+    // Get userId from localStorage directly - don't load Firestore service
+    const userId = localStorage.getItem('meetingflow_firestore_user_id')
+    if (userId) {
+      setFirestoreUserId(userId)
+    } else {
+      // Generate a new one if not exists
+      const newId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      localStorage.setItem('meetingflow_firestore_user_id', newId)
+      setFirestoreUserId(newId)
+    }
   }, [])
 
   // Initialize OCR API key on component mount
@@ -207,16 +214,102 @@ export default function Settings() {
         localStorage.setItem('meetingflow_firestore_user_id', newUserId.trim())
         setFirestoreUserId(newUserId.trim())
 
-        // Show success message instead of reloading (iOS safe)
-        alert('Device ID saved! Please close and reopen the app to sync with the new device.')
-
-        // Don't reload - let user manually refresh when ready
-        // This avoids potential iOS crashes on reload
+        // Show success message
+        alert('Device ID saved! Click "Manual Sync" to fetch data from the cloud.')
       } catch (err) {
         console.error('Failed to link device:', err)
         alert('Failed to save device ID: ' + err.message)
       }
     }
+  }
+
+  // Manual sync - fetches data from Firestore on demand (iOS safe)
+  const handleManualSync = async () => {
+    setManualSyncing(true)
+    setManualSyncResult(null)
+
+    try {
+      console.log('🔄 Manual sync starting...')
+
+      // Dynamically load the appropriate firestore service
+      const firestoreService = await getFirestoreService()
+      if (!firestoreService) {
+        throw new Error('Failed to load Firestore service')
+      }
+
+      // Fetch all data from Firestore
+      const [meetings, stakeholders, categories] = await Promise.all([
+        firestoreService.getMeetings(),
+        firestoreService.getStakeholders(),
+        firestoreService.getStakeholderCategories()
+      ])
+
+      console.log('🔄 Fetched from Firestore:', {
+        meetings: meetings.length,
+        stakeholders: stakeholders.length,
+        categories: categories.length
+      })
+
+      // Merge with local data
+      const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+      const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+      const localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+
+      // Simple merge: combine by ID, keeping newer versions
+      const mergedMeetings = mergeById(localMeetings, meetings)
+      const mergedStakeholders = mergeById(localStakeholders, stakeholders)
+      const mergedCategories = mergeById(localCategories, categories)
+
+      // Save merged data to localStorage
+      localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
+      localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
+      localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
+
+      // Trigger app reload to reflect changes
+      window.dispatchEvent(new Event('meetingflow-storage-updated'))
+
+      setManualSyncResult({
+        success: true,
+        message: `Synced! Found ${meetings.length} meetings, ${stakeholders.length} stakeholders, ${categories.length} categories.`
+      })
+
+      console.log('✅ Manual sync complete')
+    } catch (error) {
+      console.error('❌ Manual sync failed:', error)
+      setManualSyncResult({
+        success: false,
+        message: `Sync failed: ${error.message}`
+      })
+    } finally {
+      setManualSyncing(false)
+    }
+  }
+
+  // Helper function to merge arrays by ID
+  function mergeById(localItems, cloudItems) {
+    const merged = new Map()
+
+    // Add local items first
+    localItems.forEach(item => {
+      if (item.id) merged.set(item.id, item)
+    })
+
+    // Merge cloud items, keeping newer
+    cloudItems.forEach(cloudItem => {
+      if (!cloudItem.id) return
+      const existing = merged.get(cloudItem.id)
+      if (!existing) {
+        merged.set(cloudItem.id, cloudItem)
+      } else {
+        const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime()
+        const cloudTime = new Date(cloudItem.updatedAt || cloudItem.createdAt || cloudItem.lastModified || 0).getTime()
+        if (cloudTime > existingTime) {
+          merged.set(cloudItem.id, cloudItem)
+        }
+      }
+    })
+
+    return Array.from(merged.values())
   }
 
   return (
@@ -998,11 +1091,23 @@ export default function Settings() {
               </div>
             </div>
 
+            {/* iOS Notice */}
+            {IS_IOS && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h4 className="font-medium text-yellow-900 mb-2">iOS Device Detected</h4>
+                <p className="text-sm text-yellow-800">
+                  Firestore sync is available but works differently on iOS.
+                  Use "Manual Sync" below to sync your data. Changes sync every 30 seconds when enabled.
+                </p>
+              </div>
+            )}
+
             {/* Link Another Device */}
             <div className="bg-white rounded-xl shadow-sm border p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Link Another Device</h3>
               <p className="text-sm text-gray-600 mb-4">
                 If you have a Device ID from another device, paste it here to sync with that device's data.
+                {IS_IOS && " After linking, use the Manual Sync button to fetch data."}
               </p>
 
               <div className="flex gap-3">
@@ -1010,18 +1115,13 @@ export default function Settings() {
                   type="text"
                   placeholder="Paste Device ID from another device"
                   className="flex-1 p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleLinkDevice(e.target.value)
-                    }
-                  }}
                   id="link-device-input"
                 />
                 <button
                   onClick={() => {
                     const input = document.getElementById('link-device-input')
                     if (input.value.trim()) {
-                      if (confirm('This will replace your current data with data from the linked device. Continue?')) {
+                      if (confirm('This will set your Device ID to sync with another device. Continue?')) {
                         handleLinkDevice(input.value)
                       }
                     }
@@ -1031,6 +1131,53 @@ export default function Settings() {
                   Link Device
                 </button>
               </div>
+            </div>
+
+            {/* Manual Sync - Fetch from Firestore */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Manual Sync</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Click to fetch the latest data from Firestore.
+                {IS_IOS ? " On iOS, use this after linking a device to get your data." : " Use this if automatic sync isn't working."}
+              </p>
+
+              {/* Sync Result Message */}
+              {manualSyncResult && (
+                <div className={`mb-4 p-4 rounded-lg ${manualSyncResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                  <div className="flex items-center gap-2">
+                    {manualSyncResult.success ? (
+                      <CheckCircle className="w-5 h-5 text-green-600" />
+                    ) : (
+                      <Info className="w-5 h-5 text-red-600" />
+                    )}
+                    <p className={`text-sm ${manualSyncResult.success ? 'text-green-800' : 'text-red-800'}`}>
+                      {manualSyncResult.message}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={handleManualSync}
+                disabled={manualSyncing}
+                className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-colors ${
+                  manualSyncing
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                }`}
+              >
+                {manualSyncing ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-5 h-5" />
+                    Sync Now
+                  </>
+                )}
+              </button>
             </div>
 
             {/* Import Existing Data */}

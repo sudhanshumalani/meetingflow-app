@@ -58,6 +58,12 @@ class FirestoreService {
    */
   async saveMeeting(meeting) {
     try {
+      // Validate meeting has an ID
+      if (!meeting.id) {
+        console.warn('Skipping meeting without ID:', meeting)
+        return { success: false, reason: 'no_id' }
+      }
+
       const meetingRef = doc(db, 'meetings', meeting.id)
       const meetingData = {
         ...meeting,
@@ -171,6 +177,12 @@ class FirestoreService {
 
   async saveStakeholder(stakeholder) {
     try {
+      // Validate stakeholder has an ID
+      if (!stakeholder.id) {
+        console.warn('Skipping stakeholder without ID:', stakeholder)
+        return { success: false, reason: 'no_id' }
+      }
+
       const stakeholderRef = doc(db, 'stakeholders', stakeholder.id)
       const stakeholderData = {
         ...stakeholder,
@@ -268,6 +280,12 @@ class FirestoreService {
 
   async saveStakeholderCategory(category) {
     try {
+      // Validate category has an ID - skip if undefined
+      if (!category.id) {
+        console.warn('Skipping category without ID:', category)
+        return { success: false, reason: 'no_id' }
+      }
+
       const categoryRef = doc(db, 'stakeholderCategories', category.id)
       const categoryData = {
         ...category,
@@ -377,9 +395,13 @@ class FirestoreService {
       const batch = writeBatch(db)
       let count = 0
 
-      // Import meetings
+      // Import meetings (skip any without IDs)
       for (const meeting of meetings) {
         if (count >= 500) break // Firestore batch limit
+        if (!meeting.id) {
+          console.warn('Skipping meeting without ID during import')
+          continue
+        }
         const meetingRef = doc(db, 'meetings', meeting.id)
         batch.set(meetingRef, {
           ...meeting,
@@ -391,9 +413,13 @@ class FirestoreService {
         count++
       }
 
-      // Import stakeholders
+      // Import stakeholders (skip any without IDs)
       for (const stakeholder of stakeholders) {
         if (count >= 500) break
+        if (!stakeholder.id) {
+          console.warn('Skipping stakeholder without ID during import')
+          continue
+        }
         const stakeholderRef = doc(db, 'stakeholders', stakeholder.id)
         batch.set(stakeholderRef, {
           ...stakeholder,
@@ -405,9 +431,13 @@ class FirestoreService {
         count++
       }
 
-      // Import categories
+      // Import categories (skip any without IDs)
       for (const category of categories) {
         if (count >= 500) break
+        if (!category.id) {
+          console.warn('Skipping category without ID during import')
+          continue
+        }
         const categoryRef = doc(db, 'stakeholderCategories', category.id)
         batch.set(categoryRef, {
           ...category,

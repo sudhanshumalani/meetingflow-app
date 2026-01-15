@@ -512,30 +512,9 @@ export function AppProvider({ children }) {
         categoriesSize: localStorage.getItem('meetingflow_stakeholder_categories')?.length || 0
       })
 
-      // ==================== FIRESTORE SYNC ON SAVE ====================
-      // Also save to Firestore for cloud sync (non-blocking)
-      if (ENABLE_FIRESTORE) {
-        // Save meetings to Firestore (in background, don't wait)
-        state.meetings.forEach(meeting => {
-          firestoreService.saveMeeting(meeting).catch(err => {
-            console.warn('🔥 Firestore: Failed to save meeting:', meeting.id, err.message)
-          })
-        })
-
-        // Save stakeholders to Firestore
-        state.stakeholders.forEach(stakeholder => {
-          firestoreService.saveStakeholder(stakeholder).catch(err => {
-            console.warn('🔥 Firestore: Failed to save stakeholder:', stakeholder.id, err.message)
-          })
-        })
-
-        // Save categories to Firestore
-        state.stakeholderCategories.forEach(category => {
-          firestoreService.saveStakeholderCategory(category).catch(err => {
-            console.warn('🔥 Firestore: Failed to save category:', category.id, err.message)
-          })
-        })
-      }
+      // NOTE: Firestore sync is handled via real-time subscriptions
+      // We do NOT re-save to Firestore here to avoid infinite loops
+      // (Firestore update → state change → save effect → Firestore update → repeat)
     }
   }, [state.meetings, state.stakeholders, state.stakeholderCategories, state.deletedItems, state.isLoading])
 

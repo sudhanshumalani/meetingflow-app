@@ -8,13 +8,16 @@ import { registerRoute } from 'workbox-routing'
 import { NetworkOnly, NetworkFirst } from 'workbox-strategies'
 import { BackgroundSyncPlugin } from 'workbox-background-sync'
 
+// Version for cache busting - update this when you want to force a refresh
+const SW_VERSION = '1.0.4'
+
 // Clean up outdated caches first
 cleanupOutdatedCaches()
 
 // Precache and route app assets (VitePWA will inject manifest here)
 precacheAndRoute(self.__WB_MANIFEST)
 
-console.log('🔧 PWA Service Worker installed')
+console.log(`🔧 PWA Service Worker v${SW_VERSION} installed`)
 
 /**
  * Background Sync Queue for Audio Uploads

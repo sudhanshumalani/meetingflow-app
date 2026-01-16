@@ -266,6 +266,41 @@ class FirestoreService {
     }
   }
 
+  /**
+   * Get IDs of deleted documents in a collection
+   * Used by manual sync to know which local items to remove
+   */
+  async getDeletedIds(collectionName) {
+    debugLog(`getDeletedIds called for ${collectionName}`)
+
+    const ready = await ensureFirestoreLoaded()
+    if (!ready) {
+      debugLog('getDeletedIds: Firestore not ready', 'warn')
+      return []
+    }
+
+    try {
+      const { collection, query, where, getDocs } = firestoreModule
+      const q = query(
+        collection(db, collectionName),
+        where('userId', '==', this.userId),
+        where('deleted', '==', true)
+      )
+
+      const querySnapshot = await getDocs(q)
+      const deletedIds = []
+      querySnapshot.forEach((docSnap) => {
+        deletedIds.push(docSnap.id)
+      })
+
+      debugLog(`getDeletedIds: Found ${deletedIds.length} deleted items in ${collectionName}`)
+      return deletedIds
+    } catch (error) {
+      debugLog(`getDeletedIds error: ${error.message}`, 'error')
+      return []
+    }
+  }
+
   subscribeMeetings(callback) {
     debugLog('subscribeMeetings called')
 

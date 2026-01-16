@@ -357,21 +357,58 @@ export default function Settings() {
         localStorage.setItem('meetingflow_deleted_items', '[]')
       }
 
+      // CRITICAL: Fetch deleted IDs from Firestore to remove from local data
+      // This ensures items deleted on other devices are removed locally
+      console.log('🔄 Fetching deleted item IDs from Firestore...')
+      let deletedMeetingIds = []
+      let deletedStakeholderIds = []
+      let deletedCategoryIds = []
+
+      try {
+        deletedMeetingIds = await firestoreService.getDeletedIds('meetings')
+        deletedStakeholderIds = await firestoreService.getDeletedIds('stakeholders')
+        deletedCategoryIds = await firestoreService.getDeletedIds('stakeholderCategories')
+        console.log('🔄 Deleted IDs from Firestore:', {
+          meetings: deletedMeetingIds.length,
+          stakeholders: deletedStakeholderIds.length,
+          categories: deletedCategoryIds.length
+        })
+      } catch (e) {
+        console.warn('🔄 Failed to fetch deleted IDs:', e.message)
+      }
+
+      // Filter out items that were deleted on other devices
+      // This is the key fix: remove locally cached items that are marked deleted in Firestore
+      const deletedMeetingSet = new Set(deletedMeetingIds)
+      const deletedStakeholderSet = new Set(deletedStakeholderIds)
+      const deletedCategorySet = new Set(deletedCategoryIds)
+
+      const filteredLocalMeetings = localMeetings.filter(m => !deletedMeetingSet.has(m.id))
+      const filteredLocalStakeholders = localStakeholders.filter(s => !deletedStakeholderSet.has(s.id))
+      const filteredLocalCategories = localCategories.filter(c => !deletedCategorySet.has(c.id))
+
+      console.log('🔄 After filtering deleted items:', {
+        meetings: `${localMeetings.length} -> ${filteredLocalMeetings.length}`,
+        stakeholders: `${localStakeholders.length} -> ${filteredLocalStakeholders.length}`,
+        categories: `${localCategories.length} -> ${filteredLocalCategories.length}`
+      })
+
       // Safety check: If cloud returns 0 but local has data, don't lose local data
       // This can happen if stakeholders were created before sync was set up
       console.log('🔄 Safety check - preventing data loss...')
-      if (stakeholders.length === 0 && localStakeholders.length > 0) {
-        console.log('⚠️ Cloud has 0 stakeholders but local has', localStakeholders.length, '- will upload all local')
+      if (stakeholders.length === 0 && filteredLocalStakeholders.length > 0) {
+        console.log('⚠️ Cloud has 0 stakeholders but local has', filteredLocalStakeholders.length, '- will upload all local')
       }
-      if (categories.length === 0 && localCategories.length > 0) {
-        console.log('⚠️ Cloud has 0 categories but local has', localCategories.length, '- will upload all local')
+      if (categories.length === 0 && filteredLocalCategories.length > 0) {
+        console.log('⚠️ Cloud has 0 categories but local has', filteredLocalCategories.length, '- will upload all local')
       }
 
       // Merge with timestamp-based conflict resolution
+      // Use filtered local data (with deleted items removed)
       console.log('🔄 Merging data with timestamp comparison...')
-      const meetingsMerge = mergeByIdWithTracking(localMeetings, meetings)
-      const stakeholdersMerge = mergeByIdWithTracking(localStakeholders, stakeholders)
-      const categoriesMerge = mergeByIdWithTracking(localCategories, categories)
+      const meetingsMerge = mergeByIdWithTracking(filteredLocalMeetings, meetings)
+      const stakeholdersMerge = mergeByIdWithTracking(filteredLocalStakeholders, stakeholders)
+      const categoriesMerge = mergeByIdWithTracking(filteredLocalCategories, categories)
 
       console.log('🔄 Merge results:', {
         meetings: { total: meetingsMerge.merged.length, toUpload: meetingsMerge.toUpload.length, toDownload: meetingsMerge.toDownload.length },
@@ -380,13 +417,14 @@ export default function Settings() {
       })
 
       // Extra safety: ensure we never end up with less data than we started with
-      if (meetingsMerge.merged.length < localMeetings.length && meetingsMerge.merged.length < meetings.length) {
+      // Note: Use filtered local data for comparison (after removing deleted items)
+      if (meetingsMerge.merged.length < filteredLocalMeetings.length && meetingsMerge.merged.length < meetings.length) {
         console.error('🚨 MERGE ERROR: Would lose meetings data!')
       }
-      if (stakeholdersMerge.merged.length < localStakeholders.length && stakeholdersMerge.merged.length < stakeholders.length) {
+      if (stakeholdersMerge.merged.length < filteredLocalStakeholders.length && stakeholdersMerge.merged.length < stakeholders.length) {
         console.error('🚨 MERGE ERROR: Would lose stakeholders data!')
       }
-      if (categoriesMerge.merged.length < localCategories.length && categoriesMerge.merged.length < categories.length) {
+      if (categoriesMerge.merged.length < filteredLocalCategories.length && categoriesMerge.merged.length < categories.length) {
         console.error('🚨 MERGE ERROR: Would lose categories data!')
       }
 

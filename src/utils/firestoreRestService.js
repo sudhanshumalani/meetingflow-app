@@ -361,6 +361,130 @@ class FirestoreRestService {
     }
   }
 
+  /**
+   * Get IDs of deleted documents in a collection
+   * Used by manual sync to know which local items to remove
+   */
+  async getDeletedIds(collection) {
+    const query = {
+      structuredQuery: {
+        from: [{ collectionId: collection }],
+        where: {
+          compositeFilter: {
+            op: 'AND',
+            filters: [
+              {
+                fieldFilter: {
+                  field: { fieldPath: 'userId' },
+                  op: 'EQUAL',
+                  value: { stringValue: this.userId }
+                }
+              },
+              {
+                fieldFilter: {
+                  field: { fieldPath: 'deleted' },
+                  op: 'EQUAL',
+                  value: { booleanValue: true }
+                }
+              }
+            ]
+          }
+        },
+        select: {
+          fields: [{ fieldPath: '__name__' }]
+        }
+      }
+    }
+
+    const url = `${FIRESTORE_BASE_URL}:runQuery?key=${FIREBASE_API_KEY}`
+
+    try {
+      debugLog(`Getting deleted IDs from ${collection}...`)
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(query)
+      })
+
+      if (!response.ok) {
+        // If composite index not available, fall back to fetching all and filtering
+        debugLog(`Composite query failed, falling back to full query`, 'warn')
+        return this.getDeletedIdsFallback(collection)
+      }
+
+      const results = await response.json()
+      const deletedIds = []
+
+      for (const result of results) {
+        if (result.document) {
+          // Extract ID from document path
+          const path = result.document.name
+          const id = path.split('/').pop()
+          deletedIds.push(id)
+        }
+      }
+
+      debugLog(`Found ${deletedIds.length} deleted items in ${collection}`)
+      return deletedIds
+    } catch (error) {
+      debugLog(`getDeletedIds ${collection} failed: ${error.message}`, 'error')
+      return []
+    }
+  }
+
+  /**
+   * Fallback method if composite index is not available
+   */
+  async getDeletedIdsFallback(collection) {
+    const query = {
+      structuredQuery: {
+        from: [{ collectionId: collection }],
+        where: {
+          fieldFilter: {
+            field: { fieldPath: 'userId' },
+            op: 'EQUAL',
+            value: { stringValue: this.userId }
+          }
+        }
+      }
+    }
+
+    const url = `${FIRESTORE_BASE_URL}:runQuery?key=${FIREBASE_API_KEY}`
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(query)
+      })
+
+      if (!response.ok) {
+        return []
+      }
+
+      const results = await response.json()
+      const deletedIds = []
+
+      for (const result of results) {
+        if (result.document) {
+          const doc = fromFirestoreDocument(result.document)
+          if (doc && doc.deleted === true && doc.id) {
+            deletedIds.push(doc.id)
+          }
+        }
+      }
+
+      debugLog(`Fallback: Found ${deletedIds.length} deleted items in ${collection}`)
+      return deletedIds
+    } catch (error) {
+      debugLog(`getDeletedIdsFallback ${collection} failed: ${error.message}`, 'error')
+      return []
+    }
+  }
+
   // ==================== MEETINGS ====================
 
   async saveMeeting(meeting) {

@@ -205,10 +205,16 @@ class FirestoreRestService {
     try {
       debugLog(`Saving ${collection}/${docId}...`)
 
+      // Use server time for sync reliability
+      const serverTime = new Date().toISOString()
       const fields = toFirestoreFields({
         ...data,
         userId: this.userId,
-        lastModified: new Date().toISOString(),
+        // Set both updatedAt and lastModified for compatibility
+        // updatedAt: used by AppContext for local tracking
+        // lastModified: used by Firestore for sync ordering
+        updatedAt: data.updatedAt || serverTime,
+        lastModified: serverTime,
         deleted: false
       })
 

@@ -193,6 +193,9 @@ class FirestoreService {
       await setDoc(meetingRef, {
         ...meeting,
         userId: this.userId,
+        // Preserve updatedAt from the meeting data, use serverTimestamp for lastModified
+        // This ensures timestamp comparison works correctly across devices
+        updatedAt: meeting.updatedAt || new Date().toISOString(),
         lastModified: serverTimestamp(),
         deleted: false
       }, { merge: true })
@@ -370,6 +373,8 @@ class FirestoreService {
       await setDoc(ref, {
         ...stakeholder,
         userId: this.userId,
+        // Preserve updatedAt from the data, use serverTimestamp for lastModified
+        updatedAt: stakeholder.updatedAt || new Date().toISOString(),
         lastModified: serverTimestamp(),
         deleted: false
       }, { merge: true })
@@ -476,6 +481,8 @@ class FirestoreService {
       await setDoc(ref, {
         ...category,
         userId: this.userId,
+        // Preserve updatedAt from the data, use serverTimestamp for lastModified
+        updatedAt: category.updatedAt || new Date().toISOString(),
         lastModified: serverTimestamp(),
         deleted: false
       }, { merge: true })

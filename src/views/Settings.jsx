@@ -44,6 +44,46 @@ const IS_IOS = typeof navigator !== 'undefined' && (
   (typeof window !== 'undefined' && window.navigator?.standalone === true)
 )
 
+// Global sync lock to prevent race conditions
+// This ensures only one sync operation runs at a time across the app
+let isSyncLocked = false
+let syncLockTimestamp = 0
+const SYNC_LOCK_TIMEOUT = 60000 // 60 second timeout to prevent deadlocks
+
+function acquireSyncLock() {
+  const now = Date.now()
+  // Auto-release if lock is stale (prevents deadlocks)
+  if (isSyncLocked && (now - syncLockTimestamp) > SYNC_LOCK_TIMEOUT) {
+    console.warn('🔄 Sync lock was stale, releasing...')
+    isSyncLocked = false
+  }
+
+  if (isSyncLocked) {
+    return false
+  }
+
+  isSyncLocked = true
+  syncLockTimestamp = now
+  console.log('🔄 Sync lock acquired')
+  return true
+}
+
+function releaseSyncLock() {
+  isSyncLocked = false
+  syncLockTimestamp = 0
+  console.log('🔄 Sync lock released')
+}
+
+// Export for use in AppContext real-time sync
+export function isSyncInProgress() {
+  const now = Date.now()
+  // Check if lock is stale
+  if (isSyncLocked && (now - syncLockTimestamp) > SYNC_LOCK_TIMEOUT) {
+    return false
+  }
+  return isSyncLocked
+}
+
 // Lazy-load firestoreService - uses REST API on iOS, SDK on desktop
 let firestoreServiceInstance = null
 async function getFirestoreService() {
@@ -258,6 +298,15 @@ export default function Settings() {
 
   // Manual sync - fetches data from Firestore on demand (iOS safe)
   const handleManualSync = async () => {
+    // Acquire sync lock to prevent race conditions
+    if (!acquireSyncLock()) {
+      setManualSyncResult({
+        success: false,
+        message: 'A sync is already in progress. Please wait and try again.'
+      })
+      return
+    }
+
     setManualSyncing(true)
     setManualSyncResult(null)
 
@@ -335,26 +384,59 @@ export default function Settings() {
       })
 
       // Sync deletions to Firestore (important for cross-device sync)
+      // Track which deletions succeeded so we only clear those
+      const syncedDeletions = []
+      const failedDeletions = []
+
       if (localDeletedItems.length > 0) {
         console.log('🔄 Syncing', localDeletedItems.length, 'deletions to Firestore...')
         for (const deletion of localDeletedItems) {
           try {
+            let result = { success: false }
             if (deletion.type === 'meeting' && deletion.id) {
-              await firestoreService.deleteMeeting(deletion.id)
-              console.log('🔄 Synced deletion of meeting:', deletion.id)
+              result = await firestoreService.deleteMeeting(deletion.id)
+              if (result.success) {
+                console.log('🔄 Synced deletion of meeting:', deletion.id)
+                syncedDeletions.push(deletion)
+              } else {
+                throw new Error(result.reason || 'Unknown error')
+              }
             } else if (deletion.type === 'stakeholder' && deletion.id) {
-              await firestoreService.deleteStakeholder(deletion.id)
-              console.log('🔄 Synced deletion of stakeholder:', deletion.id)
+              result = await firestoreService.deleteStakeholder(deletion.id)
+              if (result.success) {
+                console.log('🔄 Synced deletion of stakeholder:', deletion.id)
+                syncedDeletions.push(deletion)
+              } else {
+                throw new Error(result.reason || 'Unknown error')
+              }
             } else if (deletion.type === 'stakeholderCategory' && deletion.id) {
-              await firestoreService.deleteStakeholderCategory(deletion.id)
-              console.log('🔄 Synced deletion of category:', deletion.id)
+              result = await firestoreService.deleteStakeholderCategory(deletion.id)
+              if (result.success) {
+                console.log('🔄 Synced deletion of category:', deletion.id)
+                syncedDeletions.push(deletion)
+              } else {
+                throw new Error(result.reason || 'Unknown error')
+              }
+            } else {
+              // Invalid deletion record, mark as synced to remove it
+              syncedDeletions.push(deletion)
             }
           } catch (e) {
             console.warn('🔄 Failed to sync deletion:', deletion, e.message)
+            failedDeletions.push(deletion)
           }
         }
-        // Clear local deleted items after syncing
-        localStorage.setItem('meetingflow_deleted_items', '[]')
+
+        // Only keep failed deletions in localStorage (will retry on next sync)
+        // This prevents data loss if sync is interrupted
+        if (failedDeletions.length > 0) {
+          console.log('🔄 Keeping', failedDeletions.length, 'failed deletions for retry')
+          localStorage.setItem('meetingflow_deleted_items', JSON.stringify(failedDeletions))
+        } else {
+          // All deletions synced successfully
+          localStorage.setItem('meetingflow_deleted_items', '[]')
+        }
+        console.log('🔄 Deletion sync complete:', syncedDeletions.length, 'synced,', failedDeletions.length, 'failed')
       }
 
       // CRITICAL: Fetch deleted IDs from Firestore to remove from local data
@@ -551,17 +633,54 @@ export default function Settings() {
       })
     } finally {
       setManualSyncing(false)
+      releaseSyncLock() // Always release the lock
     }
   }
 
-  // Helper to get timestamp from an item (handles various field names)
+  // Helper to get timestamp from an item (handles various field names and types)
+  // Supports: ISO strings, Date objects, Firestore Timestamp objects, milliseconds
   function getTimestamp(item) {
     if (!item) return 0
-    // Try various timestamp fields
+
+    // Try various timestamp fields in priority order
+    // updatedAt is preferred as it reflects the last modification
     const ts = item.updatedAt || item.lastModified || item.createdAt || item.timestamp || 0
-    if (ts instanceof Date) return ts.getTime()
-    if (typeof ts === 'string') return new Date(ts).getTime()
-    if (typeof ts === 'number') return ts
+
+    // Handle different timestamp types
+    if (!ts) return 0
+
+    // Firestore Timestamp object (has toDate method)
+    if (ts && typeof ts === 'object' && typeof ts.toDate === 'function') {
+      try {
+        return ts.toDate().getTime()
+      } catch (e) {
+        console.warn('🔄 Failed to convert Firestore timestamp:', e)
+        return 0
+      }
+    }
+
+    // Firestore Timestamp from REST API (has seconds and nanoseconds)
+    if (ts && typeof ts === 'object' && ts.seconds !== undefined) {
+      return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1000000)
+    }
+
+    // JavaScript Date object
+    if (ts instanceof Date) {
+      return ts.getTime()
+    }
+
+    // ISO string or other parseable string
+    if (typeof ts === 'string') {
+      const parsed = new Date(ts).getTime()
+      // Return 0 if parsing failed (NaN check)
+      return isNaN(parsed) ? 0 : parsed
+    }
+
+    // Already a number (milliseconds)
+    if (typeof ts === 'number') {
+      return ts
+    }
+
     return 0
   }
 

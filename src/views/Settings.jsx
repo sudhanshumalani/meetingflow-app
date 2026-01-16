@@ -315,12 +315,14 @@ export default function Settings() {
       let localMeetings = []
       let localStakeholders = []
       let localCategories = []
+      let localDeletedItems = []
 
       // Try to read from localStorage first (where AppContext stores data)
       try {
         localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
         localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
         localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+        localDeletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
       } catch (e) {
         console.warn('🔄 Failed to read from localStorage:', e)
       }
@@ -328,8 +330,32 @@ export default function Settings() {
       console.log('🔄 Local data:', {
         meetings: localMeetings.length,
         stakeholders: localStakeholders.length,
-        categories: localCategories.length
+        categories: localCategories.length,
+        deletedItems: localDeletedItems.length
       })
+
+      // Sync deletions to Firestore (important for cross-device sync)
+      if (localDeletedItems.length > 0) {
+        console.log('🔄 Syncing', localDeletedItems.length, 'deletions to Firestore...')
+        for (const deletion of localDeletedItems) {
+          try {
+            if (deletion.type === 'meeting' && deletion.id) {
+              await firestoreService.deleteMeeting(deletion.id)
+              console.log('🔄 Synced deletion of meeting:', deletion.id)
+            } else if (deletion.type === 'stakeholder' && deletion.id) {
+              await firestoreService.deleteStakeholder(deletion.id)
+              console.log('🔄 Synced deletion of stakeholder:', deletion.id)
+            } else if (deletion.type === 'stakeholderCategory' && deletion.id) {
+              await firestoreService.deleteStakeholderCategory(deletion.id)
+              console.log('🔄 Synced deletion of category:', deletion.id)
+            }
+          } catch (e) {
+            console.warn('🔄 Failed to sync deletion:', deletion, e.message)
+          }
+        }
+        // Clear local deleted items after syncing
+        localStorage.setItem('meetingflow_deleted_items', '[]')
+      }
 
       // Safety check: If cloud returns 0 but local has data, don't lose local data
       // This can happen if stakeholders were created before sync was set up

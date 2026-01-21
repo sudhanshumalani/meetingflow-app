@@ -58,6 +58,29 @@ const IS_IOS = typeof navigator !== 'undefined' &&
 debugLog(`Service created. iOS: ${IS_IOS}`)
 
 /**
+ * Remove undefined values from an object (recursively)
+ * Firestore throws error on undefined values, so we must clean them
+ */
+function removeUndefined(obj) {
+  if (obj === null || obj === undefined) {
+    return null
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(item => removeUndefined(item)).filter(item => item !== undefined)
+  }
+  if (typeof obj === 'object') {
+    const cleaned = {}
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        cleaned[key] = removeUndefined(value)
+      }
+    }
+    return cleaned
+  }
+  return obj
+}
+
+/**
  * Lazy load Firestore - SAFE for iOS
  */
 async function ensureFirestoreLoaded() {
@@ -188,10 +211,13 @@ class FirestoreService {
         return { success: false, reason: 'no_id' }
       }
 
+      // Clean meeting data - remove undefined values (Firestore rejects them)
+      const cleanedMeeting = removeUndefined(meeting)
+
       const { doc, setDoc, serverTimestamp } = firestoreModule
       const meetingRef = doc(db, 'meetings', meeting.id)
       await setDoc(meetingRef, {
-        ...meeting,
+        ...cleanedMeeting,
         userId: this.userId,
         // Preserve updatedAt from the meeting data, use serverTimestamp for lastModified
         // This ensures timestamp comparison works correctly across devices
@@ -368,10 +394,13 @@ class FirestoreService {
     try {
       if (!stakeholder?.id) return { success: false, reason: 'no_id' }
 
+      // Clean data - remove undefined values (Firestore rejects them)
+      const cleanedStakeholder = removeUndefined(stakeholder)
+
       const { doc, setDoc, serverTimestamp } = firestoreModule
       const ref = doc(db, 'stakeholders', stakeholder.id)
       await setDoc(ref, {
-        ...stakeholder,
+        ...cleanedStakeholder,
         userId: this.userId,
         // Preserve updatedAt from the data, use serverTimestamp for lastModified
         updatedAt: stakeholder.updatedAt || new Date().toISOString(),
@@ -476,10 +505,13 @@ class FirestoreService {
     try {
       if (!category?.id) return { success: false, reason: 'no_id' }
 
+      // Clean data - remove undefined values (Firestore rejects them)
+      const cleanedCategory = removeUndefined(category)
+
       const { doc, setDoc, serverTimestamp } = firestoreModule
       const ref = doc(db, 'stakeholderCategories', category.id)
       await setDoc(ref, {
-        ...category,
+        ...cleanedCategory,
         userId: this.userId,
         // Preserve updatedAt from the data, use serverTimestamp for lastModified
         updatedAt: category.updatedAt || new Date().toISOString(),

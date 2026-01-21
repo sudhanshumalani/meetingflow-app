@@ -683,9 +683,8 @@ export default function Meeting() {
         speaker: u.speaker,
         text: u.text,
         start: u.start,
-        end: u.end,
-        // Remove word-level data from utterances too
-        words: undefined
+        end: u.end
+        // Note: 'words' field intentionally omitted (Firestore rejects undefined)
       })) || [],
       // Keep metadata
       speakers_detected: data.speakers_detected,

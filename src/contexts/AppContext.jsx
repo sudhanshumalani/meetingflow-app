@@ -13,6 +13,51 @@ async function getSyncStorage() {
   }
   return syncStorageInstance
 }
+
+// Storage quota utilities
+async function checkStorageQuota() {
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const estimate = await navigator.storage.estimate()
+      const usage = estimate.usage || 0
+      const quota = estimate.quota || 0
+      const available = quota - usage
+      const percentUsed = quota > 0 ? Math.round((usage / quota) * 100) : 0
+
+      return {
+        usage: Math.round(usage / 1024 / 1024), // MB
+        quota: Math.round(quota / 1024 / 1024), // MB
+        available: Math.round(available / 1024 / 1024), // MB
+        percentUsed,
+        isLow: available < 10 * 1024 * 1024, // Less than 10MB
+        isCritical: available < 2 * 1024 * 1024 // Less than 2MB
+      }
+    }
+  } catch (error) {
+    console.warn('📦 Cannot check storage quota:', error)
+  }
+  return null
+}
+
+// Check localStorage usage specifically
+function getLocalStorageUsage() {
+  try {
+    let total = 0
+    for (let key in localStorage) {
+      if (localStorage.hasOwnProperty(key)) {
+        total += localStorage[key].length * 2 // UTF-16 = 2 bytes per char
+      }
+    }
+    return {
+      bytes: total,
+      kb: Math.round(total / 1024),
+      mb: (total / 1024 / 1024).toFixed(2)
+    }
+  } catch (error) {
+    return { bytes: 0, kb: 0, mb: '0' }
+  }
+}
+
 import n8nService from '../utils/n8nService'
 
 // IMPORTANT: Firestore services are loaded based on platform
@@ -571,6 +616,7 @@ export function AppProvider({ children }) {
 
 
   // Save immediately when data changes (no debouncing to avoid issues)
+  // CRITICAL: Wrapped in try-catch to prevent crashes from QuotaExceededError
   useEffect(() => {
     console.log('🔥 SAVE EFFECT: Triggered', {
       isLoading: state.isLoading,
@@ -581,29 +627,51 @@ export function AppProvider({ children }) {
     if (!state.isLoading) {
       console.log('💾 AppContext: SYNCHRONOUS save triggered')
       console.log('💾 AppContext: Saving meetings count:', state.meetings.length)
-      console.log('💾 AppContext: Meeting IDs being saved:', state.meetings.map(m => m.id))
 
-      // Save to localStorage only - SyncService handles localforage separately
-      localStorage.setItem('meetingflow_meetings', JSON.stringify(state.meetings))
-      localStorage.setItem('meetingflow_stakeholders', JSON.stringify(state.stakeholders))
-      localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(state.stakeholderCategories))
-      localStorage.setItem('meetingflow_deleted_items', JSON.stringify(state.deletedItems))
+      try {
+        // Calculate approximate data size before saving
+        const meetingsJson = JSON.stringify(state.meetings)
+        const stakeholdersJson = JSON.stringify(state.stakeholders)
+        const categoriesJson = JSON.stringify(state.stakeholderCategories)
+        const deletedJson = JSON.stringify(state.deletedItems)
 
-      const saved = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-      console.log('✅ AppContext: VERIFIED save - meetings in storage:', saved.length)
-      console.log('✅ AppContext: VERIFIED IDs:', saved.map(m => m.id))
+        const totalSize = meetingsJson.length + stakeholdersJson.length + categoriesJson.length + deletedJson.length
+        console.log('💾 AppContext: Total data size:', Math.round(totalSize / 1024), 'KB')
 
-      // Extra verification for desktop issues
-      console.log('🔍 DEBUG: Post-save localStorage state:', {
-        totalKeys: localStorage.length,
-        meetingflowKeys: Object.keys(localStorage).filter(k => k.startsWith('meetingflow_')),
-        meetingsSize: localStorage.getItem('meetingflow_meetings')?.length || 0,
-        categoriesSize: localStorage.getItem('meetingflow_stakeholder_categories')?.length || 0
-      })
+        // Warn if data is getting large (approaching 5MB localStorage limit)
+        if (totalSize > 3 * 1024 * 1024) {
+          console.warn('⚠️ AppContext: Data size exceeds 3MB, approaching localStorage limit!')
+        }
+
+        // Save to localStorage
+        localStorage.setItem('meetingflow_meetings', meetingsJson)
+        localStorage.setItem('meetingflow_stakeholders', stakeholdersJson)
+        localStorage.setItem('meetingflow_stakeholder_categories', categoriesJson)
+        localStorage.setItem('meetingflow_deleted_items', deletedJson)
+
+        console.log('✅ AppContext: Save effect completed successfully')
+      } catch (saveError) {
+        // CRITICAL: Catch QuotaExceededError and other storage errors
+        // This prevents the app from crashing when localStorage is full
+        console.error('❌ AppContext: Save effect FAILED:', saveError.name, saveError.message)
+
+        if (saveError.name === 'QuotaExceededError' || saveError.message?.includes('quota')) {
+          console.error('❌ AppContext: localStorage quota exceeded! Data may not be persisted.')
+          console.error('❌ AppContext: Consider deleting old meetings to free up space.')
+          // Dispatch an error event that UI can listen to
+          window.dispatchEvent(new CustomEvent('meetingflow-storage-error', {
+            detail: {
+              type: 'quota_exceeded',
+              message: 'Storage is full. Some data may not be saved. Please delete old meetings.',
+              size: Math.round((JSON.stringify(state.meetings).length) / 1024)
+            }
+          }))
+        }
+        // Don't re-throw - we don't want to crash the app
+      }
 
       // NOTE: Firestore sync is handled via real-time subscriptions
       // We do NOT re-save to Firestore here to avoid infinite loops
-      // (Firestore update → state change → save effect → Firestore update → repeat)
     }
   }, [state.meetings, state.stakeholders, state.stakeholderCategories, state.deletedItems, state.isLoading])
 
@@ -651,6 +719,29 @@ export function AppProvider({ children }) {
       dispatch({ type: 'SET_LOADING', payload: true })
 
       console.log('📂 LOAD: Starting data load from localStorage...')
+
+      // Check storage quota on load
+      const lsUsage = getLocalStorageUsage()
+      console.log('📦 LocalStorage usage:', lsUsage.mb, 'MB')
+
+      // Async check for overall storage
+      checkStorageQuota().then(quota => {
+        if (quota) {
+          console.log('📦 Storage quota:', quota)
+          if (quota.isCritical) {
+            console.error('🚨 CRITICAL: Storage space is very low! Please delete old meetings.')
+            window.dispatchEvent(new CustomEvent('meetingflow-storage-warning', {
+              detail: { type: 'critical', ...quota }
+            }))
+          } else if (quota.isLow) {
+            console.warn('⚠️ Storage space is running low.')
+            window.dispatchEvent(new CustomEvent('meetingflow-storage-warning', {
+              detail: { type: 'low', ...quota }
+            }))
+          }
+        }
+      })
+
       console.log('🔍 DEBUG: localStorage before load:', {
         hasLocalStorage: typeof localStorage !== 'undefined',
         localStorageLength: localStorage?.length,
@@ -1056,6 +1147,10 @@ export function AppProvider({ children }) {
       console.log('📝 AppContext: Adding meeting with ID:', meetingWithId.id)
       console.log('📝 AppContext: Current meetings count before add:', state.meetings.length)
 
+      // Track if localStorage save succeeded
+      let localStorageSaveSuccess = false
+      let localStorageError = null
+
       // 1. First dispatch to update React state
       dispatch({ type: 'ADD_MEETING', payload: meetingWithId })
 
@@ -1064,10 +1159,36 @@ export function AppProvider({ children }) {
         const currentMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
         // Add to front, avoid duplicates
         const updatedMeetings = [meetingWithId, ...currentMeetings.filter(m => m.id !== meetingWithId.id)]
+
+        // Check size before saving
+        const dataSize = JSON.stringify(updatedMeetings).length
+        console.log('📝 AppContext: Meeting data size:', Math.round(dataSize / 1024), 'KB')
+
         localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
         console.log('✅ AppContext: Meeting saved to localStorage:', meetingWithId.id)
+        localStorageSaveSuccess = true
       } catch (localErr) {
-        console.error('❌ AppContext: Failed to save to localStorage:', localErr)
+        console.error('❌ AppContext: Failed to save to localStorage:', localErr.name, localErr.message)
+        localStorageError = localErr
+
+        // Check if it's a quota error
+        if (localErr.name === 'QuotaExceededError' || localErr.message?.includes('quota')) {
+          console.error('❌ AppContext: localStorage QUOTA EXCEEDED - meeting may not persist!')
+          // Dispatch error event for UI
+          window.dispatchEvent(new CustomEvent('meetingflow-storage-error', {
+            detail: {
+              type: 'quota_exceeded',
+              message: 'Storage is full. Please delete old meetings to save new ones.',
+              meetingId: meetingWithId.id
+            }
+          }))
+          // Return failure so UI can show error
+          return {
+            success: false,
+            error: 'Storage quota exceeded. Please delete old meetings to free up space.',
+            meeting: meetingWithId
+          }
+        }
       }
 
       // 3. Save to Firestore for cloud sync (await to ensure it completes)
@@ -1078,15 +1199,20 @@ export function AppProvider({ children }) {
             await firestoreService.saveMeeting(meetingWithId)
             console.log('✅ AppContext: Meeting saved to Firestore:', meetingWithId.id)
           }
-          return { success: true, meeting: meetingWithId }
+          return { success: true, meeting: meetingWithId, localStorageSaved: localStorageSaveSuccess }
         } catch (err) {
           console.error('❌ AppContext: Failed to save to Firestore:', meetingWithId.id, err.message)
-          // Still return success since localStorage save worked
-          return { success: true, meeting: meetingWithId, firestoreError: err.message }
+          // Return success only if localStorage worked
+          return {
+            success: localStorageSaveSuccess,
+            meeting: meetingWithId,
+            firestoreError: err.message,
+            localStorageError: localStorageError?.message
+          }
         }
       }
 
-      return { success: true, meeting: meetingWithId }
+      return { success: localStorageSaveSuccess, meeting: meetingWithId, localStorageError: localStorageError?.message }
     },
 
     updateMeeting: async (meeting) => {
@@ -1097,6 +1223,10 @@ export function AppProvider({ children }) {
         updatedAt: new Date().toISOString()
       }
 
+      // Track if localStorage save succeeded
+      let localStorageSaveSuccess = false
+      let localStorageError = null
+
       // 1. Dispatch to update React state
       dispatch({ type: 'UPDATE_MEETING', payload: updatedMeeting })
 
@@ -1106,10 +1236,34 @@ export function AppProvider({ children }) {
         const updatedMeetings = currentMeetings.map(m =>
           m.id === updatedMeeting.id ? updatedMeeting : m
         )
+
+        // Check size before saving
+        const dataSize = JSON.stringify(updatedMeetings).length
+        console.log('📝 AppContext: Updated meeting data size:', Math.round(dataSize / 1024), 'KB')
+
         localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
         console.log('✅ AppContext: Meeting updated in localStorage:', updatedMeeting.id)
+        localStorageSaveSuccess = true
       } catch (localErr) {
-        console.error('❌ AppContext: Failed to update localStorage:', localErr)
+        console.error('❌ AppContext: Failed to update localStorage:', localErr.name, localErr.message)
+        localStorageError = localErr
+
+        // Check if it's a quota error
+        if (localErr.name === 'QuotaExceededError' || localErr.message?.includes('quota')) {
+          console.error('❌ AppContext: localStorage QUOTA EXCEEDED on update!')
+          window.dispatchEvent(new CustomEvent('meetingflow-storage-error', {
+            detail: {
+              type: 'quota_exceeded',
+              message: 'Storage is full. Please delete old meetings to save changes.',
+              meetingId: updatedMeeting.id
+            }
+          }))
+          return {
+            success: false,
+            error: 'Storage quota exceeded. Please delete old meetings to free up space.',
+            meeting: updatedMeeting
+          }
+        }
       }
 
       // 3. Save to Firestore for cloud sync
@@ -1120,14 +1274,19 @@ export function AppProvider({ children }) {
             await firestoreService.saveMeeting(updatedMeeting)
             console.log('✅ AppContext: Meeting updated in Firestore:', updatedMeeting.id)
           }
-          return { success: true, meeting: updatedMeeting }
+          return { success: true, meeting: updatedMeeting, localStorageSaved: localStorageSaveSuccess }
         } catch (err) {
           console.error('❌ AppContext: Failed to update Firestore:', updatedMeeting.id, err.message)
-          return { success: true, meeting: updatedMeeting, firestoreError: err.message }
+          return {
+            success: localStorageSaveSuccess,
+            meeting: updatedMeeting,
+            firestoreError: err.message,
+            localStorageError: localStorageError?.message
+          }
         }
       }
 
-      return { success: true, meeting: updatedMeeting }
+      return { success: localStorageSaveSuccess, meeting: updatedMeeting, localStorageError: localStorageError?.message }
     },
     deleteMeeting: async (meetingId) => {
       dispatch({ type: 'DELETE_MEETING', payload: meetingId })

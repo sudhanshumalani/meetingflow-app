@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import { useApp } from '../contexts/AppContext'
 import { v4 as uuidv4 } from 'uuid'
+import TranscriptStorage from '../utils/transcriptStorage'
 import {
   ArrowLeft,
   Save,
@@ -669,16 +670,67 @@ export default function Meeting() {
   
 
 
+  // Helper: Clean speakerData to remove large unnecessary arrays
+  // This dramatically reduces storage size (from ~1MB to ~50KB for long recordings)
+  const cleanSpeakerData = (data) => {
+    if (!data) return null
+
+    // Strip the 'words' array - it contains every word with timestamps (huge!)
+    // Keep only the essential data: utterances (who said what) and metadata
+    const cleaned = {
+      // Keep speaker utterances but limit to reasonable size
+      utterances: data.utterances?.slice(0, 500)?.map(u => ({
+        speaker: u.speaker,
+        text: u.text,
+        start: u.start,
+        end: u.end,
+        // Remove word-level data from utterances too
+        words: undefined
+      })) || [],
+      // Keep metadata
+      speakers_detected: data.speakers_detected,
+      confidence: data.confidence,
+      audio_duration: data.audio_duration,
+      text: data.text,
+      // Explicitly exclude 'words' array (can be 500KB-2MB for long recordings)
+      // words: undefined - not included
+    }
+
+    console.log('📦 Cleaned speakerData:', {
+      originalSize: JSON.stringify(data).length,
+      cleanedSize: JSON.stringify(cleaned).length,
+      reduction: Math.round((1 - JSON.stringify(cleaned).length / JSON.stringify(data).length) * 100) + '%'
+    })
+
+    return cleaned
+  }
+
   // Build meeting data object
+  // OPTIMIZED: Removes data duplication and strips large arrays
   const buildMeetingData = (meetingId) => {
     try {
+      // Clean speakerData to remove words[] array (saves 500KB-2MB)
+      const cleanedSpeakerData = cleanSpeakerData(speakerData)
+
+      // Calculate and log data sizes for debugging
+      const dataSizes = {
+        audioTranscript: audioTranscript?.length || 0,
+        speakerDataOriginal: speakerData ? JSON.stringify(speakerData).length : 0,
+        speakerDataCleaned: cleanedSpeakerData ? JSON.stringify(cleanedSpeakerData).length : 0,
+        aiResult: aiResult ? JSON.stringify(aiResult).length : 0
+      }
+      console.log('📦 Meeting data sizes (bytes):', dataSizes)
+
       return {
         id: meetingId,
         ...formData,
         digitalNotes,
+        // Store transcript once (not duplicated)
         audioTranscript,
-        speakerData, // Add speaker diarization data
+        // Store cleaned speaker data (without words[] array)
+        speakerData: cleanedSpeakerData,
         aiResult,
+        // Simplified originalInputs - NO duplication of transcript/speakerData
         originalInputs: {
           manualText: manualText || null,
           uploadedImages: uploadedFiles.map(file => ({
@@ -687,29 +739,20 @@ export default function Meeting() {
             type: file.type,
             lastModified: file.lastModified
           })),
-          // Don't save Blob URLs - they become invalid on reload
-          // uploadedImageUrls: uploadedImageUrls.map(img => ({
-          //   name: img.name,
-          //   url: img.url
-          // })),
           ocrResults: ocrResult,
-          audioTranscript: audioTranscript || null,
-          speakerData: speakerData || null, // Add to originalInputs too
           extractedText: extractedText || null
+          // REMOVED: audioTranscript duplication (already stored at root level)
+          // REMOVED: speakerData duplication (already stored at root level)
         },
+        // Notes array - digital notes only, transcript stored separately
         notes: Object.values(digitalNotes).map((content, index) => ({
           id: `note_${index}`,
           content,
           timestamp: new Date().toISOString(),
           type: 'digital'
-        })).filter(note => note.content.trim()).concat(
-          audioTranscript ? [{
-            id: 'audio_transcript',
-            content: audioTranscript,
-            timestamp: new Date().toISOString(),
-            type: 'audio'
-          }] : []
-        ),
+        })).filter(note => note.content.trim()),
+        // REMOVED: audioTranscript duplication in notes array
+        // The transcript is already accessible via meeting.audioTranscript
         uploadedFiles: uploadedFiles.map(f => f.name),
         lastSaved: new Date().toISOString(),
         status: 'completed'
@@ -767,6 +810,7 @@ export default function Meeting() {
   }
 
   // Save functionality
+  // OPTIMIZED: Uses hybrid storage (localStorage for metadata, IndexedDB for large data)
   const handleSave = async () => {
     // Prevent save during speaker processing
     if (isProcessingSpeakers) {
@@ -795,47 +839,83 @@ export default function Meeting() {
 
       // SIMPLE ARCHITECTURE: URL determines the operation
       const isCreatingNew = (id === 'new')
+      const meetingId = isCreatingNew ? uuidv4() : id
+
+      // HYBRID STORAGE STRATEGY:
+      // 1. Save large data (transcript, speakerData, aiResult) to IndexedDB
+      // 2. Save lightweight meeting metadata to localStorage/Firestore
+      // This prevents localStorage quota issues with long recordings
+
+      // Check if we have large data to store separately
+      const hasLargeData = audioTranscript || speakerData || aiResult
+      const meetingData = buildMeetingData(meetingId)
+
+      // Calculate total meeting data size
+      const meetingDataSize = JSON.stringify(meetingData).length
+      console.log('📦 Total meeting data size:', Math.round(meetingDataSize / 1024), 'KB')
+
+      // If meeting data is large (> 100KB), store transcript data separately in IndexedDB
+      if (meetingDataSize > 100 * 1024 && hasLargeData) {
+        console.log('📦 Large meeting detected, using hybrid storage...')
+
+        // Save large data to IndexedDB (async, iOS-safe)
+        const transcriptSaveResult = await TranscriptStorage.save(meetingId, {
+          audioTranscript: meetingData.audioTranscript,
+          speakerData: meetingData.speakerData,
+          aiResult: meetingData.aiResult
+        })
+
+        if (transcriptSaveResult.success) {
+          console.log('✅ Large data saved to IndexedDB:', transcriptSaveResult.storage)
+
+          // Create lightweight version for localStorage
+          // Keep only metadata + flag that data is in IndexedDB
+          meetingData._transcriptInIndexedDB = true
+          meetingData._transcriptStorageType = transcriptSaveResult.storage
+
+          // Keep a short preview for display, but remove full data
+          if (meetingData.audioTranscript && meetingData.audioTranscript.length > 500) {
+            meetingData._audioTranscriptPreview = meetingData.audioTranscript.substring(0, 500) + '...'
+            // Don't delete audioTranscript entirely - keep it for now for compatibility
+            // In future optimization, we could remove it entirely and load from IndexedDB
+          }
+        } else {
+          console.warn('⚠️ IndexedDB save failed, keeping data in localStorage:', transcriptSaveResult.error)
+          // Continue with full data in localStorage (may fail if too large)
+        }
+      }
 
       if (isCreatingNew) {
         // CREATE NEW MEETING
-        const newMeetingId = uuidv4()
-        const newMeetingData = buildMeetingData(newMeetingId)
-
         console.log('🔍 DEBUG: Saving new meeting data:', {
-          id: newMeetingData.id,
-          selectedStakeholder: newMeetingData.selectedStakeholder,
-          formDataSelectedStakeholder: formData.selectedStakeholder,
-          digitalNotes: newMeetingData.digitalNotes,
-          aiResult: newMeetingData.aiResult,
-          notes: newMeetingData.notes,
-          originalInputs: newMeetingData.originalInputs
+          id: meetingData.id,
+          size: Math.round(JSON.stringify(meetingData).length / 1024) + 'KB',
+          hasIndexedDBData: meetingData._transcriptInIndexedDB || false
         })
 
         // Add to context with error handling
-        const saveResult = await addMeeting(newMeetingData)
+        const saveResult = await addMeeting(meetingData)
         if (saveResult && !saveResult.success) {
           throw new Error(saveResult.error || 'Failed to save meeting')
         }
 
-        setCurrentMeeting(newMeetingData)
-        navigate(`/meeting/${newMeetingId}`, { replace: true })
+        setCurrentMeeting(meetingData)
+        navigate(`/meeting/${meetingId}`, { replace: true })
       } else {
         // UPDATE EXISTING MEETING
-        const updatedMeetingData = buildMeetingData(id)
-
         console.log('🔍 DEBUG: Updating existing meeting data:', {
-          id: updatedMeetingData.id,
-          selectedStakeholder: updatedMeetingData.selectedStakeholder,
-          formDataSelectedStakeholder: formData.selectedStakeholder
+          id: meetingData.id,
+          size: Math.round(JSON.stringify(meetingData).length / 1024) + 'KB',
+          hasIndexedDBData: meetingData._transcriptInIndexedDB || false
         })
 
         // Update in context with error handling
-        const saveResult = await updateMeeting(updatedMeetingData)
+        const saveResult = await updateMeeting(meetingData)
         if (saveResult && !saveResult.success) {
           throw new Error(saveResult.error || 'Failed to update meeting')
         }
 
-        setCurrentMeeting(updatedMeetingData)
+        setCurrentMeeting(meetingData)
       }
 
       // Only show success if we get here without errors

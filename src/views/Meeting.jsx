@@ -1420,6 +1420,7 @@ export default function Meeting() {
               <h3 className="text-lg font-semibold mb-2">Choose Input Method</h3>
               <p className="text-sm text-gray-600 mb-4">Select how you want to capture your meeting notes. All methods use Claude AI to create organized summaries.</p>
               <div className="flex flex-col sm:flex-row gap-2 sm:gap-1 sm:rounded-lg sm:border sm:border-gray-200 sm:p-1">
+                {/* HIDDEN: OCR from Image - not currently used
                 <TouchButton
                   onClick={() => setActiveMode('photo')}
                   variant={activeMode === 'photo' ? 'primary' : 'secondary'}
@@ -1430,6 +1431,7 @@ export default function Meeting() {
                   <Camera size={16} />
                   OCR from Image
                 </TouchButton>
+                */}
                 <TouchButton
                   onClick={() => setActiveMode('audio')}
                   variant={activeMode === 'audio' ? 'primary' : 'secondary'}
@@ -2361,6 +2363,7 @@ Example notes you might paste:
                   {/* Analysis Metadata */}
                   <div className="flex items-center justify-between pt-3 border-t border-blue-200">
                     <div className="flex items-center gap-4 text-xs text-blue-600">
+                      {/* REMOVED: Sentiment display - no longer tracking sentiment
                       {aiResult.sentiment && (
                         <div className="flex items-center gap-1">
                           <span>
@@ -2370,6 +2373,7 @@ Example notes you might paste:
                           <span className="capitalize font-medium">{aiResult.sentiment} tone</span>
                         </div>
                       )}
+                      */}
                       {aiResult.confidence && (
                         <div className="flex items-center gap-1">
                           <span>🎯</span>

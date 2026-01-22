@@ -913,7 +913,7 @@ export default function Home() {
 
             {/* Right Section */}
             <div className="flex items-center gap-3">
-              {/* Sync Status Indicator */}
+              {/* HIDDEN: Sync Status Indicator - no auto-sync, manual sync via Settings only
               {sync.isConfigured && (
                 <SyncStatusIndicator
                   syncStatus={sync.syncStatus}
@@ -925,6 +925,7 @@ export default function Home() {
                   onClick={() => navigate('/settings?tab=sync')}
                 />
               )}
+              */}
 
               {/* New Meeting CTA */}
               <button
@@ -988,6 +989,7 @@ export default function Home() {
                         />
                       </div>
 
+                      {/* HIDDEN: Re-Analyze All Meetings button - use individual selection instead
                       <button
                         onClick={() => {
                           handleBulkReAnalyze()
@@ -999,6 +1001,7 @@ export default function Home() {
                         <Brain size={16} className={isBulkAnalyzing ? 'animate-pulse' : ''} />
                         {isBulkAnalyzing ? `Re-analyzing... (${bulkAnalysisProgress.current}/${bulkAnalysisProgress.total})` : 'Re-Analyze All Meetings'}
                       </button>
+                      */}
 
                       <div className="border-t border-gray-100 my-1"></div>
 
@@ -1210,7 +1213,9 @@ export default function Home() {
                 >
                   <option value="date">Date</option>
                   <option value="priority">Priority</option>
+                  {/* REMOVED: Sentiment sort option - no longer tracking sentiment
                   <option value="sentiment">Sentiment</option>
+                  */}
                 </select>
               </div>
             </div>
@@ -1229,7 +1234,9 @@ export default function Home() {
                     >
                       <option value="date">Date</option>
                       <option value="priority">Priority</option>
+                      {/* REMOVED: Sentiment sort option - no longer tracking sentiment
                       <option value="sentiment">Sentiment</option>
+                      */}
                     </select>
                   </div>
                 </div>
@@ -1326,6 +1333,7 @@ export default function Home() {
                                 )}
                               </div>
                               <div className="flex items-center gap-1">
+                                {/* REMOVED: Sentiment badge - no longer tracking sentiment
                                 {sentiment && (
                                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                                     sentiment.overall === 'positive' ? 'bg-green-100 text-green-800' :
@@ -1335,6 +1343,7 @@ export default function Home() {
                                     {sentiment.overall === 'positive' ? '😊' : sentiment.overall === 'negative' ? '😟' : '😐'}
                                   </span>
                                 )}
+                                */}
                                 <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                                   meeting.priority === 'high' ? 'bg-red-100 text-red-800' :
                                   meeting.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
@@ -1352,12 +1361,14 @@ export default function Home() {
                             <p className="text-sm text-gray-600 line-clamp-3">{meeting.description}</p>
                           )}
                           
+                          {/* REMOVED: Sentiment summary - no longer tracking sentiment
                           {sentiment && sentiment.summary && (
                             <div className="p-3 bg-gray-50 rounded-lg">
                               <p className="text-xs text-gray-600 mb-1">AI Summary:</p>
                               <p className="text-sm text-gray-700 line-clamp-2">{sentiment.summary}</p>
                             </div>
                           )}
+                          */}
                           
                           <div className="flex items-center justify-between text-sm text-gray-500">
                             {meeting.attendees && meeting.attendees.length > 0 && (

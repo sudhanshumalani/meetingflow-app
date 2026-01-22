@@ -502,6 +502,36 @@ export default function Meeting() {
 
         console.log('✅ Meeting notes populated from Claude AI successfully!')
         console.log('📝 Final digitalNotes state should be:', newNotes)
+
+        // AUTO-SAVE: Save the meeting with AI results to Firestore
+        // This ensures AI analysis done on desktop syncs back to mobile
+        if (!isCreatingNew && id) {
+          console.log('💾 Auto-saving meeting with AI results...')
+          try {
+            // Build meeting data with the new AI result
+            const meetingDataForSave = {
+              id,
+              ...formData,
+              digitalNotes: newNotes,
+              audioTranscript,
+              speakerData,
+              aiResult: result, // Use the result directly since state may not have updated yet
+              updatedAt: new Date().toISOString(),
+              lastSaved: new Date().toISOString()
+            }
+
+            // Save to context (which saves to localStorage and Firestore)
+            const saveResult = await updateMeeting(meetingDataForSave)
+            if (saveResult?.success) {
+              console.log('✅ Auto-save after AI analysis successful')
+            } else {
+              console.warn('⚠️ Auto-save after AI analysis had issues:', saveResult)
+            }
+          } catch (saveError) {
+            console.error('❌ Auto-save after AI analysis failed:', saveError)
+            // Don't show error to user - the AI analysis itself succeeded
+          }
+        }
       } else {
         console.log('⚠️ analyze() hook returned null or undefined result')
       }

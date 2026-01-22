@@ -3,6 +3,47 @@ import { Mic, Square, Users, Settings, CheckCircle, Loader2, Edit2, X } from 'lu
 import assemblyAISpeakerService from '../services/assemblyAISpeakerService'
 
 /**
+ * Wake Lock utility to keep screen awake during recording/processing
+ * Prevents iOS PWA from suspending during long operations
+ */
+const wakeLockManager = {
+  wakeLock: null,
+
+  async request() {
+    try {
+      if ('wakeLock' in navigator) {
+        this.wakeLock = await navigator.wakeLock.request('screen')
+        console.log('🔆 Wake Lock: Screen will stay awake')
+
+        // Re-acquire if released (e.g., tab switch)
+        this.wakeLock.addEventListener('release', () => {
+          console.log('🔆 Wake Lock: Released')
+        })
+        return true
+      } else {
+        console.log('🔆 Wake Lock: Not supported on this device')
+        return false
+      }
+    } catch (err) {
+      console.warn('🔆 Wake Lock: Failed to acquire -', err.message)
+      return false
+    }
+  },
+
+  async release() {
+    try {
+      if (this.wakeLock) {
+        await this.wakeLock.release()
+        this.wakeLock = null
+        console.log('🔆 Wake Lock: Released (manual)')
+      }
+    } catch (err) {
+      console.warn('🔆 Wake Lock: Failed to release -', err.message)
+    }
+  }
+}
+
+/**
  * AudioRecorder with Speaker Diarization (PROTOTYPE)
  * Hybrid mode: Real-time streaming + post-processing with speaker labels
  */
@@ -69,6 +110,8 @@ const AudioRecorderSpeaker = ({ onTranscriptUpdate, className = '', disabled = f
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
+      // Release wake lock on unmount
+      wakeLockManager.release()
     }
   }, [])
 
@@ -81,6 +124,9 @@ const AudioRecorderSpeaker = ({ onTranscriptUpdate, className = '', disabled = f
       setSpeakerData(null)
       setRecordingDuration(0)
       realtimeTranscriptRef.current = ''
+
+      // Request wake lock to prevent screen from going dark during recording/processing
+      await wakeLockManager.request()
 
       // Get microphone access
       const micStream = await navigator.mediaDevices.getUserMedia({
@@ -118,6 +164,9 @@ const AudioRecorderSpeaker = ({ onTranscriptUpdate, className = '', disabled = f
             setSpeakerData(data)
             setIsProcessingSpeakers(false)
 
+            // Release wake lock - processing is complete
+            wakeLockManager.release()
+
             // CRITICAL: Save transcript immediately to localStorage to prevent data loss
             try {
               const backupData = {
@@ -146,6 +195,8 @@ const AudioRecorderSpeaker = ({ onTranscriptUpdate, className = '', disabled = f
             setError(error.message)
             setIsRecording(false)
             setIsProcessingSpeakers(false)
+            // Release wake lock on error
+            wakeLockManager.release()
           },
 
           onClose: () => {
@@ -165,6 +216,8 @@ const AudioRecorderSpeaker = ({ onTranscriptUpdate, className = '', disabled = f
     } catch (error) {
       console.error('Failed to start recording:', error)
       setError(error.message)
+      // Release wake lock if recording failed to start
+      wakeLockManager.release()
     }
   }
 

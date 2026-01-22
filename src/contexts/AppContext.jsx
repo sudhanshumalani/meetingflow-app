@@ -765,41 +765,49 @@ export function AppProvider({ children }) {
           categories: localCategories.length
         })
 
-        // If localStorage is empty, check IndexedDB (where manual sync saves data on iOS)
-        if (meetings.length === 0) {
-          console.log('📂 LOAD: localStorage empty, checking IndexedDB...')
-          // Use async IIFE to load from IndexedDB - lazy init to avoid iOS crashes
-          ;(async () => {
-            try {
-              const syncStorage = await getSyncStorage()
-              const idbMeetings = await syncStorage.getItem('meetings')
-              const idbStakeholders = await syncStorage.getItem('stakeholders')
-              const idbCategories = await syncStorage.getItem('categories')
+        // ALWAYS check IndexedDB for more complete data (iOS sync saves there when localStorage quota is full)
+        // This fixes the issue where manual sync downloads 28 meetings but only 2 show (from localStorage)
+        console.log('📂 LOAD: Checking IndexedDB for synced data...')
+        // Use async IIFE to load from IndexedDB - lazy init to avoid iOS crashes
+        ;(async () => {
+          try {
+            const syncStorage = await getSyncStorage()
+            const idbMeetings = await syncStorage.getItem('meetings')
+            const idbStakeholders = await syncStorage.getItem('stakeholders')
+            const idbCategories = await syncStorage.getItem('categories')
 
-              console.log('📂 LOAD: IndexedDB data:', {
-                meetings: idbMeetings?.length || 0,
-                stakeholders: idbStakeholders?.length || 0,
-                categories: idbCategories?.length || 0
+            console.log('📂 LOAD: IndexedDB data:', {
+              meetings: idbMeetings?.length || 0,
+              stakeholders: idbStakeholders?.length || 0,
+              categories: idbCategories?.length || 0
+            })
+
+            // Use IndexedDB data if it has MORE items than localStorage
+            // This handles the case where localStorage save failed due to quota but IndexedDB succeeded
+            const idbHasMoreData = (idbMeetings?.length || 0) > meetings.length ||
+                                   (idbStakeholders?.length || 0) > localStakeholders.length ||
+                                   (idbCategories?.length || 0) > localCategories.length
+
+            if (idbMeetings && idbHasMoreData) {
+              console.log('📂 LOAD: IndexedDB has more data than localStorage, using IndexedDB!', {
+                localStorage: { meetings: meetings.length, stakeholders: localStakeholders.length, categories: localCategories.length },
+                indexedDB: { meetings: idbMeetings?.length || 0, stakeholders: idbStakeholders?.length || 0, categories: idbCategories?.length || 0 }
               })
-
-              if (idbMeetings && idbMeetings.length > 0) {
-                console.log('📂 LOAD: Found data in IndexedDB, loading...')
-                dispatch({
-                  type: 'LOAD_DATA',
-                  payload: {
-                    meetings: deduplicateMeetings(idbMeetings || []),
-                    stakeholders: idbStakeholders || [],
-                    stakeholderCategories: idbCategories || [],
-                    deletedItems: []
-                  }
-                })
-                dispatch({ type: 'SET_LOADING', payload: false })
-              }
-            } catch (idbError) {
-              console.warn('📂 LOAD: IndexedDB check failed:', idbError)
+              dispatch({
+                type: 'LOAD_DATA',
+                payload: {
+                  meetings: deduplicateMeetings(idbMeetings || []),
+                  stakeholders: idbStakeholders || localStakeholders || [],
+                  stakeholderCategories: idbCategories || localCategories || [],
+                  deletedItems: deletedItems || []
+                }
+              })
+              dispatch({ type: 'SET_LOADING', payload: false })
             }
-          })()
-        }
+          } catch (idbError) {
+            console.warn('📂 LOAD: IndexedDB check failed:', idbError)
+          }
+        })()
 
         console.log('📂 LOAD: Loaded from localStorage - meetings:', meetings.length)
 

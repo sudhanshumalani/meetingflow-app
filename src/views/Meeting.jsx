@@ -757,7 +757,8 @@ export default function Meeting() {
         id: meetingId,
         ...formData,
         // Convert date to scheduledAt format for consistent storage
-        scheduledAt: meetingDate ? `${meetingDate}T00:00:00.000Z` : undefined,
+        // Store as local time (no Z suffix) to avoid timezone shifts
+        scheduledAt: meetingDate ? `${meetingDate}T12:00:00` : undefined,
         digitalNotes,
         // Store transcript once (not duplicated)
         audioTranscript,

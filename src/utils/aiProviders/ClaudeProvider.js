@@ -173,9 +173,12 @@ Return ONLY valid JSON. No markdown code blocks. No explanation text.`
         result = this.parseTextResponse(aiResponse)
       }
 
+      // Normalize result to include both new and old field names for backward compatibility
+      const normalizedResult = this.normalizeResult(result)
+
       // Add metadata
       return {
-        ...result,
+        ...normalizedResult,
         provider: 'Claude Haiku',
         processingTime,
         tokenUsage: data.usage || {},
@@ -186,6 +189,34 @@ Return ONLY valid JSON. No markdown code blocks. No explanation text.`
     } catch (error) {
       console.error('Claude analysis failed:', error)
       throw new Error(`Claude analysis failed: ${error.message}`)
+    }
+  }
+
+  // Normalize result to include both new and old field names for backward compatibility
+  normalizeResult(result) {
+    return {
+      summary: result.summary || '',
+      // New format fields
+      keyPoints: result.keyPoints || result.keyDiscussionPoints || [],
+      decisions: result.decisions || result.decisionsMade || [],
+      followUps: result.followUps || result.openQuestions || [],
+      nextSteps: result.nextSteps || '',
+      // Old format fields (for backward compatibility with display code)
+      keyDiscussionPoints: result.keyPoints || result.keyDiscussionPoints || [],
+      decisionsMade: result.decisions || result.decisionsMade || [],
+      openQuestions: result.followUps || result.openQuestions || [],
+      // Action items (normalize field names within)
+      actionItems: (result.actionItems || []).map(item => ({
+        task: item.task || '',
+        owner: item.owner || item.assignee || 'TBD',
+        assignee: item.owner || item.assignee || 'TBD', // backward compat
+        deadline: item.deadline || item.dueDate || 'TBD',
+        dueDate: item.deadline || item.dueDate || 'TBD', // backward compat
+        priority: item.priority || 'medium'
+      })),
+      // Metadata
+      sentiment: result.sentiment || 'neutral',
+      confidence: result.confidence || 0.9
     }
   }
 

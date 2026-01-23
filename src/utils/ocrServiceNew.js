@@ -209,23 +209,33 @@ export class SimpleOCRService {
         max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 40px rgba(0,0,0,0.3);
       `
 
-      const prompt = `I will provide you with rough meeting notes. Your task is to carefully review them and produce an organized output with the following three sections:
+      const prompt = `You are an expert meeting notes assistant. Transform this meeting content into clear, actionable notes.
 
-**Summary** – Write a concise overview (3–5 sentences) capturing the overall purpose of the meeting and the main outcomes.
+**Meeting Content:**
+"""
+${text}
+"""
 
-**Key Discussion Points** – List the most important topics discussed during the meeting in bullet points. Group related points together if appropriate.
+**Context:** ${meetingContext.meetingType || 'General'} meeting${meetingContext.stakeholder ? ` with ${meetingContext.stakeholder}` : ''}${meetingContext.date ? ` on ${meetingContext.date}` : ''}
 
-**Action Items** – Provide a clear, numbered list of action items. Each action item should specify:
-• What needs to be done
-• Who is responsible (if identifiable from the notes)
-• Any deadlines or timelines (if mentioned or implied)
+**Instructions:** Return a JSON object with exactly these 6 fields:
 
-Format the response cleanly with headers for each section. Do not include extraneous information or rephrase in a vague way—keep it clear, concise, and actionable.
+{
+  "summary": "2-3 sentence summary: What was this about? What was accomplished?",
+  "keyPoints": ["Specific insight with names/numbers/dates", "Another key point with details"],
+  "decisions": ["[DECISION]: What was decided + who approved"],
+  "actionItems": [{"task": "Specific task", "owner": "Name or TBD", "deadline": "Date or TBD", "priority": "high/medium/low"}],
+  "followUps": ["Open question needing answer", "Topic for next meeting"],
+  "nextSteps": "1-2 sentence summary of immediate next actions"
+}
 
-Meeting Notes:
-"""${text}"""
+**Guidelines:**
+- Be SPECIFIC with names, numbers, dates
+- Action items must have owner + deadline + priority
+- Only include actual decisions, not suggestions
+- Keep it concise - bullet points, not paragraphs
 
-Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
+Return ONLY valid JSON, no markdown code blocks.`
 
       content.innerHTML = `
         <h2 style="margin-top: 0; color: #333; text-align: center;">🧠 Get Professional AI Analysis</h2>
@@ -329,9 +339,11 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
       const jsonMatch = response.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0])
-        if (parsed.summary && (parsed.keyDiscussionPoints || parsed.actionItems)) {
+        // Check for either new format (keyPoints) or old format (keyDiscussionPoints)
+        if (parsed.summary && (parsed.keyPoints || parsed.keyDiscussionPoints || parsed.actionItems)) {
           console.log('✅ Successfully parsed Claude JSON response')
-          return parsed
+          // Normalize to support both old and new field names
+          return this.normalizeResponse(parsed)
         }
       }
     } catch (e) {
@@ -342,13 +354,49 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
     return this.parseStructuredText(response)
   }
 
+  // Normalize response to include both old and new field names for backward compatibility
+  normalizeResponse(parsed) {
+    return {
+      summary: parsed.summary || '',
+      // New format fields
+      keyPoints: parsed.keyPoints || parsed.keyDiscussionPoints || [],
+      decisions: parsed.decisions || parsed.decisionsMade || [],
+      followUps: parsed.followUps || parsed.openQuestions || [],
+      nextSteps: parsed.nextSteps || '',
+      // Old format fields (for backward compatibility with display code)
+      keyDiscussionPoints: parsed.keyPoints || parsed.keyDiscussionPoints || [],
+      decisionsMade: parsed.decisions || parsed.decisionsMade || [],
+      openQuestions: parsed.followUps || parsed.openQuestions || [],
+      // Action items (same in both formats but normalize field names within)
+      actionItems: (parsed.actionItems || []).map(item => ({
+        task: item.task || '',
+        owner: item.owner || item.assignee || 'TBD',
+        assignee: item.owner || item.assignee || 'TBD', // backward compat
+        deadline: item.deadline || item.dueDate || 'TBD',
+        dueDate: item.deadline || item.dueDate || 'TBD', // backward compat
+        priority: item.priority || 'medium'
+      })),
+      // Metadata
+      sentiment: parsed.sentiment || 'neutral',
+      confidence: parsed.confidence || 0.9
+    }
+  }
+
   // Parse structured text response from Claude
   parseStructuredText(text) {
     const result = {
       summary: '',
-      keyDiscussionPoints: [],
+      keyPoints: [],
+      decisions: [],
       actionItems: [],
-      sentiment: 'neutral'
+      followUps: [],
+      nextSteps: '',
+      // Backward compatibility
+      keyDiscussionPoints: [],
+      decisionsMade: [],
+      openQuestions: [],
+      sentiment: 'neutral',
+      confidence: 0.8
     }
 
     const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0)
@@ -357,15 +405,24 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
     for (const line of lines) {
       const lowerLine = line.toLowerCase()
 
-      // Identify sections
+      // Identify sections (check for both old and new naming)
       if (lowerLine.includes('summary')) {
         currentSection = 'summary'
         continue
-      } else if (lowerLine.includes('key discussion') || lowerLine.includes('discussion points')) {
-        currentSection = 'keyDiscussionPoints'
+      } else if (lowerLine.includes('key point') || lowerLine.includes('key discussion') || lowerLine.includes('discussion points')) {
+        currentSection = 'keyPoints'
         continue
-      } else if (lowerLine.includes('action items') || lowerLine.includes('action item')) {
+      } else if (lowerLine.includes('decision')) {
+        currentSection = 'decisions'
+        continue
+      } else if (lowerLine.includes('action item') || lowerLine.includes('action items')) {
         currentSection = 'actionItems'
+        continue
+      } else if (lowerLine.includes('follow') || lowerLine.includes('open question')) {
+        currentSection = 'followUps'
+        continue
+      } else if (lowerLine.includes('next step')) {
+        currentSection = 'nextSteps'
         continue
       }
 
@@ -377,10 +434,17 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
       // Add content to appropriate section
       if (currentSection === 'summary') {
         result.summary += (result.summary ? ' ' : '') + line
-      } else if (currentSection === 'keyDiscussionPoints') {
+      } else if (currentSection === 'keyPoints') {
         const cleanLine = line.replace(/^[-•*]\s*/, '').replace(/^\d+\.\s*/, '')
         if (cleanLine.length > 3) {
-          result.keyDiscussionPoints.push(cleanLine)
+          result.keyPoints.push(cleanLine)
+          result.keyDiscussionPoints.push(cleanLine) // backward compat
+        }
+      } else if (currentSection === 'decisions') {
+        const cleanLine = line.replace(/^[-•*]\s*/, '').replace(/^\d+\.\s*/, '')
+        if (cleanLine.length > 3) {
+          result.decisions.push(cleanLine)
+          result.decisionsMade.push(cleanLine) // backward compat
         }
       } else if (currentSection === 'actionItems') {
         const cleanLine = line.replace(/^[-•*]\s*/, '').replace(/^\d+\.\s*/, '')
@@ -388,12 +452,22 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
           // Try to extract assignee and deadline from the action item
           const actionItem = {
             task: cleanLine,
-            assignee: this.extractAssignee(cleanLine) || 'Unassigned',
+            owner: this.extractAssignee(cleanLine) || 'TBD',
+            assignee: this.extractAssignee(cleanLine) || 'TBD', // backward compat
             priority: this.determinePriority(cleanLine.toLowerCase()),
-            dueDate: this.extractDueDate(cleanLine)
+            deadline: this.extractDueDate(cleanLine) || 'TBD',
+            dueDate: this.extractDueDate(cleanLine) // backward compat
           }
           result.actionItems.push(actionItem)
         }
+      } else if (currentSection === 'followUps') {
+        const cleanLine = line.replace(/^[-•*]\s*/, '').replace(/^\d+\.\s*/, '')
+        if (cleanLine.length > 3) {
+          result.followUps.push(cleanLine)
+          result.openQuestions.push(cleanLine) // backward compat
+        }
+      } else if (currentSection === 'nextSteps') {
+        result.nextSteps += (result.nextSteps ? ' ' : '') + line.replace(/^[-•*]\s*/, '')
       }
     }
 
@@ -416,9 +490,16 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
 
     const result = {
       summary: '',
-      keyDiscussionPoints: [],
+      keyPoints: [],
+      keyDiscussionPoints: [], // backward compat
+      decisions: [],
+      decisionsMade: [], // backward compat
       actionItems: [],
-      sentiment: 'neutral'
+      followUps: [],
+      openQuestions: [], // backward compat
+      nextSteps: '',
+      sentiment: 'neutral',
+      confidence: 0.75
     }
 
     // Advanced analysis
@@ -429,6 +510,11 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
 
     // Analyze sentiment
     result.sentiment = this.analyzeSentiment(text)
+
+    // Generate next steps from action items
+    if (result.actionItems.length > 0) {
+      result.nextSteps = `Complete ${result.actionItems.length} action items. Priority tasks should be addressed first.`
+    }
 
     console.log('✅ Enhanced AI analysis complete:', result)
     return result
@@ -448,21 +534,28 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
       if (this.isEnhancedActionItem(lowerLine, line)) {
         const actionItem = {
           task: line.trim(),
-          assignee: this.extractAssignee(line) || 'Unassigned',
+          owner: this.extractAssignee(line) || 'TBD',
+          assignee: this.extractAssignee(line) || 'TBD', // backward compat
           priority: this.determinePriority(lowerLine),
-          dueDate: this.extractDueDate(line) || null
+          deadline: this.extractDueDate(line) || 'TBD',
+          dueDate: this.extractDueDate(line) || null // backward compat
         }
         result.actionItems.push(actionItem)
         console.log('✅ ENHANCED ACTION ITEM:', actionItem)
       }
       // Decision detection
       else if (this.isDecisionPoint(lowerLine)) {
-        decisions.push(line.trim())
+        const decision = `[DECISION]: ${line.trim()}`
+        decisions.push(decision)
+        result.decisions.push(decision)
+        result.decisionsMade.push(decision) // backward compat
         console.log('🎯 DECISION DETECTED:', line.trim())
       }
-      // Concern/challenge detection
+      // Concern/challenge detection (treat as follow-ups)
       else if (this.isConcernPoint(lowerLine)) {
         concerns.push(line.trim())
+        result.followUps.push(`Follow up on: ${line.trim()}`)
+        result.openQuestions.push(`Follow up on: ${line.trim()}`) // backward compat
         console.log('⚠️ CONCERN DETECTED:', line.trim())
       }
       // Topic extraction
@@ -470,24 +563,18 @@ Meeting Context: ${JSON.stringify(meetingContext, null, 2)}`
         const topic = this.extractTopicFromLine(line)
         if (topic) {
           topics.set(topic, (topics.get(topic) || 0) + 1)
-          result.keyDiscussionPoints.push(line.trim())
+          result.keyPoints.push(line.trim())
+          result.keyDiscussionPoints.push(line.trim()) // backward compat
           console.log('💬 DISCUSSION POINT:', line.trim())
         }
       }
     })
 
-    // Add decisions and concerns to discussion points
-    if (decisions.length > 0) {
-      result.keyDiscussionPoints.push(...decisions.map(d => `Decision: ${d}`))
-    }
-    if (concerns.length > 0) {
-      result.keyDiscussionPoints.push(...concerns.map(c => `Concern: ${c}`))
-    }
-
     // Remove duplicates and sort by importance
-    result.keyDiscussionPoints = [...new Set(result.keyDiscussionPoints)]
-      .sort((a, b) => b.length - a.length) // Longer entries tend to be more detailed
-      .slice(0, 10) // Limit to top 10 points
+    result.keyPoints = [...new Set(result.keyPoints)]
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 10)
+    result.keyDiscussionPoints = [...result.keyPoints] // sync backward compat
   }
 
   // Enhanced action item detection

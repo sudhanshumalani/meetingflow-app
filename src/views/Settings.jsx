@@ -898,31 +898,31 @@ export default function Settings() {
                   <p className="text-sm text-gray-600">Configure Claude AI for intelligent meeting processing and insights</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className={`w-3 h-3 rounded-full ${capabilities.claude ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  <div className={`w-3 h-3 rounded-full ${capabilities.claudeAPI ? 'bg-green-500' : 'bg-red-500'}`}></div>
                   <span className="text-sm font-medium text-gray-700">
-                    {capabilities.claude ? 'Connected' : 'Not configured'}
+                    {capabilities.claudeAPI ? 'Connected' : 'Not configured'}
                   </span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className={`p-4 rounded-lg border-2 ${capabilities.claude ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className={`p-4 rounded-lg border-2 ${capabilities.claudeAPI ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
                   <div className="flex items-center gap-3 mb-2">
-                    <div className={`w-2 h-2 rounded-full ${capabilities.claude ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                    <div className={`w-2 h-2 rounded-full ${capabilities.claudeAPI ? 'bg-green-500' : 'bg-gray-400'}`}></div>
                     <h4 className="font-medium text-gray-900">AI Analysis</h4>
                   </div>
                   <p className="text-sm text-gray-600">
-                    {capabilities.claude ? 'Active - AI insights available' : 'Configure API key to enable'}
+                    {capabilities.claudeAPI ? 'Active - AI insights available' : 'Configure API key to enable'}
                   </p>
                 </div>
 
-                <div className={`p-4 rounded-lg border-2 ${capabilities.claude ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
+                <div className={`p-4 rounded-lg border-2 ${capabilities.claudeAPI ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
                   <div className="flex items-center gap-3 mb-2">
-                    <div className={`w-2 h-2 rounded-full ${capabilities.claude ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                    <div className={`w-2 h-2 rounded-full ${capabilities.claudeAPI ? 'bg-green-500' : 'bg-gray-400'}`}></div>
                     <h4 className="font-medium text-gray-900">Smart Summaries</h4>
                   </div>
                   <p className="text-sm text-gray-600">
-                    {capabilities.claude ? 'Generating intelligent summaries' : 'API key required'}
+                    {capabilities.claudeAPI ? 'Generating intelligent summaries' : 'API key required'}
                   </p>
                 </div>
 
@@ -1012,69 +1012,6 @@ export default function Settings() {
               </div>
             </div>
 
-            {/* AI Features Overview */}
-            <div className="bg-white rounded-xl shadow-sm border p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">AI-Powered Features</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-4">
-                  <h4 className="font-medium text-gray-900">Meeting Analysis</h4>
-                  <ul className="text-sm text-gray-600 space-y-2">
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-green-600" />
-                      Automatic action item extraction
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-green-600" />
-                      Intelligent meeting summaries
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-green-600" />
-                      Key decision identification
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-green-600" />
-                      Challenge and blocker detection
-                    </li>
-                  </ul>
-                </div>
-                <div className="space-y-4">
-                  <h4 className="font-medium text-gray-900">Advanced Insights</h4>
-                  <ul className="text-sm text-gray-600 space-y-2">
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-green-600" />
-                      Sentiment analysis
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-green-600" />
-                      Relationship tracking
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-green-600" />
-                      Pattern recognition
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-green-600" />
-                      Strategic recommendations
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-
-            {/* Test Component Link */}
-            <div className="bg-white rounded-xl shadow-sm border p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Test New Features</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Try the new simplified meeting notes interface with enhanced editing and Claude AI integration.
-              </p>
-              <button
-                onClick={() => navigate('/test-notes')}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                <Sparkles className="w-4 h-4" />
-                Test New Meeting Notes
-              </button>
-            </div>
           </div>
         )}
 
@@ -1329,25 +1266,27 @@ export default function Settings() {
                   <p className="text-sm text-gray-600">Real-time sync across all your devices using Google Firestore</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                  <span className="text-sm font-medium text-gray-700">Connected</span>
+                  <div className={`w-3 h-3 rounded-full ${firestoreUserId ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  <span className="text-sm font-medium text-gray-700">
+                    {firestoreUserId ? 'Connected' : 'Not configured'}
+                  </span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-4 rounded-lg border-2 border-green-200 bg-green-50">
+                <div className={`p-4 rounded-lg border-2 ${firestoreUserId ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
                   <div className="flex items-center gap-3 mb-2">
-                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <CheckCircle className={`w-5 h-5 ${firestoreUserId ? 'text-green-600' : 'text-gray-400'}`} />
                     <h4 className="font-medium text-gray-900">Real-Time Sync</h4>
                   </div>
                   <p className="text-sm text-gray-600">
-                    Changes sync instantly across all devices
+                    {firestoreUserId ? 'Changes sync instantly across all devices' : 'Set up Device ID to enable'}
                   </p>
                 </div>
 
-                <div className="p-4 rounded-lg border-2 border-green-200 bg-green-50">
+                <div className={`p-4 rounded-lg border-2 ${firestoreUserId ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
                   <div className="flex items-center gap-3 mb-2">
-                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <CheckCircle className={`w-5 h-5 ${firestoreUserId ? 'text-green-600' : 'text-gray-400'}`} />
                     <h4 className="font-medium text-gray-900">Offline Support</h4>
                   </div>
                   <p className="text-sm text-gray-600">
@@ -1525,17 +1464,6 @@ export default function Settings() {
                 Note: This will upload all your local meetings, stakeholders, and categories to Firestore.
                 Existing data in Firestore will be merged with your local data.
               </p>
-            </div>
-
-            {/* How Firestore Sync Works */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-medium text-blue-900 mb-2">How Firestore Sync Works</h4>
-              <ul className="text-sm text-blue-800 space-y-1">
-                <li>• Data syncs automatically in real-time - no manual sync needed</li>
-                <li>• Works offline - changes sync when you're back online</li>
-                <li>• All devices with the same Device ID share the same data</li>
-                <li>• Deletions sync across devices too</li>
-              </ul>
             </div>
 
             {/* Firebase Debug Panel */}

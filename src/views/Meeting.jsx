@@ -750,9 +750,14 @@ export default function Meeting() {
       }
       console.log('📦 Meeting data sizes (bytes):', dataSizes)
 
+      // Ensure scheduledAt is set from formData.date, but preserve original date if not changed
+      const meetingDate = formData.date
+
       return {
         id: meetingId,
         ...formData,
+        // Convert date to scheduledAt format for consistent storage
+        scheduledAt: meetingDate ? `${meetingDate}T00:00:00.000Z` : undefined,
         digitalNotes,
         // Store transcript once (not duplicated)
         audioTranscript,
@@ -1184,21 +1189,6 @@ export default function Meeting() {
             </div>
             
             <div className="flex items-center gap-3">
-              {/* AI Mode Toggle */}
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-600">AI:</label>
-                <select
-                  value={aiMode}
-                  onChange={(e) => setAiMode(e.target.value)}
-                  className="text-sm border border-gray-300 rounded px-2 py-1"
-                >
-                  <option value="auto">Auto</option>
-                  <option value="manual">Manual</option>
-                  <option value="off">Off</option>
-                </select>
-              </div>
-              
-              {/* Export and data integration available via n8n (see Settings) */}
 
               {/* AI Processing Status */}
               {isAIProcessing && (
@@ -1412,22 +1402,6 @@ export default function Meeting() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Priority Level
-                  </label>
-                  <select
-                    value={formData.priority}
-                    onChange={(e) => handleInputChange('priority', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500"
-                  >
-                    {Object.entries(PRIORITY_LEVELS).map(([key, priority]) => (
-                      <option key={key} value={key}>
-                        {priority.icon} {priority.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
             </div>
 
@@ -2155,7 +2129,6 @@ Example notes you might paste:
                       <li>• Position device 2-3 feet from speakers</li>
                       <li>• Minimize background noise when possible</li>
                       <li>• Speak clearly and at normal pace</li>
-                      <li>• Use "Hybrid" mode for best accuracy</li>
                       <li>• Recording works offline on your device</li>
                     </ul>
                   </div>

@@ -2,14 +2,14 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
 import { useSyncContext } from '../contexts/SyncProvider'
-import { 
-  Search, 
+import {
+  Search,
   Plus,
-  Settings, 
-  Calendar, 
-  Users, 
-  Clock, 
-  FileText, 
+  Settings,
+  Calendar,
+  Users,
+  Clock,
+  FileText,
   Sparkles,
   AlertTriangle,
   Info,
@@ -39,7 +39,8 @@ import {
   Gauge,
   BarChart3,
   Users2,
-  Lightbulb
+  Lightbulb,
+  RefreshCw
 } from 'lucide-react'
 import { format, isToday, isThisWeek, startOfDay, endOfDay, differenceInDays } from 'date-fns'
 import {
@@ -68,6 +69,30 @@ import hapticFeedback from '../utils/hapticFeedback'
 import { BatchExportButton, ExportOptionsButton } from '../components/ExportOptions'
 import { processWithClaude } from '../utils/ocrServiceNew'
 
+// Platform detection for firestore service loading
+const IS_IOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)
+
+// Lazy-load firestoreService - uses REST API on iOS, SDK on desktop
+let firestoreServiceInstance = null
+async function getFirestoreService() {
+  if (firestoreServiceInstance) return firestoreServiceInstance
+  try {
+    if (IS_IOS) {
+      const module = await import('../utils/firestoreRestService')
+      firestoreServiceInstance = module.default
+      console.log('📱 Home: Using REST API service (iOS)')
+    } else {
+      const module = await import('../utils/firestoreService')
+      firestoreServiceInstance = module.default
+      console.log('💻 Home: Using SDK service (Desktop)')
+    }
+    return firestoreServiceInstance
+  } catch (err) {
+    console.error('Failed to load firestoreService:', err)
+    return null
+  }
+}
+
 export default function Home() {
   const navigate = useNavigate()
   const { meetings, stakeholders, stakeholderCategories, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder, addStakeholderCategory, updateStakeholderCategory, deleteStakeholderCategory } = useApp()
@@ -80,9 +105,6 @@ export default function Home() {
   const [aiInsights, setAiInsights] = useState([])
 
   // Bulk re-analysis states
-  const [isBulkAnalyzing, setIsBulkAnalyzing] = useState(false)
-  const [bulkAnalysisProgress, setBulkAnalysisProgress] = useState({ current: 0, total: 0 })
-  const [bulkAnalysisError, setBulkAnalysisError] = useState(null)
   
   // Advanced feature states
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
@@ -94,7 +116,8 @@ export default function Home() {
   const [meetingSentiments, setMeetingSentiments] = useState({})
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(null)
-  const [sortBy, setSortBy] = useState('date') // 'date', 'priority', 'sentiment'
+  // Meeting organization state - replaces sortBy
+  // 'date' = latest first (default), 'year', 'month', 'week', 'stakeholder'
   const [filterPriority, setFilterPriority] = useState('all')
   
   // Mobile-specific states
@@ -130,6 +153,13 @@ export default function Home() {
   const [showBulkStakeholderActions, setShowBulkStakeholderActions] = useState(false)
   const [bulkCategoryAssignment, setBulkCategoryAssignment] = useState('')
   const [showBulkStakeholderDeleteConfirm, setShowBulkStakeholderDeleteConfirm] = useState(false)
+
+  // Sync states
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState(null)
+
+  // Meeting organization state
+  const [organizeBy, setOrganizeBy] = useState('date') // 'date', 'year', 'month', 'week', 'stakeholder'
 
   // Initialize services
   const sentimentAnalyzer = new SentimentAnalyzer()
@@ -446,175 +476,83 @@ export default function Home() {
     setShowBulkDeleteConfirm(false)
   }
 
-  // Re-analyze selected meetings handler
-  const handleReAnalyzeSelected = async () => {
-    const claudeApiKey = localStorage.getItem('claudeApiKey')
+  // Quick Sync handler - syncs data with Firestore
+  const handleQuickSync = async () => {
+    const userId = localStorage.getItem('meetingflow_firestore_user_id')
 
-    if (!claudeApiKey) {
-      setBulkAnalysisError('Claude API key required. Please add it in Settings.')
-      setTimeout(() => setBulkAnalysisError(null), 5000)
+    if (!userId) {
+      setSyncResult({
+        success: false,
+        message: 'Firestore not configured. Go to Settings > Firestore Sync to set up.'
+      })
+      setTimeout(() => setSyncResult(null), 5000)
       return
     }
 
-    if (selectedMeetings.size === 0) {
-      setBulkAnalysisError('No meetings selected. Please select meetings using checkboxes.')
-      setTimeout(() => setBulkAnalysisError(null), 5000)
-      return
-    }
+    setIsSyncing(true)
+    setSyncResult(null)
 
-    // Get selected meetings that have transcripts
-    const meetingsToAnalyze = meetings.filter(meeting =>
-      selectedMeetings.has(meeting.id) &&
-      meeting.audioTranscript &&
-      meeting.audioTranscript.trim().length > 50
-    )
+    try {
+      console.log('🔄 Quick sync starting...')
 
-    if (meetingsToAnalyze.length === 0) {
-      setBulkAnalysisError('Selected meetings have no transcripts to re-analyze.')
-      setTimeout(() => setBulkAnalysisError(null), 5000)
-      return
-    }
+      // Load firestore service (uses REST on iOS, SDK on desktop)
+      const firestoreService = await getFirestoreService()
 
-    if (!window.confirm(`Re-analyze ${meetingsToAnalyze.length} selected meeting(s) with improved AI prompt?\n\nEstimated cost: $${(meetingsToAnalyze.length * 0.003).toFixed(2)}\n\nTip: Process 3-5 meetings at a time to avoid rate limits.`)) {
-      return
-    }
-
-    setIsBulkAnalyzing(true)
-    setBulkAnalysisProgress({ current: 0, total: meetingsToAnalyze.length })
-    setBulkAnalysisError(null)
-
-    let successCount = 0
-    let failCount = 0
-
-    for (let i = 0; i < meetingsToAnalyze.length; i++) {
-      const meeting = meetingsToAnalyze[i]
-
-      try {
-        console.log(`🔄 Re-analyzing meeting ${i + 1}/${meetingsToAnalyze.length}: ${meeting.title}`)
-
-        const aiResult = await processWithClaude(meeting.audioTranscript, {
-          meetingType: meeting.type || 'general',
-          stakeholder: meeting.stakeholders?.[0] || null,
-          date: meeting.scheduledAt
-        })
-
-        // Update the meeting with new AI analysis
-        updateMeeting(meeting.id, {
-          ...meeting,
-          aiResult: {
-            ...aiResult,
-            reAnalyzedAt: new Date().toISOString(),
-            previousVersion: meeting.aiResult // Keep backup of old analysis
-          }
-        })
-
-        successCount++
-        console.log(`✅ Successfully re-analyzed: ${meeting.title}`)
-
-      } catch (error) {
-        console.error(`❌ Failed to re-analyze meeting ${meeting.title}:`, error)
-        failCount++
+      if (!firestoreService) {
+        throw new Error('Failed to load Firestore service')
       }
 
-      // Update progress
-      setBulkAnalysisProgress({ current: i + 1, total: meetingsToAnalyze.length })
+      // Fetch all data from Firestore
+      const [cloudMeetings, cloudStakeholders, cloudCategories] = await Promise.all([
+        firestoreService.getMeetings(),
+        firestoreService.getStakeholders(),
+        firestoreService.getStakeholderCategories()
+      ])
 
-      // Longer delay to avoid Claude API rate limiting (especially for new accounts)
-      // Claude has acceleration limits that restrict how quickly you can ramp up usage
-      if (i < meetingsToAnalyze.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 5000)) // 5 second delay
-      }
-    }
+      // Get local data
+      const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+      const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
 
-    setIsBulkAnalyzing(false)
-    setSelectedMeetings(new Set()) // Clear selection after completion
+      // Simple merge: use cloud data, add any local-only items
+      const cloudMeetingIds = new Set(cloudMeetings.map(m => m.id))
+      const localOnlyMeetings = localMeetings.filter(m => !cloudMeetingIds.has(m.id))
 
-    // Show completion message
-    const message = `Re-analysis of selected meetings complete!\n✅ Success: ${successCount}\n${failCount > 0 ? `❌ Failed: ${failCount}` : ''}`
-    alert(message)
-
-    console.log(`📊 Selected meetings re-analysis complete: ${successCount} success, ${failCount} failed`)
-  }
-
-  // Bulk AI re-analysis handler (ALL meetings)
-  const handleBulkReAnalyze = async () => {
-    const claudeApiKey = localStorage.getItem('claudeApiKey')
-
-    if (!claudeApiKey) {
-      setBulkAnalysisError('Claude API key required. Please add it in Settings.')
-      setTimeout(() => setBulkAnalysisError(null), 5000)
-      return
-    }
-
-    // Filter meetings that have transcripts to re-analyze
-    const meetingsToAnalyze = meetings.filter(meeting =>
-      meeting.audioTranscript && meeting.audioTranscript.trim().length > 50
-    )
-
-    if (meetingsToAnalyze.length === 0) {
-      setBulkAnalysisError('No meetings with transcripts found to re-analyze.')
-      setTimeout(() => setBulkAnalysisError(null), 5000)
-      return
-    }
-
-    if (!window.confirm(`Re-analyze ${meetingsToAnalyze.length} meetings with improved AI prompt? This will update all meeting notes with more detailed analysis.\n\nEstimated cost: $${(meetingsToAnalyze.length * 0.003).toFixed(2)}`)) {
-      return
-    }
-
-    setIsBulkAnalyzing(true)
-    setBulkAnalysisProgress({ current: 0, total: meetingsToAnalyze.length })
-    setBulkAnalysisError(null)
-
-    let successCount = 0
-    let failCount = 0
-
-    for (let i = 0; i < meetingsToAnalyze.length; i++) {
-      const meeting = meetingsToAnalyze[i]
-
-      try {
-        console.log(`🔄 Re-analyzing meeting ${i + 1}/${meetingsToAnalyze.length}: ${meeting.title}`)
-
-        const aiResult = await processWithClaude(meeting.audioTranscript, {
-          meetingType: meeting.type || 'general',
-          stakeholder: meeting.stakeholders?.[0] || null,
-          date: meeting.scheduledAt
-        })
-
-        // Update the meeting with new AI analysis
-        updateMeeting(meeting.id, {
-          ...meeting,
-          aiResult: {
-            ...aiResult,
-            reAnalyzedAt: new Date().toISOString(),
-            previousVersion: meeting.aiResult // Keep backup of old analysis
-          }
-        })
-
-        successCount++
-        console.log(`✅ Successfully re-analyzed: ${meeting.title}`)
-
-      } catch (error) {
-        console.error(`❌ Failed to re-analyze meeting ${meeting.title}:`, error)
-        failCount++
+      // Upload local-only meetings to cloud
+      for (const meeting of localOnlyMeetings) {
+        try {
+          await firestoreService.saveMeeting(meeting)
+          console.log('📤 Uploaded local meeting:', meeting.title)
+        } catch (e) {
+          console.warn('Failed to upload meeting:', e)
+        }
       }
 
-      // Update progress
-      setBulkAnalysisProgress({ current: i + 1, total: meetingsToAnalyze.length })
-
-      // Longer delay to avoid Claude API rate limiting (especially for new accounts)
-      // Claude has acceleration limits that restrict how quickly you can ramp up usage
-      if (i < meetingsToAnalyze.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 5000)) // 5 second delay
+      // Merge and save
+      const mergedMeetings = [...cloudMeetings, ...localOnlyMeetings]
+      localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
+      localStorage.setItem('meetingflow_stakeholders', JSON.stringify(cloudStakeholders.length > 0 ? cloudStakeholders : localStakeholders))
+      if (cloudCategories.length > 0) {
+        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(cloudCategories))
       }
+
+      setSyncResult({
+        success: true,
+        message: `Synced! ${cloudMeetings.length} from cloud, ${localOnlyMeetings.length} uploaded.`
+      })
+
+      // Reload to show updated data
+      setTimeout(() => window.location.reload(), 1500)
+
+    } catch (error) {
+      console.error('❌ Quick sync failed:', error)
+      setSyncResult({
+        success: false,
+        message: `Sync failed: ${error.message}`
+      })
+    } finally {
+      setIsSyncing(false)
+      setTimeout(() => setSyncResult(null), 5000)
     }
-
-    setIsBulkAnalyzing(false)
-
-    // Show completion message
-    const message = `Bulk re-analysis complete!\n✅ Success: ${successCount}\n${failCount > 0 ? `❌ Failed: ${failCount}` : ''}`
-    alert(message)
-
-    console.log(`📊 Bulk re-analysis complete: ${successCount} success, ${failCount} failed`)
   }
 
   // Bulk stakeholder selection handlers
@@ -788,22 +726,88 @@ export default function Home() {
     return { status: 'overdue', color: 'text-red-600', days: daysSinceContact }
   }
 
-  // Sorting and filtering
+  // Sorting - always latest first
   const sortedMeetings = [...filteredMeetings].sort((a, b) => {
-    switch (sortBy) {
-      case 'priority':
-        const priorityOrder = { high: 3, medium: 2, low: 1 }
-        return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0)
-      case 'sentiment':
-        const aSentiment = meetingSentiments[a.id]
-        const bSentiment = meetingSentiments[b.id]
-        const sentimentOrder = { positive: 3, neutral: 2, negative: 1 }
-        return (sentimentOrder[bSentiment?.overall] || 0) - (sentimentOrder[aSentiment?.overall] || 0)
-      case 'date':
-      default:
-        return new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt)
-    }
+    const dateA = new Date(a.scheduledAt || a.updatedAt || a.createdAt)
+    const dateB = new Date(b.scheduledAt || b.updatedAt || b.createdAt)
+    return dateB - dateA // Latest first
   })
+
+  // Group meetings based on organizeBy setting
+  const groupedMeetings = useMemo(() => {
+    if (organizeBy === 'date') {
+      return { 'All Meetings': sortedMeetings }
+    }
+
+    const groups = {}
+
+    sortedMeetings.forEach(meeting => {
+      const meetingDate = new Date(meeting.scheduledAt || meeting.updatedAt || meeting.createdAt)
+      let groupKey = ''
+
+      switch (organizeBy) {
+        case 'year':
+          groupKey = meetingDate.getFullYear().toString()
+          break
+        case 'month':
+          // Format: "Jan 2026"
+          groupKey = format(meetingDate, 'MMM yyyy')
+          break
+        case 'week':
+          // Get week start date and format as "Week of Jan 20, 2026"
+          const weekStart = new Date(meetingDate)
+          weekStart.setDate(meetingDate.getDate() - meetingDate.getDay())
+          groupKey = `Week of ${format(weekStart, 'MMM d, yyyy')}`
+          break
+        case 'stakeholder':
+          // Group by stakeholder name (alphabetically)
+          const stakeholder = displayStakeholders.find(s => s.id === meeting.selectedStakeholder)
+          groupKey = stakeholder?.name || meeting.selectedStakeholder || 'No Stakeholder'
+          break
+        default:
+          groupKey = 'All Meetings'
+      }
+
+      if (!groups[groupKey]) {
+        groups[groupKey] = []
+      }
+      groups[groupKey].push(meeting)
+    })
+
+    // Sort groups appropriately
+    const sortedGroups = {}
+    let sortedKeys = Object.keys(groups)
+
+    if (organizeBy === 'stakeholder') {
+      // Alphabetical order for stakeholders
+      sortedKeys.sort((a, b) => {
+        if (a === 'No Stakeholder') return 1
+        if (b === 'No Stakeholder') return -1
+        return a.localeCompare(b)
+      })
+    } else {
+      // Reverse chronological for time-based groupings (newest first)
+      sortedKeys.sort((a, b) => {
+        if (organizeBy === 'year') {
+          return parseInt(b) - parseInt(a)
+        }
+        // For month/week, parse dates to compare
+        const parseGroupDate = (key) => {
+          if (key.startsWith('Week of ')) {
+            return new Date(key.replace('Week of ', ''))
+          }
+          return new Date(key)
+        }
+        return parseGroupDate(b) - parseGroupDate(a)
+      })
+    }
+
+    sortedKeys.forEach(key => {
+      sortedGroups[key] = groups[key]
+    })
+
+    return sortedGroups
+  }, [sortedMeetings, organizeBy, displayStakeholders])
 
   const handleNavigate = (path) => {
     navigate(path)
@@ -936,6 +940,16 @@ export default function Home() {
                 New Meeting
               </button>
 
+              {/* Quick Sync Button */}
+              <button
+                onClick={handleQuickSync}
+                disabled={isSyncing}
+                className="flex items-center gap-2 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl font-medium shadow-sm hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Sync with Firestore"
+              >
+                <RefreshCw size={18} className={isSyncing ? 'animate-spin' : ''} />
+                {isSyncing ? 'Syncing...' : 'Sync'}
+              </button>
 
               {/* User Menu */}
               <div className="relative">
@@ -988,20 +1002,6 @@ export default function Home() {
                           variant="menu"
                         />
                       </div>
-
-                      {/* HIDDEN: Re-Analyze All Meetings button - use individual selection instead
-                      <button
-                        onClick={() => {
-                          handleBulkReAnalyze()
-                          setShowUserMenu(false)
-                        }}
-                        disabled={isBulkAnalyzing}
-                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <Brain size={16} className={isBulkAnalyzing ? 'animate-pulse' : ''} />
-                        {isBulkAnalyzing ? `Re-analyzing... (${bulkAnalysisProgress.current}/${bulkAnalysisProgress.total})` : 'Re-Analyze All Meetings'}
-                      </button>
-                      */}
 
                       <div className="border-t border-gray-100 my-1"></div>
 
@@ -1202,20 +1202,20 @@ export default function Home() {
 
 
 
-            {/* Desktop Sort Controls - Hidden on Mobile */}
+            {/* Desktop Organize Controls - Hidden on Mobile */}
             <div className="hidden md:flex md:items-center gap-4 mb-6">
               <div className="flex items-center gap-4">
-                <label className="text-sm font-medium text-gray-700">Sort meetings by:</label>
+                <label className="text-sm font-medium text-gray-700">Organize by:</label>
                 <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
+                  value={organizeBy}
+                  onChange={(e) => setOrganizeBy(e.target.value)}
                   className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-500"
                 >
-                  <option value="date">Date</option>
-                  <option value="priority">Priority</option>
-                  {/* REMOVED: Sentiment sort option - no longer tracking sentiment
-                  <option value="sentiment">Sentiment</option>
-                  */}
+                  <option value="date">Latest First</option>
+                  <option value="year">Year</option>
+                  <option value="month">Month</option>
+                  <option value="week">Week</option>
+                  <option value="stakeholder">Stakeholder</option>
                 </select>
               </div>
             </div>
@@ -1223,20 +1223,20 @@ export default function Home() {
             {/* Recent Meetings Section - Conditional for Mobile */}
             {(activeView === 'meetings' || window.innerWidth >= 768) && sortedMeetings.length > 0 && (
               <div className="mb-6">
-                {/* Mobile Sort Controls */}
+                {/* Mobile Organize Controls */}
                 <div className="md:hidden mb-4">
                   <div className="flex items-center gap-2">
-                    <label className="text-sm font-medium text-gray-700">Sort:</label>
+                    <label className="text-sm font-medium text-gray-700">Organize:</label>
                     <select
-                      value={sortBy}
-                      onChange={(e) => setSortBy(e.target.value)}
+                      value={organizeBy}
+                      onChange={(e) => setOrganizeBy(e.target.value)}
                       className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-500 touch-target"
                     >
-                      <option value="date">Date</option>
-                      <option value="priority">Priority</option>
-                      {/* REMOVED: Sentiment sort option - no longer tracking sentiment
-                      <option value="sentiment">Sentiment</option>
-                      */}
+                      <option value="date">Latest First</option>
+                      <option value="year">Year</option>
+                      <option value="month">Month</option>
+                      <option value="week">Week</option>
+                      <option value="stakeholder">Stakeholder</option>
                     </select>
                   </div>
                 </div>
@@ -1244,7 +1244,9 @@ export default function Home() {
                 {/* Header with Bulk Actions */}
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-4">
-                    <h2 className="text-lg md:text-xl font-semibold text-gray-900">All Meetings</h2>
+                    <h2 className="text-lg md:text-xl font-semibold text-gray-900">
+                      {organizeBy === 'date' ? 'All Meetings' : `Meetings by ${organizeBy.charAt(0).toUpperCase() + organizeBy.slice(1)}`}
+                    </h2>
                     {sortedMeetings.length > 0 && (
                       <div className="flex items-center gap-2">
                         <input
@@ -1266,15 +1268,6 @@ export default function Home() {
                         {selectedMeetings.size} selected
                       </span>
                       <button
-                        onClick={handleReAnalyzeSelected}
-                        disabled={isBulkAnalyzing}
-                        className="flex items-center gap-2 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="Re-analyze selected meetings with improved AI prompt"
-                      >
-                        <Brain size={16} className={isBulkAnalyzing ? 'animate-pulse' : ''} />
-                        {isBulkAnalyzing ? `Analyzing... (${bulkAnalysisProgress.current}/${bulkAnalysisProgress.total})` : 'Re-Analyze Selected'}
-                      </button>
-                      <button
                         onClick={handleBulkDelete}
                         className="flex items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                       >
@@ -1284,106 +1277,88 @@ export default function Home() {
                     </div>
                   )}
                 </div>
-                <ResponsiveGrid minItemWidth="280px">
-                  {sortedMeetings.map((meeting, index) => {
-                    const sentiment = meetingSentiments[meeting.id]
-                    const isSelected = selectedMeetings.has(meeting.id)
-                    return (
-                      <div
-                        key={`${meeting.id}-${index}`}
-                        onClick={(e) => {
-                          // Don't navigate if clicking on checkbox or its label
-                          if (e.target.type === 'checkbox' || e.target.closest('input[type="checkbox"]')) {
-                            e.stopPropagation()
-                            return
-                          }
-                          console.log('🖡️ CLICK EVENT DETAILS:')
-                          console.log('- Meeting object:', meeting)
-                          console.log('- Meeting ID:', meeting.id)
-                          console.log('- Meeting title:', meeting.title)
-                          console.log('- Meeting index in sortedMeetings:', sortedMeetings.findIndex(m => m.id === meeting.id))
-                          console.log('- Original meeting from displayMeetings:', displayMeetings.find(m => m.id === meeting.id))
-                          handleStartMeeting(meeting)
-                        }}
-                        className={`cursor-pointer hover:shadow-lg transition-shadow ${isSelected ? 'ring-2 ring-blue-500 bg-blue-50' : ''}`}
-                      >
-                        <MobileExpandableCard
-                          title={
-                            <div className="flex items-center gap-3">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={(e) => {
-                                  e.stopPropagation()
-                                  handleSelectMeeting(meeting.id, e.target.checked)
-                                }}
-                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                              />
-                              <span>{meeting.title || 'Untitled Meeting'}</span>
-                            </div>
-                          }
-                          subtitle={
-                            <div className="flex items-center justify-between mt-2">
-                              <div className="flex items-center gap-2 text-xs text-gray-500">
-                                {meeting.scheduledAt && (
-                                  <>
-                                    <Clock size={12} />
-                                    {format(new Date(meeting.scheduledAt), 'MMM d, yyyy')}
-                                  </>
+
+                {/* Grouped Meetings Display */}
+                {Object.entries(groupedMeetings).map(([groupName, groupMeetings]) => (
+                  <div key={groupName} className="mb-6">
+                    {/* Group Header - only show when organizing by something other than date */}
+                    {organizeBy !== 'date' && (
+                      <div className="flex items-center gap-3 mb-3 pb-2 border-b border-gray-200">
+                        <h3 className="text-md font-medium text-gray-700">{groupName}</h3>
+                        <span className="text-sm text-gray-500">({groupMeetings.length} meeting{groupMeetings.length !== 1 ? 's' : ''})</span>
+                      </div>
+                    )}
+                    <ResponsiveGrid minItemWidth="280px">
+                      {groupMeetings.map((meeting, index) => {
+                        const isSelected = selectedMeetings.has(meeting.id)
+                        return (
+                          <div
+                            key={`${meeting.id}-${index}`}
+                            onClick={(e) => {
+                              // Don't navigate if clicking on checkbox or its label
+                              if (e.target.type === 'checkbox' || e.target.closest('input[type="checkbox"]')) {
+                                e.stopPropagation()
+                                return
+                              }
+                              handleStartMeeting(meeting)
+                            }}
+                            className={`cursor-pointer hover:shadow-lg transition-shadow ${isSelected ? 'ring-2 ring-blue-500 bg-blue-50' : ''}`}
+                          >
+                            <MobileExpandableCard
+                              title={
+                                <div className="flex items-center gap-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={(e) => {
+                                      e.stopPropagation()
+                                      handleSelectMeeting(meeting.id, e.target.checked)
+                                    }}
+                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                  />
+                                  <span>{meeting.title || 'Untitled Meeting'}</span>
+                                </div>
+                              }
+                              subtitle={
+                                <div className="flex items-center justify-between mt-2">
+                                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                                    {meeting.scheduledAt && (
+                                      <>
+                                        <Clock size={12} />
+                                        {format(new Date(meeting.scheduledAt), 'MMM d, yyyy')}
+                                      </>
+                                    )}
+                                    {meeting.selectedStakeholder && organizeBy !== 'stakeholder' && (
+                                      <span className="ml-2 text-blue-600">
+                                        {displayStakeholders.find(s => s.id === meeting.selectedStakeholder)?.name || meeting.selectedStakeholder}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              }
+                              defaultExpanded={false}
+                            >
+                              <div className="pt-3 space-y-3">
+                                {meeting.description && (
+                                  <p className="text-sm text-gray-600 line-clamp-3">{meeting.description}</p>
                                 )}
+
+                                <div className="flex items-center justify-between text-sm text-gray-500">
+                                  {meeting.attendees && meeting.attendees.length > 0 && (
+                                    <div className="flex items-center gap-1">
+                                      <Users size={12} />
+                                      <span>{meeting.attendees.length} attendees</span>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                              <div className="flex items-center gap-1">
-                                {/* REMOVED: Sentiment badge - no longer tracking sentiment
-                                {sentiment && (
-                                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                    sentiment.overall === 'positive' ? 'bg-green-100 text-green-800' :
-                                    sentiment.overall === 'negative' ? 'bg-red-100 text-red-800' :
-                                    'bg-gray-100 text-gray-800'
-                                  }`}>
-                                    {sentiment.overall === 'positive' ? '😊' : sentiment.overall === 'negative' ? '😟' : '😐'}
-                                  </span>
-                                )}
-                                */}
-                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                  meeting.priority === 'high' ? 'bg-red-100 text-red-800' :
-                                  meeting.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-green-100 text-green-800'
-                                }`}>
-                                  {meeting.priority || 'low'}
-                                </span>
-                              </div>
-                            </div>
-                          }
-                          defaultExpanded={false}
-                        >
-                        <div className="pt-3 space-y-3">
-                          {meeting.description && (
-                            <p className="text-sm text-gray-600 line-clamp-3">{meeting.description}</p>
-                          )}
-                          
-                          {/* REMOVED: Sentiment summary - no longer tracking sentiment
-                          {sentiment && sentiment.summary && (
-                            <div className="p-3 bg-gray-50 rounded-lg">
-                              <p className="text-xs text-gray-600 mb-1">AI Summary:</p>
-                              <p className="text-sm text-gray-700 line-clamp-2">{sentiment.summary}</p>
-                            </div>
-                          )}
-                          */}
-                          
-                          <div className="flex items-center justify-between text-sm text-gray-500">
-                            {meeting.attendees && meeting.attendees.length > 0 && (
-                              <div className="flex items-center gap-1">
-                                <Users size={12} />
-                                <span>{meeting.attendees.length} attendees</span>
-                              </div>
-                            )}
+                            </MobileExpandableCard>
                           </div>
-                        </div>
-                      </MobileExpandableCard>
-                    </div>
-                    )
-                  })}
-                </ResponsiveGrid>
+                        )
+                      })}
+                    </ResponsiveGrid>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -1451,7 +1426,12 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {displayMeetings.map(meeting => (
+                  {[...displayMeetings].sort((a, b) => {
+                    // Sort by latest first (using scheduledAt, updatedAt, or createdAt)
+                    const dateA = new Date(a.scheduledAt || a.updatedAt || a.createdAt || 0)
+                    const dateB = new Date(b.scheduledAt || b.updatedAt || b.createdAt || 0)
+                    return dateB - dateA
+                  }).map(meeting => (
                     <div key={meeting.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
                       {editingMeeting && editingMeeting.id === meeting.id ? (
                         /* Edit Mode */
@@ -2288,19 +2268,27 @@ export default function Home() {
         </div>
       )}
 
-      {/* Bulk Analysis Error Toast */}
-      {bulkAnalysisError && (
+      {/* Sync Result Toast */}
+      {syncResult && (
         <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
-          <div className="bg-red-50 border border-red-200 rounded-lg shadow-lg p-4 max-w-md">
+          <div className={`${syncResult.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'} border rounded-lg shadow-lg p-4 max-w-md`}>
             <div className="flex items-start gap-3">
-              <AlertTriangle className="text-red-600 flex-shrink-0" size={20} />
+              {syncResult.success ? (
+                <CheckCircle className="text-green-600 flex-shrink-0" size={20} />
+              ) : (
+                <AlertTriangle className="text-red-600 flex-shrink-0" size={20} />
+              )}
               <div className="flex-1">
-                <p className="text-sm font-medium text-red-900">Error</p>
-                <p className="text-sm text-red-700 mt-1">{bulkAnalysisError}</p>
+                <p className={`text-sm font-medium ${syncResult.success ? 'text-green-900' : 'text-red-900'}`}>
+                  {syncResult.success ? 'Sync Complete' : 'Sync Failed'}
+                </p>
+                <p className={`text-sm mt-1 ${syncResult.success ? 'text-green-700' : 'text-red-700'}`}>
+                  {syncResult.message}
+                </p>
               </div>
               <button
-                onClick={() => setBulkAnalysisError(null)}
-                className="text-red-400 hover:text-red-600"
+                onClick={() => setSyncResult(null)}
+                className={syncResult.success ? 'text-green-400 hover:text-green-600' : 'text-red-400 hover:text-red-600'}
               >
                 <X size={16} />
               </button>

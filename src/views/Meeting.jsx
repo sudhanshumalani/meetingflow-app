@@ -2281,8 +2281,38 @@ Example notes you might paste:
                     </div>
                   )}
 
-                  {/* Key Points (new format) / Key Discussion Points (legacy format) */}
-                  {((aiResult.keyPoints && aiResult.keyPoints.length > 0) ||
+                  {/* Themes (new thematic format) */}
+                  {aiResult.themes && aiResult.themes.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                        📚 Discussion Topics
+                      </h4>
+                      <div className="space-y-3">
+                        {aiResult.themes.map((theme, themeIndex) => (
+                          <div key={themeIndex} className="bg-white rounded p-3 border border-gray-200">
+                            <h5 className="font-medium text-gray-800 mb-2 flex items-center gap-2">
+                              <span className="text-blue-500">▸</span>
+                              {theme.topic}
+                            </h5>
+                            {theme.context && (
+                              <p className="text-xs text-gray-500 italic mb-2 pl-4">{theme.context}</p>
+                            )}
+                            <ul className="space-y-1.5 pl-4">
+                              {theme.keyPoints && theme.keyPoints.map((point, pointIndex) => (
+                                <li key={pointIndex} className="text-sm text-gray-700 flex items-start gap-2">
+                                  <span className="text-blue-400 font-medium min-w-0">•</span>
+                                  <span className="leading-relaxed">{point}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Key Points - Legacy flat format (backward compatibility) */}
+                  {!aiResult.themes && ((aiResult.keyPoints && aiResult.keyPoints.length > 0) ||
                     (aiResult.keyDiscussionPoints && aiResult.keyDiscussionPoints.length > 0)) && (
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
@@ -2308,22 +2338,15 @@ Example notes you might paste:
                         📋 Action Items
                       </h4>
                       <div className="bg-white rounded p-3 border border-gray-200">
-                        <ul className="space-y-2">
+                        <ul className="space-y-3">
                           {aiResult.actionItems.slice(0, 15).map((item, index) => (
-                            <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
-                              <span className="text-green-500 font-medium min-w-0">•</span>
-                              <span className="leading-relaxed">
-                                {typeof item === 'object' ? (
-                                  <>
-                                    <span className="font-medium">{item.task}</span>
-                                    {/* Support both old 'assignee' and new 'owner' field names */}
-                                    {(item.owner || item.assignee) &&
-                                     (item.owner || item.assignee) !== 'Unassigned' &&
-                                     (item.owner || item.assignee) !== 'TBD' && (
-                                      <span className="text-blue-600 ml-2 font-medium">@{item.owner || item.assignee}</span>
-                                    )}
+                            <li key={index} className="text-sm text-gray-700">
+                              {typeof item === 'object' ? (
+                                <div className="border-l-2 border-green-300 pl-3">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-medium text-gray-900">{item.task}</span>
                                     {item.priority && (
-                                      <span className={`ml-2 px-1.5 py-0.5 text-xs rounded font-medium ${
+                                      <span className={`px-1.5 py-0.5 text-xs rounded font-medium ${
                                         item.priority === 'high' ? 'bg-red-100 text-red-700' :
                                         item.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
                                         'bg-green-100 text-green-700'
@@ -2331,14 +2354,30 @@ Example notes you might paste:
                                         {item.priority}
                                       </span>
                                     )}
+                                  </div>
+                                  <div className="flex flex-wrap gap-3 mt-1 text-xs">
+                                    {/* Support both old 'assignee' and new 'owner' field names */}
+                                    {(item.owner || item.assignee) &&
+                                     (item.owner || item.assignee) !== 'Unassigned' &&
+                                     (item.owner || item.assignee) !== 'TBD' && (
+                                      <span className="text-blue-600">👤 {item.owner || item.assignee}</span>
+                                    )}
                                     {/* Support both old 'dueDate' and new 'deadline' field names */}
                                     {(item.deadline || item.dueDate) &&
                                      (item.deadline || item.dueDate) !== 'TBD' && (
-                                      <span className="text-gray-500 ml-2 text-xs">📅 {item.deadline || item.dueDate}</span>
+                                      <span className="text-gray-500">📅 {item.deadline || item.dueDate}</span>
                                     )}
-                                  </>
-                                ) : item}
-                              </span>
+                                  </div>
+                                  {item.context && (
+                                    <div className="text-xs text-gray-500 mt-1 italic">{item.context}</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex items-start gap-2">
+                                  <span className="text-green-500 font-medium min-w-0">•</span>
+                                  <span className="leading-relaxed">{item}</span>
+                                </div>
+                              )}
                             </li>
                           ))}
                         </ul>
@@ -2354,11 +2393,28 @@ Example notes you might paste:
                         ✅ Decisions
                       </h4>
                       <div className="bg-white rounded p-3 border border-gray-200">
-                        <ul className="space-y-2">
+                        <ul className="space-y-3">
                           {(aiResult.decisions || aiResult.decisionsMade).map((decision, index) => (
-                            <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
-                              <span className="text-purple-500 font-medium min-w-0">•</span>
-                              <span className="leading-relaxed">{decision}</span>
+                            <li key={index} className="text-sm text-gray-700">
+                              {typeof decision === 'object' ? (
+                                <div className="border-l-2 border-purple-300 pl-3">
+                                  <div className="font-medium text-gray-900">{decision.decision}</div>
+                                  {decision.madeBy && decision.madeBy !== 'TBD' && (
+                                    <div className="text-xs text-purple-600 mt-1">Made by: {decision.madeBy}</div>
+                                  )}
+                                  {decision.rationale && (
+                                    <div className="text-xs text-gray-500 mt-1 italic">Why: {decision.rationale}</div>
+                                  )}
+                                  {decision.implications && (
+                                    <div className="text-xs text-gray-600 mt-1">Impact: {decision.implications}</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex items-start gap-2">
+                                  <span className="text-purple-500 font-medium min-w-0">•</span>
+                                  <span className="leading-relaxed">{decision}</span>
+                                </div>
+                              )}
                             </li>
                           ))}
                         </ul>
@@ -2366,19 +2422,55 @@ Example notes you might paste:
                     </div>
                   )}
 
-                  {/* Follow-ups (new format) / Open Questions (legacy format) */}
-                  {((aiResult.followUps && aiResult.followUps.length > 0) ||
+                  {/* Open Items (new format) / Follow-ups / Open Questions (legacy formats) */}
+                  {((aiResult.openItems && aiResult.openItems.length > 0) ||
+                    (aiResult.followUps && aiResult.followUps.length > 0) ||
                     (aiResult.openQuestions && aiResult.openQuestions.length > 0)) && (
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
-                        ❓ Follow-ups & Open Questions
+                        ❓ Open Items & Follow-ups
                       </h4>
                       <div className="bg-white rounded p-3 border border-gray-200">
                         <ul className="space-y-2">
-                          {(aiResult.followUps || aiResult.openQuestions).map((question, index) => (
-                            <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
+                          {/* New openItems format */}
+                          {aiResult.openItems && aiResult.openItems.map((item, index) => (
+                            <li key={`open-${index}`} className="text-sm text-gray-700">
+                              {typeof item === 'object' ? (
+                                <div className="flex items-start gap-2">
+                                  <span className={`font-medium min-w-0 ${
+                                    item.type === 'blocker' ? 'text-red-500' :
+                                    item.type === 'risk' ? 'text-orange-500' :
+                                    item.type === 'question' ? 'text-blue-500' :
+                                    'text-gray-500'
+                                  }`}>
+                                    {item.type === 'blocker' ? '🚫' :
+                                     item.type === 'risk' ? '⚠️' :
+                                     item.type === 'question' ? '❓' : '📌'}
+                                  </span>
+                                  <div>
+                                    <span className="leading-relaxed">{item.item}</span>
+                                    {(item.owner || item.urgency) && (
+                                      <div className="text-xs text-gray-500 mt-0.5">
+                                        {item.owner && item.owner !== 'TBD' && <span>Owner: {item.owner}</span>}
+                                        {item.owner && item.urgency && ' • '}
+                                        {item.urgency && <span>Urgency: {item.urgency}</span>}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-start gap-2">
+                                  <span className="text-orange-500 font-medium min-w-0">•</span>
+                                  <span className="leading-relaxed">{item}</span>
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                          {/* Legacy followUps/openQuestions format */}
+                          {!aiResult.openItems && (aiResult.followUps || aiResult.openQuestions || []).map((question, index) => (
+                            <li key={`legacy-${index}`} className="text-sm text-gray-700 flex items-start gap-2">
                               <span className="text-orange-500 font-medium min-w-0">•</span>
-                              <span className="leading-relaxed">{question}</span>
+                              <span className="leading-relaxed">{typeof question === 'object' ? question.item : question}</span>
                             </li>
                           ))}
                         </ul>

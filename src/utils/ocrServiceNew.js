@@ -209,31 +209,46 @@ export class SimpleOCRService {
         max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 40px rgba(0,0,0,0.3);
       `
 
-      const prompt = `You are an expert meeting notes assistant. Transform this meeting content into clear, actionable notes.
+      const prompt = `You are an expert meeting notes assistant. Create comprehensive, thematically-organized notes capturing ALL important information.
 
 **Meeting Content:**
 """
 ${text}
 """
 
-**Context:** ${meetingContext.meetingType || 'General'} meeting${meetingContext.stakeholder ? ` with ${meetingContext.stakeholder}` : ''}${meetingContext.date ? ` on ${meetingContext.date}` : ''}
-
-**Instructions:** Return a JSON object with exactly these 6 fields:
+**Instructions:** Return a JSON object with these fields:
 
 {
-  "summary": "2-3 sentence summary: What was this about? What was accomplished?",
-  "keyPoints": ["Specific insight with names/numbers/dates", "Another key point with details"],
-  "decisions": ["[DECISION]: What was decided + who approved"],
-  "actionItems": [{"task": "Specific task", "owner": "Name or TBD", "deadline": "Date or TBD", "priority": "high/medium/low"}],
-  "followUps": ["Open question needing answer", "Topic for next meeting"],
-  "nextSteps": "1-2 sentence summary of immediate next actions"
+  "summary": "3-4 sentences: (1) Meeting purpose, (2) Key outcomes, (3) Most important decision/insight, (4) Critical next step",
+
+  "themes": [
+    {
+      "topic": "Descriptive topic name",
+      "keyPoints": [
+        "Detailed point - WHO said it, WHAT was discussed, WHY it matters",
+        "Include quotes, numbers, dates, percentages when mentioned",
+        "Capture concerns and reasoning behind them"
+      ],
+      "context": "Why this topic was discussed"
+    }
+  ],
+
+  "decisions": [
+    {"decision": "What was decided", "madeBy": "Who decided", "rationale": "Why", "implications": "What it means"}
+  ],
+
+  "actionItems": [
+    {"task": "Specific task", "owner": "Name or TBD", "deadline": "Date or TBD", "priority": "high/medium/low", "context": "Why it matters"}
+  ],
+
+  "openItems": [
+    {"item": "Question or concern", "type": "question/blocker/risk", "owner": "Who addresses it", "urgency": "How soon"}
+  ],
+
+  "nextSteps": "2-3 sentences on immediate actions and when team reconnects"
 }
 
-**Guidelines:**
-- Be SPECIFIC with names, numbers, dates
-- Action items must have owner + deadline + priority
-- Only include actual decisions, not suggestions
-- Keep it concise - bullet points, not paragraphs
+**Critical:** Capture EVERYTHING important. Include specific names, numbers, quotes. Group by themes. Don't over-summarize.
 
 Return ONLY valid JSON, no markdown code blocks.`
 
@@ -339,8 +354,8 @@ Return ONLY valid JSON, no markdown code blocks.`
       const jsonMatch = response.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0])
-        // Check for either new format (keyPoints) or old format (keyDiscussionPoints)
-        if (parsed.summary && (parsed.keyPoints || parsed.keyDiscussionPoints || parsed.actionItems)) {
+        // Check for new thematic format, keyPoints format, or legacy keyDiscussionPoints
+        if (parsed.summary && (parsed.themes || parsed.keyPoints || parsed.keyDiscussionPoints || parsed.actionItems)) {
           console.log('✅ Successfully parsed Claude JSON response')
           // Normalize to support both old and new field names
           return this.normalizeResponse(parsed)
@@ -356,25 +371,44 @@ Return ONLY valid JSON, no markdown code blocks.`
 
   // Normalize response to include both old and new field names for backward compatibility
   normalizeResponse(parsed) {
+    // Extract flat keyPoints from themes for backward compatibility
+    const flatKeyPoints = parsed.themes
+      ? parsed.themes.flatMap(theme => theme.keyPoints || [])
+      : (parsed.keyPoints || parsed.keyDiscussionPoints || [])
+
+    // Normalize decisions (can be objects or strings)
+    const normalizedDecisions = (parsed.decisions || parsed.decisionsMade || []).map(d =>
+      typeof d === 'object' ? d : { decision: d, madeBy: 'TBD', rationale: '', implications: '' }
+    )
+
+    // Normalize openItems/followUps
+    const normalizedOpenItems = (parsed.openItems || parsed.followUps || parsed.openQuestions || []).map(item =>
+      typeof item === 'object' ? item : { item: item, type: 'question', owner: 'TBD', urgency: '' }
+    )
+
     return {
       summary: parsed.summary || '',
+      // New thematic format
+      themes: parsed.themes || null,
       // New format fields
-      keyPoints: parsed.keyPoints || parsed.keyDiscussionPoints || [],
-      decisions: parsed.decisions || parsed.decisionsMade || [],
-      followUps: parsed.followUps || parsed.openQuestions || [],
+      decisions: normalizedDecisions,
+      openItems: normalizedOpenItems,
       nextSteps: parsed.nextSteps || '',
       // Old format fields (for backward compatibility with display code)
-      keyDiscussionPoints: parsed.keyPoints || parsed.keyDiscussionPoints || [],
-      decisionsMade: parsed.decisions || parsed.decisionsMade || [],
-      openQuestions: parsed.followUps || parsed.openQuestions || [],
-      // Action items (same in both formats but normalize field names within)
+      keyPoints: flatKeyPoints,
+      keyDiscussionPoints: flatKeyPoints,
+      decisionsMade: normalizedDecisions.map(d => typeof d === 'object' ? d.decision : d),
+      followUps: normalizedOpenItems.map(item => typeof item === 'object' ? item.item : item),
+      openQuestions: normalizedOpenItems.map(item => typeof item === 'object' ? item.item : item),
+      // Action items (normalize field names within)
       actionItems: (parsed.actionItems || []).map(item => ({
         task: item.task || '',
         owner: item.owner || item.assignee || 'TBD',
         assignee: item.owner || item.assignee || 'TBD', // backward compat
         deadline: item.deadline || item.dueDate || 'TBD',
         dueDate: item.deadline || item.dueDate || 'TBD', // backward compat
-        priority: item.priority || 'medium'
+        priority: item.priority || 'medium',
+        context: item.context || ''
       })),
       // Metadata
       sentiment: parsed.sentiment || 'neutral',

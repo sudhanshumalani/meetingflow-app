@@ -59,69 +59,91 @@ export class ClaudeProvider {
   }
 
   buildMeetingPrompt(text, context = {}) {
-    const { meetingType = 'general', stakeholder = null, date = null } = context
-
-    return `You are an expert meeting notes assistant. Transform meeting content into clear, actionable notes.
-
-**Context:**
-- Date: ${date || 'Not specified'}
-- Meeting Type: ${meetingType || 'General'}
-- Stakeholder: ${stakeholder || 'Not specified'}
+    return `You are an expert meeting notes assistant that creates comprehensive, thematically-organized notes. Your goal is to capture ALL important information discussed, not just highlights.
 
 **Meeting Content:**
 """
 ${text}
 """
 
-**Instructions:** Analyze this meeting and return a JSON object with exactly these 6 fields:
+**Instructions:** Analyze this meeting thoroughly and return a JSON object with these fields:
 
 {
-  "summary": "A concise 2-3 sentence summary answering: What was this meeting about? What was accomplished? What's the main outcome?",
+  "summary": "3-4 sentence executive summary covering: (1) Meeting purpose, (2) Key outcomes/conclusions, (3) Most important decision or insight, (4) Critical next step",
 
-  "keyPoints": [
-    "Each item should be a complete, standalone insight",
-    "Include specific details: names, numbers, dates, metrics mentioned",
-    "Capture the 'so what' - why does this point matter?",
-    "Group related items together logically",
-    "Aim for 5-10 key points depending on meeting length"
+  "themes": [
+    {
+      "topic": "Descriptive topic name (e.g., 'Q4 Budget Planning', 'Customer Onboarding Issues')",
+      "keyPoints": [
+        "Detailed point with specific context - include WHO said it, WHAT exactly was discussed, and WHY it matters",
+        "Include actual quotes when impactful (e.g., 'John noted: we need to ship by March or we lose the contract')",
+        "Include specific numbers, metrics, dates, percentages mentioned (e.g., 'Revenue down 15% vs Q3')",
+        "Capture concerns raised and the reasoning behind them",
+        "Note any disagreements or alternative viewpoints expressed"
+      ],
+      "context": "Brief background on why this topic was discussed or what led to it"
+    }
   ],
 
   "decisions": [
-    "Format: '[DECISION]: What was decided + who approved it'",
-    "Include rationale if discussed",
-    "Only include actual decisions, not suggestions or ideas"
+    {
+      "decision": "Clear statement of what was decided",
+      "madeBy": "Who made or approved this decision",
+      "rationale": "Why this decision was made (if discussed)",
+      "implications": "What this means going forward"
+    }
   ],
 
   "actionItems": [
     {
-      "task": "Specific, actionable task description",
-      "owner": "Person's name (or 'TBD' if not assigned)",
-      "deadline": "Due date/timeframe (or 'TBD' if not specified)",
-      "priority": "high/medium/low based on urgency discussed"
+      "task": "Specific, actionable task with enough detail to execute",
+      "owner": "Person's name (or 'TBD')",
+      "deadline": "Specific date or timeframe (or 'TBD')",
+      "priority": "high/medium/low",
+      "context": "Why this task matters or what it's blocking"
     }
   ],
 
-  "followUps": [
-    "Open questions that need answers",
-    "Topics to discuss in next meeting",
-    "Information to gather before proceeding"
+  "openItems": [
+    {
+      "item": "Question, concern, or topic needing follow-up",
+      "type": "question/blocker/risk/parking-lot",
+      "owner": "Who needs to address this (if known)",
+      "urgency": "How soon this needs resolution"
+    }
   ],
 
-  "nextSteps": "1-2 sentence summary of immediate next actions and when the team will reconnect"
+  "nextSteps": "2-3 sentences on immediate next actions, when the team will reconnect, and what needs to happen before then"
 }
 
-**Quality Guidelines:**
-1. Be SPECIFIC - include actual names, numbers, dates, and details mentioned
-2. Be ACTIONABLE - every action item should be clear enough to execute
-3. Be CONCISE - bullet points, not paragraphs
-4. PRESERVE important terminology and jargon exactly as used
-5. If something is unclear in the transcript, note it as [unclear] rather than guessing
+**CRITICAL INSTRUCTIONS FOR KEY POINTS:**
 
-**Meeting Type Adjustments:**
-- Sales/Client calls: Emphasize customer needs, objections, proposed solutions, next steps
-- Team standups: Focus on blockers, progress, and dependencies
-- 1-on-1s: Highlight feedback, career topics, and personal action items
-- Project reviews: Emphasize status, risks, decisions, and milestones
+1. **CAPTURE EVERYTHING IMPORTANT** - Do not summarize excessively. If 10 important things were discussed, include all 10. Err on the side of more detail.
+
+2. **THEMATIC GROUPING** - Group related discussion points under clear topic headers. A 30-minute meeting might have 3-5 themes; an hour meeting might have 5-8.
+
+3. **PRESERVE SPECIFICS** - Include:
+   - Actual names of people, companies, products mentioned
+   - Exact numbers, percentages, dates, deadlines discussed
+   - Direct quotes when someone said something important
+   - Technical terms and jargon exactly as used
+
+4. **CAPTURE THE "WHY"** - Don't just say what was discussed, explain:
+   - Why this topic came up
+   - What problem it's trying to solve
+   - What concerns or risks were raised
+   - What alternatives were considered
+
+5. **NOTE DISAGREEMENTS** - If people had different opinions, capture both sides
+
+6. **INCLUDE CONTEXT** - For each theme, briefly note what led to discussing it
+
+**Output Quality Check:**
+Before returning, verify:
+- Did I capture ALL major topics discussed?
+- Did I include specific names, numbers, and dates?
+- Would someone who missed this meeting understand what happened?
+- Are my key points detailed enough to be useful, not just one-line summaries?
 
 Return ONLY valid JSON. No markdown code blocks. No explanation text.`
   }
@@ -194,17 +216,35 @@ Return ONLY valid JSON. No markdown code blocks. No explanation text.`
 
   // Normalize result to include both new and old field names for backward compatibility
   normalizeResult(result) {
+    // Extract flat keyPoints from themes for backward compatibility
+    const flatKeyPoints = result.themes
+      ? result.themes.flatMap(theme => theme.keyPoints || [])
+      : (result.keyPoints || result.keyDiscussionPoints || [])
+
+    // Normalize decisions (can be objects or strings)
+    const normalizedDecisions = (result.decisions || result.decisionsMade || []).map(d =>
+      typeof d === 'object' ? d : { decision: d, madeBy: 'TBD', rationale: '', implications: '' }
+    )
+
+    // Normalize openItems/followUps
+    const normalizedOpenItems = (result.openItems || result.followUps || result.openQuestions || []).map(item =>
+      typeof item === 'object' ? item : { item: item, type: 'question', owner: 'TBD', urgency: '' }
+    )
+
     return {
       summary: result.summary || '',
+      // New thematic format
+      themes: result.themes || null,
       // New format fields
-      keyPoints: result.keyPoints || result.keyDiscussionPoints || [],
-      decisions: result.decisions || result.decisionsMade || [],
-      followUps: result.followUps || result.openQuestions || [],
+      decisions: normalizedDecisions,
+      openItems: normalizedOpenItems,
       nextSteps: result.nextSteps || '',
       // Old format fields (for backward compatibility with display code)
-      keyDiscussionPoints: result.keyPoints || result.keyDiscussionPoints || [],
-      decisionsMade: result.decisions || result.decisionsMade || [],
-      openQuestions: result.followUps || result.openQuestions || [],
+      keyPoints: flatKeyPoints,
+      keyDiscussionPoints: flatKeyPoints,
+      decisionsMade: normalizedDecisions.map(d => typeof d === 'object' ? d.decision : d),
+      followUps: normalizedOpenItems.map(item => typeof item === 'object' ? item.item : item),
+      openQuestions: normalizedOpenItems.map(item => typeof item === 'object' ? item.item : item),
       // Action items (normalize field names within)
       actionItems: (result.actionItems || []).map(item => ({
         task: item.task || '',
@@ -212,7 +252,8 @@ Return ONLY valid JSON. No markdown code blocks. No explanation text.`
         assignee: item.owner || item.assignee || 'TBD', // backward compat
         deadline: item.deadline || item.dueDate || 'TBD',
         dueDate: item.deadline || item.dueDate || 'TBD', // backward compat
-        priority: item.priority || 'medium'
+        priority: item.priority || 'medium',
+        context: item.context || ''
       })),
       // Metadata
       sentiment: result.sentiment || 'neutral',

@@ -61,126 +61,69 @@ export class ClaudeProvider {
   buildMeetingPrompt(text, context = {}) {
     const { meetingType = 'general', stakeholder = null, date = null } = context
 
-    return `You are a professional meeting notes assistant that generates comprehensive, well-structured meeting documentation similar to leading AI note-taking tools like Fireflies, Otter, and Granola.
+    return `You are an expert meeting notes assistant. Transform meeting content into clear, actionable notes.
 
-When provided with a meeting transcript or recording, generate meeting notes with the following structure:
-
-## MEETING HEADER
-- **Meeting Title:** [Extract or generate descriptive title]
-- **Date & Time:** ${date || '[Meeting date and duration]'}
-- **Attendees:** [List all participants with their roles if mentioned]
-- **Meeting Type:** ${meetingType || '[Identify: Team Sync, Sales Call, 1-on-1, Interview, Project Review, etc.]'}
-
-## EXECUTIVE SUMMARY
-Write a 2-3 sentence overview capturing the meeting's purpose and main outcome. This should give someone who wasn't present a quick understanding of what was accomplished.
-
-## KEY DISCUSSION POINTS
-Organize the main topics discussed into clearly themed sections with descriptive headers. Capture ALL significant topics that were discussed - don't limit yourself to a fixed number. Be thorough and comprehensive.
-
-Under each topic header, provide detailed bullet points covering:
-- What was discussed in detail
-- Important context, background information, or rationale provided
-- Any data, metrics, numbers, or specific examples mentioned
-- Different perspectives or viewpoints expressed
-- Clarifications or elaborations made during the discussion
-- Relevant details that provide complete understanding
-
-Format as:
-### [Descriptive Topic Header 1]
-- Detailed discussion point with full context
-- Supporting information and background
-- Specific examples, metrics, or data mentioned
-- Additional relevant details
-- Any conclusions or insights reached
-- [Continue with as many bullets as needed to capture the full discussion]
-
-### [Descriptive Topic Header 2]
-- Comprehensive coverage of what was discussed
-- Important details and nuances
-- Specific information shared
-- Context and implications
-- [Add all relevant points - be thorough]
-
-[Continue with additional topic sections as needed to cover the entire meeting]
-
-## DECISIONS MADE
-List ALL concrete decisions reached during the meeting with full context:
-- [Decision 1]: [What was decided, who made/approved it, rationale provided, and any conditions]
-- [Decision 2]: [Complete description including background, implications, and next steps]
-- [Decision 3]: [Full details including dependencies, timeline, and expected outcomes]
-- [Continue listing all decisions - be comprehensive and include all relevant context]
-
-## ACTION ITEMS
-Identify and list ALL action items mentioned or implied in the meeting. Format each with owner, deadline, and clear description:
-
-| Action Item | Owner | Due Date | Priority | Notes |
-|------------|-------|----------|----------|--------|
-| [Specific, measurable task with full details] | @[Name] | [Date or timeframe] | High/Medium/Low | [Dependencies, context, expected outcome] |
-| [Clear deliverable with complete description] | @[Name] | [Specific date] | High/Medium/Low | [Additional important details] |
-| [Continue listing ALL action items - don't limit the number] | @[Name] | [Timeframe] | [Priority] | [Full context] |
-
-## OPEN QUESTIONS & FOLLOW-UPS
-List ALL unresolved questions, topics requiring further discussion, or information needs:
-- [ ] [Unresolved question with context about why it needs further discussion]
-- [ ] [Topic to revisit in next meeting with relevant background]
-- [ ] [Information needed from external source with explanation of why it's needed]
-- [ ] [Continue listing all open items - be comprehensive]
-
-## NEXT STEPS
-Provide a detailed summary of immediate next steps, including timeline, responsibilities, and when the team will reconvene or check in on progress. Include any important context about the path forward.
-
-### FORMATTING GUIDELINES:
-1. **BE THOROUGH AND COMPREHENSIVE** - Capture all important information, don't summarize excessively
-2. Use clear, professional language - preserve technical terms and industry-specific jargon as used
-3. Bullet points should be detailed and informative - provide complete context
-4. Bold important names, dates, metrics, and key decisions for easy scanning
-5. Ensure action items are SMART (Specific, Measurable, Assignable, Relevant, Time-bound)
-6. Use active voice and present tense for current states, past tense for decisions made
-7. Organize information hierarchically - most important first
-8. Include speaker attribution when it adds important context or shows who drove decisions
-9. If working from a transcript with timestamps, reference them for key moments: [00:15:30]
-10. **PRIORITIZE COMPLETENESS OVER BREVITY** - detailed notes are more valuable than short summaries
-
-### STYLE NOTES:
-- Write in third person for main content
-- Be objective and factual - avoid interpretive language unless quoting
-- Preserve technical terminology and product names exactly as spoken
-- Flag any unclear audio or ambiguous decisions with [unclear] or [to be confirmed]
-- If the meeting type is identified (sales, interview, standup), adjust the template emphasis accordingly:
-  - Sales calls: Focus on customer needs, objections, next steps
-  - Interviews: Highlight candidate responses, technical assessments, culture fit
-  - Standups: Emphasize blockers, progress updates, dependencies
-  - 1-on-1s: Career development, feedback, personal goals
-
-**Meeting Context:**
+**Context:**
+- Date: ${date || 'Not specified'}
+- Meeting Type: ${meetingType || 'General'}
 - Stakeholder: ${stakeholder || 'Not specified'}
 
-**Raw Meeting Notes/Transcript:**
+**Meeting Content:**
 """
 ${text}
 """
 
-**IMPORTANT:** Return your response as valid JSON with this structure:
+**Instructions:** Analyze this meeting and return a JSON object with exactly these 6 fields:
+
 {
-  "summary": "2-3 sentence executive summary",
-  "keyDiscussionPoints": ["Array of strings with ### headers and bullet points in markdown format"],
-  "decisionsMade": ["Array of decision strings"],
+  "summary": "A concise 2-3 sentence summary answering: What was this meeting about? What was accomplished? What's the main outcome?",
+
+  "keyPoints": [
+    "Each item should be a complete, standalone insight",
+    "Include specific details: names, numbers, dates, metrics mentioned",
+    "Capture the 'so what' - why does this point matter?",
+    "Group related items together logically",
+    "Aim for 5-10 key points depending on meeting length"
+  ],
+
+  "decisions": [
+    "Format: '[DECISION]: What was decided + who approved it'",
+    "Include rationale if discussed",
+    "Only include actual decisions, not suggestions or ideas"
+  ],
+
   "actionItems": [
     {
-      "task": "Specific action item",
-      "assignee": "Name or Unassigned",
-      "dueDate": "Date or timeframe or null",
-      "priority": "high|medium|low",
-      "notes": "Dependencies or context"
+      "task": "Specific, actionable task description",
+      "owner": "Person's name (or 'TBD' if not assigned)",
+      "deadline": "Due date/timeframe (or 'TBD' if not specified)",
+      "priority": "high/medium/low based on urgency discussed"
     }
   ],
-  "openQuestions": ["Array of unresolved questions"],
-  "nextSteps": "Brief summary of immediate next steps",
-  "sentiment": "positive|neutral|negative",
-  "confidence": 0.95
+
+  "followUps": [
+    "Open questions that need answers",
+    "Topics to discuss in next meeting",
+    "Information to gather before proceeding"
+  ],
+
+  "nextSteps": "1-2 sentence summary of immediate next actions and when the team will reconnect"
 }
 
-Generate the notes in clean format that can be easily copied to Notion, Confluence, or shared via email. The notes should be scannable, with the most critical information immediately visible. Return only valid JSON without any markdown code blocks.`
+**Quality Guidelines:**
+1. Be SPECIFIC - include actual names, numbers, dates, and details mentioned
+2. Be ACTIONABLE - every action item should be clear enough to execute
+3. Be CONCISE - bullet points, not paragraphs
+4. PRESERVE important terminology and jargon exactly as used
+5. If something is unclear in the transcript, note it as [unclear] rather than guessing
+
+**Meeting Type Adjustments:**
+- Sales/Client calls: Emphasize customer needs, objections, proposed solutions, next steps
+- Team standups: Focus on blockers, progress, and dependencies
+- 1-on-1s: Highlight feedback, career topics, and personal action items
+- Project reviews: Emphasize status, risks, decisions, and milestones
+
+Return ONLY valid JSON. No markdown code blocks. No explanation text.`
   }
 
   async analyze(text, context = {}) {
@@ -250,13 +193,11 @@ Generate the notes in clean format that can be easily copied to Notion, Confluen
     // Fallback text parser for non-JSON responses
     const result = {
       summary: '',
-      keyDiscussionPoints: [],
-      decisionsMade: [],
+      keyPoints: [],
+      decisions: [],
       actionItems: [],
-      openQuestions: [],
-      nextSteps: '',
-      sentiment: 'neutral',
-      confidence: 0.7
+      followUps: [],
+      nextSteps: ''
     }
 
     const lines = text.split('\n').filter(line => line.trim())
@@ -265,22 +206,22 @@ Generate the notes in clean format that can be easily copied to Notion, Confluen
     for (const line of lines) {
       const lowerLine = line.toLowerCase().trim()
 
-      if (lowerLine.includes('summary') || lowerLine.includes('executive summary')) {
+      if (lowerLine.includes('summary')) {
         currentSection = 'summary'
         continue
-      } else if (lowerLine.includes('discussion') || lowerLine.includes('key points')) {
-        currentSection = 'discussion'
+      } else if (lowerLine.includes('key point') || lowerLine.includes('discussion')) {
+        currentSection = 'keyPoints'
         continue
-      } else if (lowerLine.includes('decisions made') || lowerLine.includes('decision')) {
+      } else if (lowerLine.includes('decision')) {
         currentSection = 'decisions'
         continue
       } else if (lowerLine.includes('action') || lowerLine.includes('task')) {
         currentSection = 'actions'
         continue
-      } else if (lowerLine.includes('open questions') || lowerLine.includes('follow-up')) {
-        currentSection = 'questions'
+      } else if (lowerLine.includes('follow') || lowerLine.includes('question')) {
+        currentSection = 'followUps'
         continue
-      } else if (lowerLine.includes('next steps')) {
+      } else if (lowerLine.includes('next step')) {
         currentSection = 'nextSteps'
         continue
       }
@@ -293,32 +234,30 @@ Generate the notes in clean format that can be easily copied to Notion, Confluen
       // Add content to appropriate section
       if (currentSection === 'summary' && !result.summary) {
         result.summary = line.replace(/^[-•*]\s*/, '').trim()
-      } else if (currentSection === 'discussion') {
+      } else if (currentSection === 'keyPoints') {
         const cleanLine = line.replace(/^[-•*]\s*/, '').trim()
         if (cleanLine.length > 10) {
-          result.keyDiscussionPoints.push(cleanLine)
+          result.keyPoints.push(cleanLine)
         }
       } else if (currentSection === 'decisions') {
         const cleanLine = line.replace(/^[-•*]\s*/, '').trim()
         if (cleanLine.length > 10) {
-          result.decisionsMade.push(cleanLine)
+          result.decisions.push(cleanLine)
         }
       } else if (currentSection === 'actions') {
         const cleanLine = line.replace(/^[-•*]\s*/, '').trim()
         if (cleanLine.length > 10) {
           result.actionItems.push({
             task: cleanLine,
-            assignee: this.extractAssignee(cleanLine) || 'Unassigned',
+            owner: this.extractAssignee(cleanLine) || 'TBD',
             priority: this.determinePriority(cleanLine),
-            dueDate: this.extractDueDate(cleanLine),
-            notes: '',
-            confidence: 0.7
+            deadline: this.extractDueDate(cleanLine) || 'TBD'
           })
         }
-      } else if (currentSection === 'questions') {
+      } else if (currentSection === 'followUps') {
         const cleanLine = line.replace(/^[-•*\[\]\s]*/, '').trim()
         if (cleanLine.length > 10) {
-          result.openQuestions.push(cleanLine)
+          result.followUps.push(cleanLine)
         }
       } else if (currentSection === 'nextSteps') {
         result.nextSteps += (result.nextSteps ? ' ' : '') + line.replace(/^[-•*]\s*/, '').trim()

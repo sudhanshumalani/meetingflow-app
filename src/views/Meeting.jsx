@@ -2281,15 +2281,16 @@ Example notes you might paste:
                     </div>
                   )}
 
-                  {/* Backward Compatibility: Key Discussion Points (legacy format) */}
-                  {aiResult.keyDiscussionPoints && aiResult.keyDiscussionPoints.length > 0 && (
+                  {/* Key Points (new format) / Key Discussion Points (legacy format) */}
+                  {((aiResult.keyPoints && aiResult.keyPoints.length > 0) ||
+                    (aiResult.keyDiscussionPoints && aiResult.keyDiscussionPoints.length > 0)) && (
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
-                        💬 Key Discussion Points
+                        💬 Key Points
                       </h4>
                       <div className="bg-white rounded p-3 border border-gray-200">
                         <ul className="space-y-2">
-                          {aiResult.keyDiscussionPoints.slice(0, 10).map((point, index) => (
+                          {(aiResult.keyPoints || aiResult.keyDiscussionPoints).slice(0, 15).map((point, index) => (
                             <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
                               <span className="text-blue-500 font-medium min-w-0">•</span>
                               <span className="leading-relaxed">{point}</span>
@@ -2308,18 +2309,21 @@ Example notes you might paste:
                       </h4>
                       <div className="bg-white rounded p-3 border border-gray-200">
                         <ul className="space-y-2">
-                          {aiResult.actionItems.slice(0, 10).map((item, index) => (
+                          {aiResult.actionItems.slice(0, 15).map((item, index) => (
                             <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
                               <span className="text-green-500 font-medium min-w-0">•</span>
                               <span className="leading-relaxed">
                                 {typeof item === 'object' ? (
                                   <>
                                     <span className="font-medium">{item.task}</span>
-                                    {item.assignee && item.assignee !== 'Unassigned' && (
-                                      <span className="text-gray-500 ml-2">(@{item.assignee})</span>
+                                    {/* Support both old 'assignee' and new 'owner' field names */}
+                                    {(item.owner || item.assignee) &&
+                                     (item.owner || item.assignee) !== 'Unassigned' &&
+                                     (item.owner || item.assignee) !== 'TBD' && (
+                                      <span className="text-blue-600 ml-2 font-medium">@{item.owner || item.assignee}</span>
                                     )}
                                     {item.priority && (
-                                      <span className={`ml-2 px-1 py-0.5 text-xs rounded ${
+                                      <span className={`ml-2 px-1.5 py-0.5 text-xs rounded font-medium ${
                                         item.priority === 'high' ? 'bg-red-100 text-red-700' :
                                         item.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
                                         'bg-green-100 text-green-700'
@@ -2327,8 +2331,10 @@ Example notes you might paste:
                                         {item.priority}
                                       </span>
                                     )}
-                                    {item.dueDate && (
-                                      <span className="text-gray-500 ml-2 text-xs">Due: {item.dueDate}</span>
+                                    {/* Support both old 'dueDate' and new 'deadline' field names */}
+                                    {(item.deadline || item.dueDate) &&
+                                     (item.deadline || item.dueDate) !== 'TBD' && (
+                                      <span className="text-gray-500 ml-2 text-xs">📅 {item.deadline || item.dueDate}</span>
                                     )}
                                   </>
                                 ) : item}
@@ -2340,15 +2346,16 @@ Example notes you might paste:
                     </div>
                   )}
 
-                  {/* Decisions Made */}
-                  {aiResult.decisionsMade && aiResult.decisionsMade.length > 0 && (
+                  {/* Decisions (new format) / Decisions Made (legacy format) */}
+                  {((aiResult.decisions && aiResult.decisions.length > 0) ||
+                    (aiResult.decisionsMade && aiResult.decisionsMade.length > 0)) && (
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
-                        ✅ Decisions Made
+                        ✅ Decisions
                       </h4>
                       <div className="bg-white rounded p-3 border border-gray-200">
                         <ul className="space-y-2">
-                          {aiResult.decisionsMade.map((decision, index) => (
+                          {(aiResult.decisions || aiResult.decisionsMade).map((decision, index) => (
                             <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
                               <span className="text-purple-500 font-medium min-w-0">•</span>
                               <span className="leading-relaxed">{decision}</span>
@@ -2359,15 +2366,16 @@ Example notes you might paste:
                     </div>
                   )}
 
-                  {/* Open Questions & Follow-ups */}
-                  {aiResult.openQuestions && aiResult.openQuestions.length > 0 && (
+                  {/* Follow-ups (new format) / Open Questions (legacy format) */}
+                  {((aiResult.followUps && aiResult.followUps.length > 0) ||
+                    (aiResult.openQuestions && aiResult.openQuestions.length > 0)) && (
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
-                        ❓ Open Questions & Follow-ups
+                        ❓ Follow-ups & Open Questions
                       </h4>
                       <div className="bg-white rounded p-3 border border-gray-200">
                         <ul className="space-y-2">
-                          {aiResult.openQuestions.map((question, index) => (
+                          {(aiResult.followUps || aiResult.openQuestions).map((question, index) => (
                             <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
                               <span className="text-orange-500 font-medium min-w-0">•</span>
                               <span className="leading-relaxed">{question}</span>

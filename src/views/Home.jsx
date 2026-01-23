@@ -74,9 +74,14 @@ import { processWithClaude } from '../utils/ocrServiceNew'
 const parseMeetingDate = (dateString) => {
   if (!dateString) return null
 
-  // If it ends with 'Z', it's UTC - parse and convert to local
+  // If it ends with 'Z', it's UTC - we need to extract the DATE portion and treat as local
+  // This fixes the timezone shift issue where "2026-01-22T00:00:00.000Z" (midnight UTC)
+  // was showing as Jan 21 in Mountain Time because JS interprets Z as UTC
   if (dateString.endsWith('Z')) {
-    return new Date(dateString)
+    // Extract just the date part (YYYY-MM-DD) and create local date at noon
+    const datePart = dateString.split('T')[0]
+    const [year, month, day] = datePart.split('-').map(Number)
+    return new Date(year, month - 1, day, 12, 0, 0)
   }
 
   // If it's just a date (YYYY-MM-DD), treat as local date at noon
@@ -94,8 +99,14 @@ const parseMeetingDate = (dateString) => {
     return new Date(year, month - 1, day, hour || 12, minute || 0, second || 0)
   }
 
-  // Fallback to default parsing
-  return new Date(dateString)
+  // Fallback: try to extract date portion and create local date
+  const fallbackDate = new Date(dateString)
+  if (!isNaN(fallbackDate.getTime())) {
+    // If it parsed, extract year/month/day and create local date at noon
+    return new Date(fallbackDate.getFullYear(), fallbackDate.getMonth(), fallbackDate.getDate(), 12, 0, 0)
+  }
+
+  return null
 }
 
 // Platform detection for firestore service loading

@@ -563,14 +563,26 @@ export default function Home() {
       // Merge and save
       const mergedMeetings = [...cloudMeetings, ...localOnlyMeetings]
       localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
-      localStorage.setItem('meetingflow_stakeholders', JSON.stringify(cloudStakeholders.length > 0 ? cloudStakeholders : localStakeholders))
-      if (cloudCategories.length > 0) {
-        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(cloudCategories))
+
+      const finalStakeholders = cloudStakeholders.length > 0 ? cloudStakeholders : localStakeholders
+      localStorage.setItem('meetingflow_stakeholders', JSON.stringify(finalStakeholders))
+
+      const finalCategories = cloudCategories.length > 0 ? cloudCategories : []
+      if (finalCategories.length > 0) {
+        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(finalCategories))
       }
+
+      // Build detailed sync message
+      const syncDetails = []
+      syncDetails.push(`${mergedMeetings.length} Meeting${mergedMeetings.length !== 1 ? 's' : ''}`)
+      syncDetails.push(`${finalStakeholders.length} Stakeholder${finalStakeholders.length !== 1 ? 's' : ''}`)
+      syncDetails.push(`${finalCategories.length} Categor${finalCategories.length !== 1 ? 'ies' : 'y'}`)
+
+      const uploadedInfo = localOnlyMeetings.length > 0 ? ` (${localOnlyMeetings.length} uploaded)` : ''
 
       setSyncResult({
         success: true,
-        message: `Synced! ${cloudMeetings.length} from cloud, ${localOnlyMeetings.length} uploaded.`
+        message: `Synced: ${syncDetails.join(', ')}${uploadedInfo}`
       })
 
       // Reload to show updated data
@@ -913,6 +925,15 @@ export default function Home() {
                 <Search size={20} />
               </button>
 
+              {/* Sync Button */}
+              <button
+                onClick={handleQuickSync}
+                disabled={isSyncing}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors touch-target disabled:opacity-50"
+                title="Sync with Firestore"
+              >
+                <RefreshCw size={20} className={isSyncing ? 'animate-spin text-green-600' : ''} />
+              </button>
             </>
           }
         />

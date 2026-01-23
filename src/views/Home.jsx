@@ -69,6 +69,35 @@ import hapticFeedback from '../utils/hapticFeedback'
 import { BatchExportButton, ExportOptionsButton } from '../components/ExportOptions'
 import { processWithClaude } from '../utils/ocrServiceNew'
 
+// Helper to parse meeting dates correctly (handles both UTC 'Z' format and local format)
+// This ensures dates display correctly regardless of how they were stored
+const parseMeetingDate = (dateString) => {
+  if (!dateString) return null
+
+  // If it ends with 'Z', it's UTC - parse and convert to local
+  if (dateString.endsWith('Z')) {
+    return new Date(dateString)
+  }
+
+  // If it's just a date (YYYY-MM-DD), treat as local date at noon
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    const [year, month, day] = dateString.split('-').map(Number)
+    return new Date(year, month - 1, day, 12, 0, 0)
+  }
+
+  // If it's a datetime without Z, treat as local time
+  // e.g., "2026-01-22T12:00:00"
+  if (dateString.includes('T') && !dateString.endsWith('Z')) {
+    const [datePart, timePart] = dateString.split('T')
+    const [year, month, day] = datePart.split('-').map(Number)
+    const [hour, minute, second] = (timePart || '12:00:00').split(':').map(Number)
+    return new Date(year, month - 1, day, hour || 12, minute || 0, second || 0)
+  }
+
+  // Fallback to default parsing
+  return new Date(dateString)
+}
+
 // Platform detection for firestore service loading
 const IS_IOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)
 
@@ -351,13 +380,6 @@ export default function Home() {
   const smartRecommendations = generateSmartRecommendations()
 
   // Filter meetings by search term and stakeholder
-  console.log('🔍 DEBUG: Sample meeting structure for filtering:', displayMeetings[0] ? {
-    id: displayMeetings[0].id,
-    selectedStakeholder: displayMeetings[0].selectedStakeholder,
-    stakeholderIds: displayMeetings[0].stakeholderIds,
-    title: displayMeetings[0].title
-  } : 'No meetings')
-
   const filteredMeetings = displayMeetings.filter(meeting => {
     const matchesSearch = meeting.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       meeting.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -728,8 +750,8 @@ export default function Home() {
 
   // Sorting - always latest first
   const sortedMeetings = [...filteredMeetings].sort((a, b) => {
-    const dateA = new Date(a.scheduledAt || a.updatedAt || a.createdAt)
-    const dateB = new Date(b.scheduledAt || b.updatedAt || b.createdAt)
+    const dateA = parseMeetingDate(a.scheduledAt) || new Date(a.updatedAt || a.createdAt)
+    const dateB = parseMeetingDate(b.scheduledAt) || new Date(b.updatedAt || b.createdAt)
     return dateB - dateA // Latest first
   })
 
@@ -742,7 +764,7 @@ export default function Home() {
     const groups = {}
 
     sortedMeetings.forEach(meeting => {
-      const meetingDate = new Date(meeting.scheduledAt || meeting.updatedAt || meeting.createdAt)
+      const meetingDate = parseMeetingDate(meeting.scheduledAt) || new Date(meeting.updatedAt || meeting.createdAt)
       let groupKey = ''
 
       switch (organizeBy) {
@@ -1325,7 +1347,7 @@ export default function Home() {
                                     {meeting.scheduledAt && (
                                       <>
                                         <Clock size={12} />
-                                        {format(new Date(meeting.scheduledAt), 'MMM d, yyyy')}
+                                        {format(parseMeetingDate(meeting.scheduledAt), 'MMM d, yyyy')}
                                       </>
                                     )}
                                     {meeting.selectedStakeholder && organizeBy !== 'stakeholder' && (
@@ -1428,8 +1450,8 @@ export default function Home() {
                 <div className="space-y-4">
                   {[...displayMeetings].sort((a, b) => {
                     // Sort by latest first (using scheduledAt, updatedAt, or createdAt)
-                    const dateA = new Date(a.scheduledAt || a.updatedAt || a.createdAt || 0)
-                    const dateB = new Date(b.scheduledAt || b.updatedAt || b.createdAt || 0)
+                    const dateA = parseMeetingDate(a.scheduledAt) || new Date(a.updatedAt || a.createdAt || 0)
+                    const dateB = parseMeetingDate(b.scheduledAt) || new Date(b.updatedAt || b.createdAt || 0)
                     return dateB - dateA
                   }).map(meeting => (
                     <div key={meeting.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
@@ -1545,7 +1567,7 @@ export default function Home() {
                               {meeting.scheduledAt && (
                                 <div className="flex items-center gap-1">
                                   <Calendar size={14} />
-                                  {format(new Date(meeting.scheduledAt), 'MMM d, yyyy h:mm a')}
+                                  {format(parseMeetingDate(meeting.scheduledAt), 'MMM d, yyyy h:mm a')}
                                 </div>
                               )}
                               {meeting.attendees && meeting.attendees.length > 0 && (

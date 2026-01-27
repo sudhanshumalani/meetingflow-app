@@ -14,6 +14,179 @@ async function getSyncStorage() {
   return syncStorageInstance
 }
 
+// ============================================
+// SYNC LOCK - Prevents race conditions
+// ============================================
+let isSyncLocked = false
+let syncLockTimestamp = 0
+const SYNC_LOCK_TIMEOUT = 60000 // 60 second timeout to prevent deadlocks
+
+function acquireSyncLock() {
+  const now = Date.now()
+  // Auto-release if lock is stale (prevents deadlocks)
+  if (isSyncLocked && (now - syncLockTimestamp) > SYNC_LOCK_TIMEOUT) {
+    console.warn('🔄 Sync lock was stale, releasing...')
+    isSyncLocked = false
+  }
+
+  if (isSyncLocked) {
+    return false
+  }
+
+  isSyncLocked = true
+  syncLockTimestamp = now
+  console.log('🔄 Sync lock acquired')
+  return true
+}
+
+function releaseSyncLock() {
+  isSyncLocked = false
+  syncLockTimestamp = 0
+  console.log('🔄 Sync lock released')
+}
+
+// Export for checking sync status from other components
+export function isSyncInProgress() {
+  const now = Date.now()
+  if (isSyncLocked && (now - syncLockTimestamp) > SYNC_LOCK_TIMEOUT) {
+    return false
+  }
+  return isSyncLocked
+}
+
+// ============================================
+// SYNC HELPER FUNCTIONS
+// ============================================
+
+// Helper to strip large fields from meetings to save storage space
+function stripLargeFields(meeting) {
+  if (!meeting || typeof meeting !== 'object') return meeting
+
+  const stripped = { ...meeting }
+  // Remove large fields that can be regenerated or aren't critical
+  delete stripped.audioBlob
+  delete stripped.audioData
+  delete stripped.audioUrl
+  delete stripped.recordingBlob
+  // Remove large base64 images
+  if (stripped.images && Array.isArray(stripped.images)) {
+    stripped.images = stripped.images.filter(img => {
+      // Keep non-string images and small string images
+      return typeof img !== 'string' || !img.startsWith('data:') || img.length <= 10000
+    })
+  }
+  return stripped
+}
+
+// Helper to get timestamp from an item (handles various field names and types)
+// Supports: ISO strings, Date objects, Firestore Timestamp objects, milliseconds
+function getTimestamp(item) {
+  if (!item) return 0
+
+  // Try various timestamp fields in priority order
+  // updatedAt is preferred as it reflects the last modification
+  const ts = item.updatedAt || item.lastModified || item.createdAt || item.timestamp || 0
+
+  // Handle different timestamp types
+  if (!ts) return 0
+
+  // Firestore Timestamp object (has toDate method)
+  if (ts && typeof ts === 'object' && typeof ts.toDate === 'function') {
+    try {
+      return ts.toDate().getTime()
+    } catch (e) {
+      console.warn('🔄 Failed to convert Firestore timestamp:', e)
+      return 0
+    }
+  }
+
+  // Firestore Timestamp from REST API (has seconds and nanoseconds)
+  if (ts && typeof ts === 'object' && ts.seconds !== undefined) {
+    return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1000000)
+  }
+
+  // JavaScript Date object
+  if (ts instanceof Date) {
+    return ts.getTime()
+  }
+
+  // ISO string or other parseable string
+  if (typeof ts === 'string') {
+    const parsed = new Date(ts).getTime()
+    // Return 0 if parsing failed (NaN check)
+    return isNaN(parsed) ? 0 : parsed
+  }
+
+  // Already a number (milliseconds)
+  if (typeof ts === 'number') {
+    return ts
+  }
+
+  return 0
+}
+
+// Helper function to merge arrays by ID with timestamp-based conflict resolution
+// Returns: { merged: [], toUpload: [], toDownload: [] }
+function mergeByIdWithTracking(localItems, cloudItems) {
+  const merged = new Map()
+  const toUpload = [] // Local items newer than cloud
+  const toDownload = [] // Cloud items newer than local
+
+  // Create maps for quick lookup
+  const localMap = new Map()
+  const cloudMap = new Map()
+
+  localItems.forEach(item => {
+    if (item && item.id) localMap.set(item.id, item)
+  })
+  cloudItems.forEach(item => {
+    if (item && item.id) cloudMap.set(item.id, item)
+  })
+
+  // Process all local items
+  for (const [id, localItem] of localMap) {
+    const cloudItem = cloudMap.get(id)
+
+    if (!cloudItem) {
+      // Only in local - needs to be uploaded
+      merged.set(id, localItem)
+      toUpload.push(localItem)
+    } else {
+      // Exists in both - compare timestamps
+      const localTime = getTimestamp(localItem)
+      const cloudTime = getTimestamp(cloudItem)
+
+      if (localTime > cloudTime) {
+        // Local is newer - use local and upload it
+        merged.set(id, localItem)
+        toUpload.push(localItem)
+      } else if (cloudTime > localTime) {
+        // Cloud is newer - use cloud
+        merged.set(id, cloudItem)
+        toDownload.push(cloudItem)
+      } else {
+        // Same time - keep local (arbitrary choice)
+        merged.set(id, localItem)
+      }
+    }
+  }
+
+  // Process cloud items not in local
+  for (const [id, cloudItem] of cloudMap) {
+    if (!localMap.has(id)) {
+      // Only in cloud - needs to be downloaded
+      merged.set(id, cloudItem)
+      toDownload.push(cloudItem)
+    }
+  }
+
+  return {
+    merged: Array.from(merged.values()),
+    toUpload,
+    toDownload
+  }
+}
+
 // Storage quota utilities
 async function checkStorageQuota() {
   try {
@@ -1428,6 +1601,315 @@ export function AppProvider({ children }) {
     reloadFromStorage: () => {
       console.log('🔄 Manual reload from storage requested')
       loadData()
+    },
+
+    // ============================================
+    // FULL SYNC - Comprehensive Firestore sync
+    // ============================================
+    performFullSync: async () => {
+      const userId = localStorage.getItem('meetingflow_firestore_user_id')
+
+      if (!userId) {
+        return {
+          success: false,
+          message: 'Firestore not configured. Go to Settings > Firestore Sync to set up.'
+        }
+      }
+
+      // Acquire sync lock to prevent race conditions
+      if (!acquireSyncLock()) {
+        return {
+          success: false,
+          message: 'A sync is already in progress. Please wait and try again.'
+        }
+      }
+
+      try {
+        console.log('🔄 Full sync starting...')
+        console.log('🔄 User ID:', userId)
+
+        // Load firestore service
+        const firestoreService = await getFirestoreService()
+        if (!firestoreService) {
+          throw new Error('Failed to load Firestore service')
+        }
+
+        console.log('🔄 Firestore service loaded, fetching data...')
+
+        // Fetch all data from Firestore with individual error handling
+        let cloudMeetings = [], cloudStakeholders = [], cloudCategories = []
+
+        try {
+          cloudMeetings = await firestoreService.getMeetings()
+          console.log('🔄 Meetings fetched:', cloudMeetings.length)
+        } catch (e) {
+          console.error('🔄 Failed to fetch meetings:', e)
+          throw new Error(`Failed to fetch meetings: ${e.message}`)
+        }
+
+        try {
+          cloudStakeholders = await firestoreService.getStakeholders()
+          console.log('🔄 Stakeholders fetched:', cloudStakeholders.length)
+        } catch (e) {
+          console.error('🔄 Failed to fetch stakeholders:', e)
+          throw new Error(`Failed to fetch stakeholders: ${e.message}`)
+        }
+
+        try {
+          cloudCategories = await firestoreService.getStakeholderCategories()
+          console.log('🔄 Categories fetched:', cloudCategories.length)
+        } catch (e) {
+          console.error('🔄 Failed to fetch categories:', e)
+          throw new Error(`Failed to fetch categories: ${e.message}`)
+        }
+
+        // Strip large fields from cloud meetings BEFORE merging
+        console.log('🔄 Stripping large fields from cloud data...')
+        cloudMeetings = cloudMeetings.map(m => stripLargeFields(m))
+
+        // Read local data
+        console.log('🔄 Reading local data...')
+        let localMeetings = []
+        let localStakeholders = []
+        let localCategories = []
+        let localDeletedItems = []
+
+        try {
+          localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+          localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+          localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+          localDeletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
+        } catch (e) {
+          console.warn('🔄 Failed to read from localStorage:', e)
+        }
+
+        console.log('🔄 Local data:', {
+          meetings: localMeetings.length,
+          stakeholders: localStakeholders.length,
+          categories: localCategories.length,
+          deletedItems: localDeletedItems.length
+        })
+
+        // Sync deletions to Firestore
+        const syncedDeletions = []
+        const failedDeletions = []
+
+        if (localDeletedItems.length > 0) {
+          console.log('🔄 Syncing', localDeletedItems.length, 'deletions to Firestore...')
+          for (const deletion of localDeletedItems) {
+            try {
+              let result = { success: false }
+              if (deletion.type === 'meeting' && deletion.id) {
+                result = await firestoreService.deleteMeeting(deletion.id)
+                if (result.success) {
+                  console.log('🔄 Synced deletion of meeting:', deletion.id)
+                  syncedDeletions.push(deletion)
+                } else {
+                  throw new Error(result.reason || 'Unknown error')
+                }
+              } else if (deletion.type === 'stakeholder' && deletion.id) {
+                result = await firestoreService.deleteStakeholder(deletion.id)
+                if (result.success) {
+                  console.log('🔄 Synced deletion of stakeholder:', deletion.id)
+                  syncedDeletions.push(deletion)
+                } else {
+                  throw new Error(result.reason || 'Unknown error')
+                }
+              } else if (deletion.type === 'stakeholderCategory' && deletion.id) {
+                result = await firestoreService.deleteStakeholderCategory(deletion.id)
+                if (result.success) {
+                  console.log('🔄 Synced deletion of category:', deletion.id)
+                  syncedDeletions.push(deletion)
+                } else {
+                  throw new Error(result.reason || 'Unknown error')
+                }
+              } else {
+                // Invalid deletion record, mark as synced to remove it
+                syncedDeletions.push(deletion)
+              }
+            } catch (e) {
+              console.warn('🔄 Failed to sync deletion:', deletion, e.message)
+              failedDeletions.push(deletion)
+            }
+          }
+
+          // Only keep failed deletions in localStorage
+          if (failedDeletions.length > 0) {
+            localStorage.setItem('meetingflow_deleted_items', JSON.stringify(failedDeletions))
+          } else {
+            localStorage.setItem('meetingflow_deleted_items', '[]')
+          }
+          console.log('🔄 Deletion sync complete:', syncedDeletions.length, 'synced,', failedDeletions.length, 'failed')
+        }
+
+        // Fetch deleted IDs from Firestore to remove from local data
+        console.log('🔄 Fetching deleted item IDs from Firestore...')
+        let deletedMeetingIds = []
+        let deletedStakeholderIds = []
+        let deletedCategoryIds = []
+
+        try {
+          deletedMeetingIds = await firestoreService.getDeletedIds('meetings')
+          deletedStakeholderIds = await firestoreService.getDeletedIds('stakeholders')
+          deletedCategoryIds = await firestoreService.getDeletedIds('stakeholderCategories')
+          console.log('🔄 Deleted IDs from Firestore:', {
+            meetings: deletedMeetingIds.length,
+            stakeholders: deletedStakeholderIds.length,
+            categories: deletedCategoryIds.length
+          })
+        } catch (e) {
+          console.warn('🔄 Failed to fetch deleted IDs:', e.message)
+        }
+
+        // Filter out items that were deleted on other devices
+        const deletedMeetingSet = new Set(deletedMeetingIds)
+        const deletedStakeholderSet = new Set(deletedStakeholderIds)
+        const deletedCategorySet = new Set(deletedCategoryIds)
+
+        const filteredLocalMeetings = localMeetings.filter(m => !deletedMeetingSet.has(m.id))
+        const filteredLocalStakeholders = localStakeholders.filter(s => !deletedStakeholderSet.has(s.id))
+        const filteredLocalCategories = localCategories.filter(c => !deletedCategorySet.has(c.id))
+
+        console.log('🔄 After filtering deleted items:', {
+          meetings: `${localMeetings.length} -> ${filteredLocalMeetings.length}`,
+          stakeholders: `${localStakeholders.length} -> ${filteredLocalStakeholders.length}`,
+          categories: `${localCategories.length} -> ${filteredLocalCategories.length}`
+        })
+
+        // Merge with timestamp-based conflict resolution
+        console.log('🔄 Merging data with timestamp comparison...')
+        const meetingsMerge = mergeByIdWithTracking(filteredLocalMeetings, cloudMeetings)
+        const stakeholdersMerge = mergeByIdWithTracking(filteredLocalStakeholders, cloudStakeholders)
+        const categoriesMerge = mergeByIdWithTracking(filteredLocalCategories, cloudCategories)
+
+        console.log('🔄 Merge results:', {
+          meetings: { total: meetingsMerge.merged.length, toUpload: meetingsMerge.toUpload.length, toDownload: meetingsMerge.toDownload.length },
+          stakeholders: { total: stakeholdersMerge.merged.length, toUpload: stakeholdersMerge.toUpload.length, toDownload: stakeholdersMerge.toDownload.length },
+          categories: { total: categoriesMerge.merged.length, toUpload: categoriesMerge.toUpload.length, toDownload: categoriesMerge.toDownload.length }
+        })
+
+        // Safety checks
+        if (meetingsMerge.merged.length < filteredLocalMeetings.length && meetingsMerge.merged.length < cloudMeetings.length) {
+          console.error('🚨 MERGE ERROR: Would lose meetings data!')
+        }
+        if (stakeholdersMerge.merged.length < filteredLocalStakeholders.length && stakeholdersMerge.merged.length < cloudStakeholders.length) {
+          console.error('🚨 MERGE ERROR: Would lose stakeholders data!')
+        }
+        if (categoriesMerge.merged.length < filteredLocalCategories.length && categoriesMerge.merged.length < cloudCategories.length) {
+          console.error('🚨 MERGE ERROR: Would lose categories data!')
+        }
+
+        // Upload local changes to Firestore
+        let uploadedCount = 0
+        const uploadErrors = []
+
+        console.log('🔄 Uploading newer local meetings...')
+        for (const meeting of meetingsMerge.toUpload) {
+          try {
+            const result = await firestoreService.saveMeeting(meeting)
+            if (result.success) uploadedCount++
+            else uploadErrors.push(`Meeting ${meeting.id}: ${result.reason}`)
+          } catch (e) {
+            uploadErrors.push(`Meeting ${meeting.id}: ${e.message}`)
+          }
+        }
+
+        console.log('🔄 Uploading newer local stakeholders...')
+        for (const stakeholder of stakeholdersMerge.toUpload) {
+          try {
+            const result = await firestoreService.saveStakeholder(stakeholder)
+            if (result.success) uploadedCount++
+            else uploadErrors.push(`Stakeholder ${stakeholder.id}: ${result.reason}`)
+          } catch (e) {
+            uploadErrors.push(`Stakeholder ${stakeholder.id}: ${e.message}`)
+          }
+        }
+
+        console.log('🔄 Uploading newer local categories...')
+        for (const category of categoriesMerge.toUpload) {
+          try {
+            const result = await firestoreService.saveStakeholderCategory(category)
+            if (result.success) uploadedCount++
+            else uploadErrors.push(`Category ${category.id}: ${result.reason}`)
+          } catch (e) {
+            uploadErrors.push(`Category ${category.id}: ${e.message}`)
+          }
+        }
+
+        console.log('🔄 Upload complete:', { uploadedCount, errors: uploadErrors.length })
+
+        // Strip large fields before saving locally
+        console.log('🔄 Stripping large fields...')
+        const strippedMeetings = meetingsMerge.merged.map(m => {
+          try {
+            return stripLargeFields(m)
+          } catch (e) {
+            console.error('Error stripping meeting:', m?.id, e)
+            return m
+          }
+        })
+
+        // Save merged data
+        console.log('🔄 Saving data...')
+        const meetingsJson = JSON.stringify(strippedMeetings)
+        const stakeholdersJson = JSON.stringify(stakeholdersMerge.merged)
+        const categoriesJson = JSON.stringify(categoriesMerge.merged)
+
+        try {
+          // Save to IndexedDB
+          console.log('🔄 Saving to IndexedDB...')
+          const syncStorage = await getSyncStorage()
+          await syncStorage.setItem('meetings', strippedMeetings)
+          await syncStorage.setItem('stakeholders', stakeholdersMerge.merged)
+          await syncStorage.setItem('categories', categoriesMerge.merged)
+
+          // Also save to localStorage for AppContext compatibility
+          console.log('🔄 Saving to localStorage...')
+          try {
+            localStorage.setItem('meetingflow_meetings', meetingsJson)
+            localStorage.setItem('meetingflow_stakeholders', stakeholdersJson)
+            localStorage.setItem('meetingflow_stakeholder_categories', categoriesJson)
+            console.log('🔄 Saved to localStorage!')
+          } catch (lsError) {
+            console.warn('🔄 localStorage save failed (quota), but IndexedDB has the data:', lsError.message)
+          }
+
+          console.log('🔄 All data saved successfully!')
+        } catch (storageError) {
+          console.error('🔄 Storage error:', storageError)
+          throw new Error(`Failed to save data: ${storageError.message}`)
+        }
+
+        // Reload data into React state
+        console.log('🔄 Reloading data into React state...')
+        loadData()
+
+        // Build result message
+        const downloaded = meetingsMerge.toDownload.length + stakeholdersMerge.toDownload.length + categoriesMerge.toDownload.length
+        const uploaded = uploadedCount
+
+        console.log('✅ Full sync complete')
+
+        return {
+          success: true,
+          message: `Synced! ↓${downloaded} downloaded, ↑${uploaded} uploaded. Total: ${meetingsMerge.merged.length} meetings, ${stakeholdersMerge.merged.length} stakeholders, ${categoriesMerge.merged.length} categories.`,
+          stats: {
+            meetings: meetingsMerge.merged.length,
+            stakeholders: stakeholdersMerge.merged.length,
+            categories: categoriesMerge.merged.length,
+            downloaded,
+            uploaded
+          }
+        }
+      } catch (error) {
+        console.error('❌ Full sync failed:', error)
+        return {
+          success: false,
+          message: `Sync failed: ${error.message}`
+        }
+      } finally {
+        releaseSyncLock()
+      }
     },
 
     // n8n integration actions

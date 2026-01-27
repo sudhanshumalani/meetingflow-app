@@ -40,7 +40,9 @@ import {
   BarChart3,
   Users2,
   Lightbulb,
-  RefreshCw
+  RefreshCw,
+  AlertCircle,
+  HardDrive
 } from 'lucide-react'
 import { format, isToday, isThisWeek, startOfDay, endOfDay, differenceInDays } from 'date-fns'
 import {
@@ -68,6 +70,9 @@ import performanceMonitor, { usePerformanceMonitor } from '../utils/performanceM
 import hapticFeedback from '../utils/hapticFeedback'
 import { BatchExportButton, ExportOptionsButton } from '../components/ExportOptions'
 import { processWithClaude } from '../utils/ocrServiceNew'
+import { findOrphanedSessions, recoverOrphanedSession, deleteOrphanedSession } from '../utils/transcriptRecovery'
+import StreamingAudioBuffer from '../utils/StreamingAudioBuffer'
+import StreamingTranscriptBuffer from '../utils/StreamingTranscriptBuffer'
 
 // Helper to parse meeting dates correctly (handles both UTC 'Z' format and local format)
 // This ensures dates display correctly regardless of how they were stored
@@ -177,6 +182,12 @@ export default function Home() {
   const [showAddCategoryForm, setShowAddCategoryForm] = useState(false)
   const [editingCategory, setEditingCategory] = useState(null)
   const [newCategory, setNewCategory] = useState({ label: '', description: '', color: 'blue' })
+
+  // Lost recording recovery states
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false)
+  const [isCheckingRecovery, setIsCheckingRecovery] = useState(false)
+  const [lostSessions, setLostSessions] = useState([])
+  const [recoveryResult, setRecoveryResult] = useState(null)
   const [activeStakeholderTab, setActiveStakeholderTab] = useState('stakeholders')
 
   // Filter states
@@ -600,6 +611,185 @@ export default function Home() {
     }
   }
 
+  // Check for lost recordings (orphaned sessions in IndexedDB)
+  const handleCheckLostRecordings = async () => {
+    setIsCheckingRecovery(true)
+    setLostSessions([])
+    setRecoveryResult(null)
+
+    try {
+      console.log('🔍 Checking for lost recordings...')
+
+      // Check for orphaned transcript sessions
+      const orphanedTranscripts = await findOrphanedSessions()
+
+      // Check for orphaned audio sessions
+      const audioSessions = await StreamingAudioBuffer.getAllSessions()
+      const orphanedAudio = audioSessions.filter(s =>
+        s.isActive || s.uploadStatus === 'pending' || s.uploadStatus === 'failed'
+      )
+
+      // Combine and format results
+      const allLostSessions = []
+
+      // Add transcript sessions
+      for (const session of orphanedTranscripts) {
+        allLostSessions.push({
+          type: 'transcript',
+          sessionId: session.sessionId,
+          startTime: session.startTime,
+          wordCount: session.wordCount || 0,
+          preview: session.previewText || '',
+          ageMinutes: session.ageMinutes || Math.round((Date.now() - session.startTime) / 60000)
+        })
+      }
+
+      // Add audio sessions
+      for (const session of orphanedAudio) {
+        // Skip if already have transcript for this session
+        if (!allLostSessions.some(s => s.sessionId === session.sessionId)) {
+          allLostSessions.push({
+            type: 'audio',
+            sessionId: session.sessionId,
+            startTime: session.startTime,
+            totalBytes: session.totalBytes || 0,
+            chunkCount: session.chunkCount || 0,
+            uploadStatus: session.uploadStatus,
+            ageMinutes: Math.round((Date.now() - session.startTime) / 60000)
+          })
+        }
+      }
+
+      // Sort by most recent first
+      allLostSessions.sort((a, b) => b.startTime - a.startTime)
+
+      setLostSessions(allLostSessions)
+      setShowRecoveryModal(true)
+
+      if (allLostSessions.length === 0) {
+        setRecoveryResult({
+          success: true,
+          message: 'No lost recordings found. All data is intact!'
+        })
+      } else {
+        setRecoveryResult({
+          success: true,
+          message: `Found ${allLostSessions.length} recoverable session(s)`
+        })
+      }
+
+    } catch (error) {
+      console.error('❌ Failed to check for lost recordings:', error)
+      setRecoveryResult({
+        success: false,
+        message: `Error checking: ${error.message}`
+      })
+      setShowRecoveryModal(true)
+    } finally {
+      setIsCheckingRecovery(false)
+    }
+  }
+
+  // Recover a specific lost session
+  const handleRecoverSession = async (session) => {
+    try {
+      setRecoveryResult({ success: true, message: 'Recovering...' })
+
+      if (session.type === 'transcript') {
+        const result = await recoverOrphanedSession(session.sessionId)
+
+        if (result.success && result.transcript) {
+          // Create a new meeting with the recovered transcript
+          const recoveredMeeting = {
+            id: `recovered_${Date.now()}`,
+            title: `Recovered Recording (${format(new Date(session.startTime), 'MMM d, h:mm a')})`,
+            scheduledAt: new Date(session.startTime).toISOString(),
+            audioTranscript: result.transcript,
+            speakerData: result.speakerData,
+            digitalNotes: {
+              summary: 'This meeting was recovered from a lost recording session.',
+              keyPoints: [],
+              actionItems: []
+            },
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            isRecovered: true
+          }
+
+          // Save the recovered meeting
+          addMeeting(recoveredMeeting)
+
+          // Delete the orphaned session
+          await deleteOrphanedSession(session.sessionId)
+
+          // Remove from list
+          setLostSessions(prev => prev.filter(s => s.sessionId !== session.sessionId))
+
+          setRecoveryResult({
+            success: true,
+            message: `Recovered! ${result.transcript.split(' ').length} words saved as new meeting.`
+          })
+        } else {
+          setRecoveryResult({
+            success: false,
+            message: 'Could not recover transcript data. The session may be corrupted.'
+          })
+        }
+      } else if (session.type === 'audio') {
+        // Try to reconstruct audio and provide download
+        const audioBlob = await StreamingAudioBuffer.reconstructAudio(session.sessionId)
+
+        if (audioBlob && audioBlob.size > 0) {
+          // Create download link
+          const url = URL.createObjectURL(audioBlob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `recovered-audio-${format(new Date(session.startTime), 'yyyy-MM-dd-HHmm')}.webm`
+          a.click()
+          URL.revokeObjectURL(url)
+
+          setRecoveryResult({
+            success: true,
+            message: `Audio file downloaded (${(audioBlob.size / 1024 / 1024).toFixed(2)} MB). You can transcribe it manually.`
+          })
+        } else {
+          setRecoveryResult({
+            success: false,
+            message: 'Audio chunks could not be reconstructed.'
+          })
+        }
+      }
+    } catch (error) {
+      console.error('Recovery failed:', error)
+      setRecoveryResult({
+        success: false,
+        message: `Recovery failed: ${error.message}`
+      })
+    }
+  }
+
+  // Delete a lost session (user doesn't want to recover)
+  const handleDeleteLostSession = async (session) => {
+    try {
+      if (session.type === 'transcript') {
+        await deleteOrphanedSession(session.sessionId)
+      } else if (session.type === 'audio') {
+        await StreamingAudioBuffer.deleteSession(session.sessionId)
+      }
+
+      setLostSessions(prev => prev.filter(s => s.sessionId !== session.sessionId))
+      setRecoveryResult({
+        success: true,
+        message: 'Session deleted.'
+      })
+    } catch (error) {
+      setRecoveryResult({
+        success: false,
+        message: `Delete failed: ${error.message}`
+      })
+    }
+  }
+
   // Bulk stakeholder selection handlers
   const handleSelectStakeholder = (stakeholderId, checked) => {
     const newSelectedStakeholders = new Set(selectedStakeholders)
@@ -933,6 +1123,16 @@ export default function Home() {
                 title="Sync with Firestore"
               >
                 <RefreshCw size={20} className={isSyncing ? 'animate-spin text-green-600' : ''} />
+              </button>
+
+              {/* Recovery Button */}
+              <button
+                onClick={handleCheckLostRecordings}
+                disabled={isCheckingRecovery}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors touch-target disabled:opacity-50"
+                title="Check for lost recordings"
+              >
+                <HardDrive size={20} className={isCheckingRecovery ? 'animate-pulse text-orange-600' : ''} />
               </button>
             </>
           }
@@ -2317,6 +2517,157 @@ export default function Home() {
                   Delete {selectedStakeholders.size} Stakeholder{selectedStakeholders.size !== 1 ? 's' : ''}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lost Recording Recovery Modal */}
+      {showRecoveryModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 border-b flex items-center justify-between bg-orange-50">
+              <div className="flex items-center gap-3">
+                <HardDrive className="text-orange-600" size={24} />
+                <div>
+                  <h3 className="font-semibold text-gray-900">Lost Recording Recovery</h3>
+                  <p className="text-sm text-gray-600">Check for recoverable sessions</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowRecoveryModal(false)
+                  setRecoveryResult(null)
+                }}
+                className="p-2 hover:bg-orange-100 rounded-lg transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-4 overflow-y-auto max-h-[60vh]">
+              {/* Status Message */}
+              {recoveryResult && (
+                <div className={`mb-4 p-3 rounded-lg ${recoveryResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                  <div className="flex items-center gap-2">
+                    {recoveryResult.success ? (
+                      <CheckCircle className="text-green-600" size={18} />
+                    ) : (
+                      <AlertCircle className="text-red-600" size={18} />
+                    )}
+                    <p className={`text-sm ${recoveryResult.success ? 'text-green-700' : 'text-red-700'}`}>
+                      {recoveryResult.message}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Loading State */}
+              {isCheckingRecovery && (
+                <div className="text-center py-8">
+                  <RefreshCw className="animate-spin text-orange-600 mx-auto mb-3" size={32} />
+                  <p className="text-gray-600">Scanning for lost recordings...</p>
+                </div>
+              )}
+
+              {/* Lost Sessions List */}
+              {!isCheckingRecovery && lostSessions.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-600 mb-3">
+                    Found {lostSessions.length} recoverable session{lostSessions.length !== 1 ? 's' : ''}:
+                  </p>
+                  {lostSessions.map((session) => (
+                    <div
+                      key={session.sessionId}
+                      className="border border-gray-200 rounded-lg p-3 bg-gray-50"
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            {session.type === 'transcript' ? (
+                              <FileText className="text-blue-600" size={16} />
+                            ) : (
+                              <HardDrive className="text-orange-600" size={16} />
+                            )}
+                            <span className="font-medium text-sm">
+                              {session.type === 'transcript' ? 'Transcript' : 'Audio'} Session
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {format(new Date(session.startTime), 'MMM d, yyyy h:mm a')}
+                            {' · '}
+                            {session.ageMinutes < 60
+                              ? `${session.ageMinutes} min ago`
+                              : session.ageMinutes < 1440
+                              ? `${Math.round(session.ageMinutes / 60)} hours ago`
+                              : `${Math.round(session.ageMinutes / 1440)} days ago`}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Session Details */}
+                      <div className="text-xs text-gray-600 mb-3">
+                        {session.type === 'transcript' && (
+                          <>
+                            <span>{session.wordCount} words</span>
+                            {session.preview && (
+                              <p className="mt-1 italic truncate">"{session.preview}"</p>
+                            )}
+                          </>
+                        )}
+                        {session.type === 'audio' && (
+                          <span>
+                            {(session.totalBytes / 1024 / 1024).toFixed(2)} MB
+                            {' · '}
+                            {session.chunkCount} chunks
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleRecoverSession(session)}
+                          className="flex-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors flex items-center justify-center gap-1"
+                        >
+                          <Download size={14} />
+                          Recover
+                        </button>
+                        <button
+                          onClick={() => handleDeleteLostSession(session)}
+                          className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 text-sm rounded-lg transition-colors"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* No Sessions Found */}
+              {!isCheckingRecovery && lostSessions.length === 0 && recoveryResult && (
+                <div className="text-center py-8">
+                  <CheckCircle className="text-green-600 mx-auto mb-3" size={48} />
+                  <p className="text-gray-900 font-medium">All Clear!</p>
+                  <p className="text-gray-600 text-sm mt-1">No lost recordings found.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t bg-gray-50">
+              <button
+                onClick={() => {
+                  setShowRecoveryModal(false)
+                  setRecoveryResult(null)
+                }}
+                className="w-full px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

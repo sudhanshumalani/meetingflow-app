@@ -1082,21 +1082,51 @@ export function AppProvider({ children }) {
           return
         }
 
+        // Helper to get deleted IDs from tombstone array
+        const getDeletedIds = (type) => {
+          try {
+            const deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
+            return new Set(
+              deletedItems
+                .filter(item => !type || item.type === type)
+                .map(item => item.id)
+            )
+          } catch (e) {
+            return new Set()
+          }
+        }
+
         // Subscribe to meetings - MERGE with local, don't replace
         const unsubMeetings = firestoreService.subscribeMeetings((firestoreMeetings) => {
           try {
+            // Skip if a full sync is in progress to prevent race conditions
+            if (isSyncInProgress()) {
+              console.log('🔥 Firestore: Skipping meetings callback - sync in progress')
+              return
+            }
+
             console.log('🔥 Firestore: Received', firestoreMeetings.length, 'meetings from cloud')
+
+            // Get deleted meeting IDs from tombstone array
+            const deletedMeetingIds = getDeletedIds('meeting')
+            console.log('🔥 Firestore: Filtering out', deletedMeetingIds.size, 'deleted meetings')
+
+            // Filter out deleted meetings from cloud data BEFORE merging
+            const filteredFirestoreMeetings = firestoreMeetings.filter(m => !deletedMeetingIds.has(m.id))
+            console.log('🔥 Firestore: After filtering:', filteredFirestoreMeetings.length, 'meetings')
 
             // Get current local meetings
             const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-            console.log('🔥 Firestore: Local meetings count:', localMeetings.length)
+            // Also filter local meetings (in case they weren't cleaned up)
+            const filteredLocalMeetings = localMeetings.filter(m => !deletedMeetingIds.has(m.id))
+            console.log('🔥 Firestore: Local meetings count:', filteredLocalMeetings.length)
 
             // MERGE: Combine local and Firestore data, keeping newer versions
-            const mergedMeetings = mergeMeetingsData(localMeetings, firestoreMeetings)
+            const mergedMeetings = mergeMeetingsData(filteredLocalMeetings, filteredFirestoreMeetings)
             console.log('🔥 Firestore: Merged meetings count:', mergedMeetings.length)
 
             // Only update if we have data (never overwrite with empty)
-            if (mergedMeetings.length > 0) {
+            if (mergedMeetings.length > 0 || filteredLocalMeetings.length === 0) {
               dispatch({ type: 'SET_MEETINGS', payload: mergedMeetings })
               localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
             }
@@ -1108,12 +1138,26 @@ export function AppProvider({ children }) {
         // Subscribe to stakeholders - MERGE with local
         const unsubStakeholders = firestoreService.subscribeStakeholders((firestoreStakeholders) => {
           try {
+            // Skip if a full sync is in progress to prevent race conditions
+            if (isSyncInProgress()) {
+              console.log('🔥 Firestore: Skipping stakeholders callback - sync in progress')
+              return
+            }
+
             console.log('🔥 Firestore: Received', firestoreStakeholders.length, 'stakeholders from cloud')
 
-            const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-            const mergedStakeholders = mergeByIdKeepNewer(localStakeholders, firestoreStakeholders)
+            // Get deleted stakeholder IDs from tombstone array
+            const deletedStakeholderIds = getDeletedIds('stakeholder')
 
-            if (mergedStakeholders.length > 0) {
+            // Filter out deleted stakeholders
+            const filteredFirestoreStakeholders = firestoreStakeholders.filter(s => !deletedStakeholderIds.has(s.id))
+
+            const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+            const filteredLocalStakeholders = localStakeholders.filter(s => !deletedStakeholderIds.has(s.id))
+
+            const mergedStakeholders = mergeByIdKeepNewer(filteredLocalStakeholders, filteredFirestoreStakeholders)
+
+            if (mergedStakeholders.length > 0 || filteredLocalStakeholders.length === 0) {
               dispatch({ type: 'SET_STAKEHOLDERS', payload: mergedStakeholders })
               localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
             }
@@ -1125,12 +1169,26 @@ export function AppProvider({ children }) {
         // Subscribe to categories - MERGE with local
         const unsubCategories = firestoreService.subscribeStakeholderCategories((firestoreCategories) => {
           try {
+            // Skip if a full sync is in progress to prevent race conditions
+            if (isSyncInProgress()) {
+              console.log('🔥 Firestore: Skipping categories callback - sync in progress')
+              return
+            }
+
             console.log('🔥 Firestore: Received', firestoreCategories.length, 'categories from cloud')
 
-            const localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
-            const mergedCategories = mergeByIdKeepNewer(localCategories, firestoreCategories)
+            // Get deleted category IDs from tombstone array
+            const deletedCategoryIds = getDeletedIds('stakeholderCategory')
 
-            if (mergedCategories.length > 0) {
+            // Filter out deleted categories
+            const filteredFirestoreCategories = firestoreCategories.filter(c => !deletedCategoryIds.has(c.id))
+
+            const localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+            const filteredLocalCategories = localCategories.filter(c => !deletedCategoryIds.has(c.id))
+
+            const mergedCategories = mergeByIdKeepNewer(filteredLocalCategories, filteredFirestoreCategories)
+
+            if (mergedCategories.length > 0 || filteredLocalCategories.length === 0) {
               dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: mergedCategories })
               localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
             }
@@ -1733,13 +1791,9 @@ export function AppProvider({ children }) {
             }
           }
 
-          // Only keep failed deletions in localStorage
-          if (failedDeletions.length > 0) {
-            localStorage.setItem('meetingflow_deleted_items', JSON.stringify(failedDeletions))
-          } else {
-            localStorage.setItem('meetingflow_deleted_items', '[]')
-          }
-          console.log('🔄 Deletion sync complete:', syncedDeletions.length, 'synced,', failedDeletions.length, 'failed')
+          // NOTE: Don't clear deletedItems here - wait until after all data is saved
+          // to prevent race condition with real-time subscriptions
+          console.log('🔄 Deletion sync to cloud complete:', syncedDeletions.length, 'synced,', failedDeletions.length, 'failed')
         }
 
         // Fetch deleted IDs from Firestore to remove from local data
@@ -1883,6 +1937,17 @@ export function AppProvider({ children }) {
         // Reload data into React state
         console.log('🔄 Reloading data into React state...')
         loadData()
+
+        // NOW it's safe to clear the tombstones - data is saved and state is reloaded
+        // Only keep failed deletions (for retry on next sync)
+        if (failedDeletions.length > 0) {
+          console.log('🔄 Keeping', failedDeletions.length, 'failed deletions for retry')
+          localStorage.setItem('meetingflow_deleted_items', JSON.stringify(failedDeletions))
+        } else {
+          // All synced successfully - clear tombstones
+          console.log('🔄 Clearing deletion tombstones - sync complete')
+          localStorage.setItem('meetingflow_deleted_items', '[]')
+        }
 
         // Build result message
         const downloaded = meetingsMerge.toDownload.length + stakeholdersMerge.toDownload.length + categoriesMerge.toDownload.length

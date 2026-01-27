@@ -140,7 +140,7 @@ async function getFirestoreService() {
 
 export default function Home() {
   const navigate = useNavigate()
-  const { meetings, stakeholders, stakeholderCategories, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder, addStakeholderCategory, updateStakeholderCategory, deleteStakeholderCategory } = useApp()
+  const { meetings, stakeholders, stakeholderCategories, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder, addStakeholderCategory, updateStakeholderCategory, deleteStakeholderCategory, reloadFromStorage } = useApp()
   const sync = useSyncContext()
   const { measureInteraction } = usePerformanceMonitor('Home')
   const [searchTerm, setSearchTerm] = useState('')
@@ -538,6 +538,7 @@ export default function Home() {
 
     try {
       console.log('🔄 Quick sync starting...')
+      console.log('🔄 User ID:', userId)
 
       // Load firestore service (uses REST on iOS, SDK on desktop)
       const firestoreService = await getFirestoreService()
@@ -546,58 +547,111 @@ export default function Home() {
         throw new Error('Failed to load Firestore service')
       }
 
-      // Fetch all data from Firestore
-      const [cloudMeetings, cloudStakeholders, cloudCategories] = await Promise.all([
-        firestoreService.getMeetings(),
-        firestoreService.getStakeholders(),
-        firestoreService.getStakeholderCategories()
-      ])
+      console.log('🔄 Firestore service loaded, fetching data...')
+
+      // Fetch all data from Firestore with individual error handling
+      let cloudMeetings = [], cloudStakeholders = [], cloudCategories = []
+
+      try {
+        cloudMeetings = await firestoreService.getMeetings()
+        console.log('🔄 Meetings fetched:', cloudMeetings.length)
+      } catch (e) {
+        console.error('🔄 Failed to fetch meetings:', e)
+        throw new Error(`Failed to fetch meetings: ${e.message}`)
+      }
+
+      try {
+        cloudStakeholders = await firestoreService.getStakeholders()
+        console.log('🔄 Stakeholders fetched:', cloudStakeholders.length)
+      } catch (e) {
+        console.error('🔄 Failed to fetch stakeholders:', e)
+        throw new Error(`Failed to fetch stakeholders: ${e.message}`)
+      }
+
+      try {
+        cloudCategories = await firestoreService.getStakeholderCategories()
+        console.log('🔄 Categories fetched:', cloudCategories.length)
+      } catch (e) {
+        console.error('🔄 Failed to fetch categories:', e)
+        throw new Error(`Failed to fetch categories: ${e.message}`)
+      }
 
       // Get local data
       const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
       const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+      const localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+
+      console.log('🔄 Local data:', {
+        meetings: localMeetings.length,
+        stakeholders: localStakeholders.length,
+        categories: localCategories.length
+      })
 
       // Simple merge: use cloud data, add any local-only items
       const cloudMeetingIds = new Set(cloudMeetings.map(m => m.id))
       const localOnlyMeetings = localMeetings.filter(m => !cloudMeetingIds.has(m.id))
 
       // Upload local-only meetings to cloud
+      let uploadedCount = 0
       for (const meeting of localOnlyMeetings) {
         try {
           await firestoreService.saveMeeting(meeting)
           console.log('📤 Uploaded local meeting:', meeting.title)
+          uploadedCount++
         } catch (e) {
           console.warn('Failed to upload meeting:', e)
         }
       }
 
-      // Merge and save
+      // Similarly for stakeholders
+      const cloudStakeholderIds = new Set(cloudStakeholders.map(s => s.id))
+      const localOnlyStakeholders = localStakeholders.filter(s => !cloudStakeholderIds.has(s.id))
+
+      for (const stakeholder of localOnlyStakeholders) {
+        try {
+          await firestoreService.saveStakeholder(stakeholder)
+          console.log('📤 Uploaded local stakeholder:', stakeholder.name)
+        } catch (e) {
+          console.warn('Failed to upload stakeholder:', e)
+        }
+      }
+
+      // Merge and save to localStorage
       const mergedMeetings = [...cloudMeetings, ...localOnlyMeetings]
       localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
 
-      const finalStakeholders = cloudStakeholders.length > 0 ? cloudStakeholders : localStakeholders
-      localStorage.setItem('meetingflow_stakeholders', JSON.stringify(finalStakeholders))
+      const mergedStakeholders = [...cloudStakeholders, ...localOnlyStakeholders]
+      localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
 
-      const finalCategories = cloudCategories.length > 0 ? cloudCategories : []
-      if (finalCategories.length > 0) {
-        localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(finalCategories))
-      }
+      const finalCategories = cloudCategories.length > 0 ? cloudCategories : localCategories
+      localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(finalCategories))
+
+      console.log('🔄 Saved to localStorage:', {
+        meetings: mergedMeetings.length,
+        stakeholders: mergedStakeholders.length,
+        categories: finalCategories.length
+      })
 
       // Build detailed sync message
       const syncDetails = []
       syncDetails.push(`${mergedMeetings.length} Meeting${mergedMeetings.length !== 1 ? 's' : ''}`)
-      syncDetails.push(`${finalStakeholders.length} Stakeholder${finalStakeholders.length !== 1 ? 's' : ''}`)
+      syncDetails.push(`${mergedStakeholders.length} Stakeholder${mergedStakeholders.length !== 1 ? 's' : ''}`)
       syncDetails.push(`${finalCategories.length} Categor${finalCategories.length !== 1 ? 'ies' : 'y'}`)
 
-      const uploadedInfo = localOnlyMeetings.length > 0 ? ` (${localOnlyMeetings.length} uploaded)` : ''
+      const uploadedInfo = uploadedCount > 0 ? ` (${uploadedCount} uploaded)` : ''
 
       setSyncResult({
         success: true,
         message: `Synced: ${syncDetails.join(', ')}${uploadedInfo}`
       })
 
-      // Reload to show updated data
-      setTimeout(() => window.location.reload(), 1500)
+      // Reload data from localStorage into React state (no page reload needed)
+      console.log('🔄 Reloading data into React state...')
+      if (reloadFromStorage) {
+        reloadFromStorage()
+      }
+
+      console.log('✅ Quick sync complete')
 
     } catch (error) {
       console.error('❌ Quick sync failed:', error)

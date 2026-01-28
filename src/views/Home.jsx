@@ -1160,6 +1160,17 @@ export default function Home() {
                         Manage Stakeholders
                       </button>
 
+                      <button
+                        onClick={() => {
+                          navigate('/analyzer')
+                          setShowUserMenu(false)
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        <BarChart3 size={16} />
+                        Meeting Analyzer
+                      </button>
+
                       <div className="relative">
                         <BatchExportButton
                           meetings={displayMeetings}

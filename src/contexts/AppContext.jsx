@@ -987,7 +987,7 @@ export function AppProvider({ children }) {
     }
   }, [])
 
-  const loadData = useCallback(() => {
+  const loadData = useCallback(async () => {
     // Prevent concurrent loads
     if (isLoadingRef.current) {
       console.log('📂 LOAD: Already loading, skipping concurrent call')
@@ -1031,6 +1031,10 @@ export function AppProvider({ children }) {
 
       // Load from localStorage ONLY (synchronous, reliable)
       let meetings, localStakeholders, localCategories, deletedItems
+      // Final data to dispatch (may come from localStorage or IndexedDB)
+      let finalMeetings = []
+      let finalStakeholders = []
+      let finalCategories = []
 
       try {
         // Load from localStorage first (synchronous and immediate)
@@ -1068,99 +1072,96 @@ export function AppProvider({ children }) {
         // ALWAYS check IndexedDB for more complete data (iOS sync saves there when localStorage quota is full)
         // This fixes the issue where manual sync downloads 28 meetings but only 2 show (from localStorage)
         console.log('📂 LOAD: Checking IndexedDB for synced data...')
-        // Use async IIFE to load from IndexedDB - lazy init to avoid iOS crashes
-        ;(async () => {
-          try {
-            const syncStorage = await getSyncStorage()
-            const idbMeetings = await syncStorage.getItem('meetings')
-            const idbStakeholders = await syncStorage.getItem('stakeholders')
-            const idbCategories = await syncStorage.getItem('categories')
 
-            console.log('📂 LOAD: IndexedDB data:', {
-              meetings: idbMeetings?.length || 0,
-              stakeholders: idbStakeholders?.length || 0,
-              categories: idbCategories?.length || 0
+        // FIX: Await IndexedDB check instead of fire-and-forget async IIFE
+        // This ensures we dispatch the most complete data on first load
+        finalMeetings = meetings
+        finalStakeholders = localStakeholders
+        finalCategories = localCategories
+
+        try {
+          const syncStorage = await getSyncStorage()
+          const idbMeetings = await syncStorage.getItem('meetings')
+          const idbStakeholders = await syncStorage.getItem('stakeholders')
+          const idbCategories = await syncStorage.getItem('categories')
+
+          console.log('📂 LOAD: IndexedDB data:', {
+            meetings: idbMeetings?.length || 0,
+            stakeholders: idbStakeholders?.length || 0,
+            categories: idbCategories?.length || 0
+          })
+
+          // CRITICAL FIX: Filter out tombstoned (deleted) items from IndexedDB BEFORE comparing counts
+          // This prevents deleted items from being restored when IndexedDB has stale data
+          const tombstonedMeetingIds = new Set(
+            deletedItems.filter(d => d.type === 'meeting').map(d => d.id)
+          )
+          const tombstonedStakeholderIds = new Set(
+            deletedItems.filter(d => d.type === 'stakeholder').map(d => d.id)
+          )
+          const tombstonedCategoryIds = new Set(
+            deletedItems.filter(d => d.type === 'stakeholderCategory').map(d => d.id)
+          )
+
+          // Filter IndexedDB data to exclude tombstoned items
+          const filteredIdbMeetings = (idbMeetings || []).filter(m => !tombstonedMeetingIds.has(m.id))
+          const filteredIdbStakeholders = (idbStakeholders || []).filter(s => !tombstonedStakeholderIds.has(s.id))
+          const filteredIdbCategories = (idbCategories || []).filter(c => !tombstonedCategoryIds.has(c.id))
+
+          if (tombstonedMeetingIds.size > 0) {
+            logDeletion('IDB_LOAD', 'Filtered tombstoned items from IndexedDB', {
+              originalMeetings: idbMeetings?.length || 0,
+              filteredMeetings: filteredIdbMeetings.length,
+              tombstonedMeetingIds: Array.from(tombstonedMeetingIds).map(id => id?.slice(0, 8) + '...')
             })
 
-            // CRITICAL FIX: Filter out tombstoned (deleted) items from IndexedDB BEFORE comparing counts
-            // This prevents deleted items from being restored when IndexedDB has stale data
-            const tombstonedMeetingIds = new Set(
-              deletedItems.filter(d => d.type === 'meeting').map(d => d.id)
-            )
-            const tombstonedStakeholderIds = new Set(
-              deletedItems.filter(d => d.type === 'stakeholder').map(d => d.id)
-            )
-            const tombstonedCategoryIds = new Set(
-              deletedItems.filter(d => d.type === 'stakeholderCategory').map(d => d.id)
-            )
-
-            // Filter IndexedDB data to exclude tombstoned items
-            const filteredIdbMeetings = (idbMeetings || []).filter(m => !tombstonedMeetingIds.has(m.id))
-            const filteredIdbStakeholders = (idbStakeholders || []).filter(s => !tombstonedStakeholderIds.has(s.id))
-            const filteredIdbCategories = (idbCategories || []).filter(c => !tombstonedCategoryIds.has(c.id))
-
-            if (tombstonedMeetingIds.size > 0) {
-              logDeletion('IDB_LOAD', 'Filtered tombstoned items from IndexedDB', {
-                originalMeetings: idbMeetings?.length || 0,
-                filteredMeetings: filteredIdbMeetings.length,
-                tombstonedMeetingIds: Array.from(tombstonedMeetingIds).map(id => id?.slice(0, 8) + '...')
-              })
-
-              // Also update IndexedDB to remove the tombstoned items (async, don't wait)
-              syncStorage.setItem('meetings', filteredIdbMeetings).catch(err => {
-                console.warn('📂 Failed to clean up IndexedDB meetings:', err)
-              })
-            }
-
-            // Use IndexedDB data if it has MORE items than localStorage AFTER filtering
-            const idbHasMoreData = filteredIdbMeetings.length > meetings.length ||
-                                   filteredIdbStakeholders.length > localStakeholders.length ||
-                                   filteredIdbCategories.length > localCategories.length
-
-            if (filteredIdbMeetings.length > 0 && idbHasMoreData) {
-              console.log('📂 LOAD: IndexedDB has more data than localStorage, using IndexedDB!', {
-                localStorage: { meetings: meetings.length, stakeholders: localStakeholders.length, categories: localCategories.length },
-                indexedDB: { meetings: filteredIdbMeetings.length, stakeholders: filteredIdbStakeholders.length, categories: filteredIdbCategories.length }
-              })
-              dispatch({
-                type: 'LOAD_DATA',
-                payload: {
-                  meetings: deduplicateMeetings(filteredIdbMeetings),
-                  stakeholders: filteredIdbStakeholders.length > 0 ? filteredIdbStakeholders : localStakeholders || [],
-                  stakeholderCategories: filteredIdbCategories.length > 0 ? filteredIdbCategories : localCategories || [],
-                  deletedItems: deletedItems || []
-                }
-              })
-              dispatch({ type: 'SET_LOADING', payload: false })
-            }
-          } catch (idbError) {
-            console.warn('📂 LOAD: IndexedDB check failed:', idbError)
+            // Also update IndexedDB to remove the tombstoned items (async, don't wait)
+            syncStorage.setItem('meetings', filteredIdbMeetings).catch(err => {
+              console.warn('📂 Failed to clean up IndexedDB meetings:', err)
+            })
           }
-        })()
 
-        console.log('📂 LOAD: Loaded from localStorage - meetings:', meetings.length)
+          // Use IndexedDB data if it has MORE items than localStorage AFTER filtering
+          const idbHasMoreData = filteredIdbMeetings.length > meetings.length ||
+                                 filteredIdbStakeholders.length > localStakeholders.length ||
+                                 filteredIdbCategories.length > localCategories.length
+
+          if (filteredIdbMeetings.length > 0 && idbHasMoreData) {
+            console.log('📂 LOAD: IndexedDB has more data than localStorage, using IndexedDB!', {
+              localStorage: { meetings: meetings.length, stakeholders: localStakeholders.length, categories: localCategories.length },
+              indexedDB: { meetings: filteredIdbMeetings.length, stakeholders: filteredIdbStakeholders.length, categories: filteredIdbCategories.length }
+            })
+            finalMeetings = filteredIdbMeetings
+            finalStakeholders = filteredIdbStakeholders.length > 0 ? filteredIdbStakeholders : localStakeholders
+            finalCategories = filteredIdbCategories.length > 0 ? filteredIdbCategories : localCategories
+          }
+        } catch (idbError) {
+          console.warn('📂 LOAD: IndexedDB check failed, using localStorage data:', idbError)
+        }
+
+        console.log('📂 LOAD: Loaded from storage - meetings:', finalMeetings.length)
 
       } catch (error) {
         console.error('❌ localStorage failed, using defaults:', error)
         console.error('❌ Error stack:', error.stack)
-        meetings = []
-        localStakeholders = []
-        localCategories = []
+        finalMeetings = []
+        finalStakeholders = []
+        finalCategories = []
         deletedItems = []
       }
 
-      console.log('📂 LOAD: After localStorage section, about to process meetings...')
+      console.log('📂 LOAD: After storage section, about to process meetings...')
 
       // Deduplicate meetings before loading
-      console.log('📂 LOAD: Raw meetings from storage:', meetings?.length || 0)
-      const deduplicatedMeetings = deduplicateMeetings(meetings || [])
+      console.log('📂 LOAD: Raw meetings from storage:', finalMeetings?.length || 0)
+      const deduplicatedMeetings = deduplicateMeetings(finalMeetings || [])
       console.log('📂 LOAD: Deduplicated meetings:', deduplicatedMeetings.length)
 
-      // Load local data immediately
+      // Load data - single dispatch with best available data
       console.log('🔍 DISPATCH: About to dispatch LOAD_DATA with:', {
         meetings: deduplicatedMeetings?.length || 0,
-        stakeholders: localStakeholders?.length || 0,
-        stakeholderCategories: localCategories?.length || 0,
+        stakeholders: finalStakeholders?.length || 0,
+        stakeholderCategories: finalCategories?.length || 0,
         deletedItems: deletedItems?.length || 0
       })
 
@@ -1168,8 +1169,8 @@ export function AppProvider({ children }) {
         type: 'LOAD_DATA',
         payload: {
           meetings: deduplicatedMeetings,
-          stakeholders: localStakeholders || [],
-          stakeholderCategories: localCategories || [],
+          stakeholders: finalStakeholders || [],
+          stakeholderCategories: finalCategories || [],
           deletedItems: deletedItems || []
         }
       })

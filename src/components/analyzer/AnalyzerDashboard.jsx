@@ -8,6 +8,7 @@
  */
 
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   useActionItemDashboard,
   useAllStakeholderEngagement,
@@ -38,7 +39,9 @@ import {
   MessageSquare,
   Send,
   Sparkles,
-  FileText
+  FileText,
+  Home,
+  Settings
 } from 'lucide-react'
 import analyzerService from '../../services/meetingAnalyzerService'
 
@@ -224,6 +227,7 @@ function SearchResults({ query }) {
 // ============================================
 
 export default function AnalyzerDashboard() {
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('overview')
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedSection, setExpandedSection] = useState(null)
@@ -311,12 +315,30 @@ export default function AnalyzerDashboard() {
 
   return (
     <div className="max-w-6xl mx-auto px-3 py-4 sm:p-4">
-      {/* Header */}
+      {/* Header with navigation */}
       <div className="mb-4 sm:mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <BarChart3 className="w-6 h-6 sm:w-7 sm:h-7 text-blue-600" />
-          Meeting Analyzer
-        </h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <BarChart3 className="w-6 h-6 sm:w-7 sm:h-7 text-blue-600" />
+            Meeting Analyzer
+          </h1>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/')}
+              className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
+              title="Home"
+            >
+              <Home className="w-5 h-5 text-gray-600" />
+            </button>
+            <button
+              onClick={() => navigate('/settings')}
+              className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
+              title="Settings"
+            >
+              <Settings className="w-5 h-5 text-gray-600" />
+            </button>
+          </div>
+        </div>
         <p className="text-sm sm:text-base text-gray-600 mt-1">
           Intelligence across {meetingStats.total} meetings
         </p>

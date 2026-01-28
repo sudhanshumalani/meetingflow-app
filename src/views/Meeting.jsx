@@ -68,27 +68,25 @@ export default function Meeting() {
   const { id } = useParams()
   const navigate = useNavigate()
 
-  // PHASE 2: Read data directly from Dexie (reactive via useLiveQuery)
+  // Read from Dexie (primary) with AppContext fallback
   const dexieMeeting = useFullMeeting(id !== 'new' ? id : null)
   const dexieStakeholders = useStakeholders()
 
-  // Ref to track which meeting ID has been initialized (prevents infinite loop)
-  const loadedMeetingIdRef = useRef(null)
-
-  // Handle loading state
-  const stakeholders = dexieStakeholders ?? []
-  const isDataLoading = id !== 'new' && dexieMeeting === undefined
-
-  // Keep action functions from AppContext (will migrate in Phase 2 Step 5)
+  // Keep action functions and fallback data from AppContext
   const {
+    meetings: appContextMeetings,
+    stakeholders: appContextStakeholders,
     currentMeeting,
     addMeeting,
     updateMeeting,
     setCurrentMeeting
   } = useApp()
 
-  // Use Dexie meeting if available, fallback to currentMeeting for compatibility
-  const meeting = dexieMeeting ?? currentMeeting
+  // Use Dexie data if available, fallback to AppContext for transition period
+  const stakeholders = (dexieStakeholders && dexieStakeholders.length > 0) ? dexieStakeholders : (appContextStakeholders ?? [])
+
+  // Ref to track which meeting ID has been initialized (prevents infinite loop)
+  const loadedMeetingIdRef = useRef(null)
 
   // Form state
   const [formData, setFormData] = useState({
@@ -205,31 +203,37 @@ export default function Meeting() {
   }, [isProcessingSpeakers, saveError])
 
   useEffect(() => {
-    // Only run this effect when ID changes or when Dexie meeting is first loaded
+    // Only run this effect when ID changes
     if (!id || id === 'new') {
       loadedMeetingIdRef.current = null
       console.log('📝 New meeting mode - no restoration needed')
       return
     }
 
-    // Wait for Dexie to load the meeting
-    if (dexieMeeting === undefined) {
-      console.log('📝 Waiting for Dexie to load meeting...')
-      return
-    }
-
-    // CRITICAL: Prevent infinite loop by checking if we already loaded this meeting
-    // useLiveQuery returns new object references, so we track by ID
+    // Prevent infinite loop by checking if we already loaded this meeting
     if (loadedMeetingIdRef.current === id) {
       console.log('📝 Meeting already loaded for ID:', id, '- skipping re-initialization')
       return
     }
 
+    // Wait for Dexie to finish loading (undefined = still loading)
+    if (dexieMeeting === undefined) {
+      console.log('📝 Waiting for Dexie to load meeting...')
+      return
+    }
+
     console.log('🔄 Loading meeting data for ID:', id)
 
-    // PHASE 2: Use meeting from Dexie (primary) or fallback to currentMeeting
-    const meetingData = dexieMeeting ?? currentMeeting
-    console.log('📝 Found meeting:', meetingData ? { id: meetingData.id, title: meetingData.title } : 'NOT FOUND')
+    // Use Dexie data if available, fallback to AppContext
+    let meetingData = dexieMeeting
+    if (!meetingData || !meetingData.aiResult) {
+      // Dexie doesn't have full data, try AppContext
+      console.log('📝 Dexie data incomplete, checking AppContext...')
+      meetingData = (currentMeeting && currentMeeting.id === id)
+        ? currentMeeting
+        : appContextMeetings?.find(m => m.id === id) || dexieMeeting || null
+    }
+    console.log('📝 Found meeting:', meetingData ? { id: meetingData.id, title: meetingData.title, hasAiResult: !!meetingData.aiResult } : 'NOT FOUND')
 
     if (meetingData) {
       // Mark this meeting as loaded to prevent re-initialization
@@ -382,8 +386,8 @@ export default function Meeting() {
     } else {
       console.log('📝 No meeting found - this is a new meeting')
     }
-  }, [id, dexieMeeting, currentMeeting, setCurrentMeeting]) // eslint-disable-line react-hooks/exhaustive-deps
-  // Note: We use loadedMeetingIdRef to prevent infinite loops from dexieMeeting object changes
+  }, [id, dexieMeeting, appContextMeetings, currentMeeting, setCurrentMeeting]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Note: We use loadedMeetingIdRef to prevent infinite loops
 
   // Debug: Check state after restoration (with delay to account for setTimeout)
   useEffect(() => {
@@ -1124,29 +1128,9 @@ export default function Meeting() {
   const template = formData.template
 
   const handleRefresh = async () => {
-    // PHASE 2: Use Dexie meeting data (reactive via useLiveQuery)
-    const meetingData = dexieMeeting
-    if (meetingData) {
-      setCurrentMeeting(meetingData)
-      console.log('🔍 DEBUG: Refreshing meeting data:', {
-        id: meetingData.id,
-        selectedStakeholder: meetingData.selectedStakeholder,
-        stakeholderIds: meetingData.stakeholderIds,
-        formDataBeingSaved: meetingData
-      })
-
-      setFormData({
-        title: meetingData.title || '',
-        selectedStakeholder: meetingData.selectedStakeholder || meetingData.stakeholderIds?.[0] || '',
-        date: meetingData.scheduledAt ? meetingData.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
-        priority: meetingData.priority || 'medium',
-        template: meetingData.template || null
-      })
-
-      if (meetingData.digitalNotes) {
-        setDigitalNotes(meetingData.digitalNotes)
-      }
-    }
+    // Reset loaded ref to allow re-initialization
+    loadedMeetingIdRef.current = null
+    // The useEffect will pick up the change and reload
   }
 
   return (

@@ -118,20 +118,27 @@ const parseMeetingDate = (dateString) => {
 export default function Home() {
   const navigate = useNavigate()
 
-  // PHASE 2: Read data directly from Dexie (reactive via useLiveQuery)
+  // Read data from Dexie (primary) with AppContext fallback
   const dexieMeetings = useMeetings()
   const dexieStakeholders = useStakeholders()
   const dexieCategories = useStakeholderCategories()
 
-  // Keep action functions from AppContext (will migrate in Phase 2 Step 5)
-  const { addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder, addStakeholderCategory, updateStakeholderCategory, deleteStakeholderCategory, performFullSync } = useApp()
+  // Keep action functions from AppContext
+  const {
+    meetings: appContextMeetings,
+    stakeholders: appContextStakeholders,
+    stakeholderCategories: appContextCategories,
+    addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting,
+    addStakeholder, updateStakeholder, deleteStakeholder,
+    addStakeholderCategory, updateStakeholderCategory, deleteStakeholderCategory,
+    performFullSync
+  } = useApp()
   const sync = useSyncContext()
 
-  // Handle loading state - useLiveQuery returns undefined while loading
-  const meetings = dexieMeetings ?? []
-  const stakeholders = dexieStakeholders ?? []
-  const stakeholderCategories = dexieCategories ?? []
-  const isDataLoading = dexieMeetings === undefined
+  // Use Dexie data if available, fallback to AppContext for transition period
+  const meetings = (dexieMeetings && dexieMeetings.length > 0) ? dexieMeetings : (appContextMeetings ?? [])
+  const stakeholders = (dexieStakeholders && dexieStakeholders.length > 0) ? dexieStakeholders : (appContextStakeholders ?? [])
+  const stakeholderCategories = (dexieCategories && dexieCategories.length > 0) ? dexieCategories : (appContextCategories ?? [])
   const { measureInteraction } = usePerformanceMonitor('Home')
   const [searchTerm, setSearchTerm] = useState('')
   const [notifications, setNotifications] = useState([])

@@ -256,9 +256,23 @@ function mergeByIdWithTracking(localItems, cloudItems) {
         merged.set(id, localItem)
         toUpload.push(localItem)
       } else if (cloudTime > localTime) {
-        // Cloud is newer - use cloud
-        merged.set(id, cloudItem)
-        toDownload.push(cloudItem)
+        // Cloud is newer - use cloud metadata BUT preserve local blob data
+        // Cloud doesn't store large fields like aiResult, digitalNotes, transcript
+        // So we merge cloud metadata with local blobs
+        const mergedItem = {
+          ...cloudItem,
+          // Preserve blob data from local if cloud doesn't have it
+          aiResult: cloudItem.aiResult || localItem.aiResult,
+          digitalNotes: cloudItem.digitalNotes || localItem.digitalNotes,
+          audioTranscript: cloudItem.audioTranscript || localItem.audioTranscript,
+          transcript: cloudItem.transcript || localItem.transcript,
+          notes: cloudItem.notes || localItem.notes,
+          originalInputs: cloudItem.originalInputs || localItem.originalInputs,
+          speakerData: cloudItem.speakerData || localItem.speakerData,
+          images: cloudItem.images || localItem.images,
+        }
+        merged.set(id, mergedItem)
+        toDownload.push(mergedItem)
       } else {
         // Same time - keep local (arbitrary choice)
         merged.set(id, localItem)
@@ -2136,14 +2150,17 @@ export function AppProvider({ children }) {
         try {
           // ============================================
           // DEXIE: PRIMARY STORAGE (most reliable on iOS)
+          // Save FULL meetings with blob data (not stripped)
           // ============================================
-          console.log('🔄 Saving to Dexie (primary)...')
+          console.log('🔄 Saving to Dexie (primary) with FULL meeting data...')
           try {
             await db.open()
-            const dexieSaveResult = await bulkSaveMeetings(strippedMeetings, { queueSync: false })
+            // CRITICAL: Save FULL meetings to Dexie, not stripped ones
+            // This ensures blob data (aiResult, digitalNotes, transcript) is preserved
+            const dexieSaveResult = await bulkSaveMeetings(meetingsMerge.merged, { queueSync: false })
             const dexieStakeholderResult = await bulkSaveStakeholders(stakeholdersMerge.merged, { queueSync: false })
             const dexieCategoryResult = await bulkSaveCategories(categoriesMerge.merged, { queueSync: false })
-            console.log('✅ Saved to Dexie:', {
+            console.log('✅ Saved to Dexie (FULL data):', {
               meetings: dexieSaveResult.saved,
               stakeholders: dexieStakeholderResult.saved,
               categories: dexieCategoryResult.saved

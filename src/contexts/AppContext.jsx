@@ -15,6 +15,87 @@ async function getSyncStorage() {
 }
 
 // ============================================
+// DELETION DEBUG LOGGING
+// ============================================
+const DELETION_DEBUG = true // Set to false in production to reduce console noise
+
+function logDeletion(context, message, data = {}) {
+  if (!DELETION_DEBUG) return
+  const timestamp = new Date().toISOString().slice(11, 23) // HH:mm:ss.mmm
+  const tombstones = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
+    } catch { return [] }
+  })()
+  console.log(`🗑️ [${timestamp}] [${context}] ${message}`, {
+    ...data,
+    _tombstoneCount: tombstones.length,
+    _tombstoneIds: tombstones.map(t => t.id?.slice(0,8) + '...' || 'no-id'),
+    _syncLocked: isSyncLocked
+  })
+}
+
+// ============================================
+// TOMBSTONE RETENTION - Prevents race conditions with Firestore subscriptions
+// ============================================
+// Tombstones should be kept for a minimum period to ensure:
+// 1. Firestore subscription callbacks don't reintroduce deleted items from cache
+// 2. Cross-device sync has time to propagate deletions
+// 3. Eventual consistency issues are handled gracefully
+const TOMBSTONE_RETENTION_MS = 5 * 60 * 1000 // 5 minutes minimum retention
+
+/**
+ * Clean up old tombstones that have been retained long enough
+ * Only removes tombstones older than TOMBSTONE_RETENTION_MS
+ * Returns the remaining tombstones (those still within retention period)
+ */
+function cleanupOldTombstones(tombstones, syncedDeletionIds = new Set()) {
+  const now = Date.now()
+  const remaining = []
+  const removed = []
+
+  for (const tombstone of tombstones) {
+    const deletedAt = new Date(tombstone.deletedAt).getTime()
+    const age = now - deletedAt
+    const wasSynced = syncedDeletionIds.has(tombstone.id)
+
+    // Only remove if BOTH conditions are met:
+    // 1. Tombstone is older than retention period
+    // 2. Tombstone was successfully synced to cloud (or we're doing a cleanup without sync info)
+    if (age > TOMBSTONE_RETENTION_MS && (wasSynced || syncedDeletionIds.size === 0)) {
+      removed.push(tombstone)
+      logDeletion('TOMBSTONE_CLEANUP', 'Removing old tombstone', {
+        id: tombstone.id?.slice(0, 8) + '...',
+        type: tombstone.type,
+        ageMinutes: Math.round(age / 60000),
+        wasSynced
+      })
+    } else {
+      remaining.push(tombstone)
+      if (age <= TOMBSTONE_RETENTION_MS) {
+        logDeletion('TOMBSTONE_CLEANUP', 'Keeping young tombstone', {
+          id: tombstone.id?.slice(0, 8) + '...',
+          type: tombstone.type,
+          ageMinutes: Math.round(age / 60000),
+          retentionMinutes: Math.round(TOMBSTONE_RETENTION_MS / 60000)
+        })
+      } else {
+        logDeletion('TOMBSTONE_CLEANUP', 'Keeping unsynced tombstone for retry', {
+          id: tombstone.id?.slice(0, 8) + '...',
+          type: tombstone.type
+        })
+      }
+    }
+  }
+
+  if (removed.length > 0) {
+    logDeletion('TOMBSTONE_CLEANUP', `Cleaned up ${removed.length} old tombstones, ${remaining.length} remaining`, {})
+  }
+
+  return remaining
+}
+
+// ============================================
 // SYNC LOCK - Prevents race conditions
 // ============================================
 let isSyncLocked = false
@@ -43,6 +124,7 @@ function releaseSyncLock() {
   isSyncLocked = false
   syncLockTimestamp = 0
   console.log('🔄 Sync lock released')
+  logDeletion('SYNC_LOCK', '🔓 Lock RELEASED - subscriptions can now fire', {})
 }
 
 // Export for checking sync status from other components
@@ -822,6 +904,15 @@ export function AppProvider({ children }) {
         localStorage.setItem('meetingflow_stakeholder_categories', categoriesJson)
         localStorage.setItem('meetingflow_deleted_items', deletedJson)
 
+        // Log tombstone changes
+        if (state.deletedItems.length > 0) {
+          logDeletion('SAVE_EFFECT', 'Persisting tombstones to localStorage', {
+            count: state.deletedItems.length,
+            ids: state.deletedItems.map(d => d.id?.slice(0,8) + '...'),
+            types: state.deletedItems.map(d => d.type)
+          })
+        }
+
         console.log('✅ AppContext: Save effect completed successfully')
       } catch (saveError) {
         // CRITICAL: Catch QuotaExceededError and other storage errors
@@ -935,8 +1026,28 @@ export function AppProvider({ children }) {
         console.log('🔍 DEBUG: Initial load from localStorage:', {
           meetings: meetings.length,
           stakeholders: localStakeholders.length,
-          categories: localCategories.length
+          categories: localCategories.length,
+          tombstones: deletedItems.length
         })
+
+        // PERIODIC TOMBSTONE CLEANUP: Remove very old tombstones (> 24 hours)
+        // This prevents tombstone accumulation if user doesn't sync regularly
+        // Note: 5-minute retention is for sync race conditions, 24-hour is for general cleanup
+        const TOMBSTONE_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
+        const now = Date.now()
+        const freshTombstones = deletedItems.filter(t => {
+          const age = now - new Date(t.deletedAt).getTime()
+          return age <= TOMBSTONE_MAX_AGE_MS
+        })
+        if (freshTombstones.length < deletedItems.length) {
+          const removedCount = deletedItems.length - freshTombstones.length
+          logDeletion('APP_LOAD', `Cleaned up ${removedCount} very old tombstones (> 24h)`, {
+            before: deletedItems.length,
+            after: freshTombstones.length
+          })
+          deletedItems = freshTombstones
+          localStorage.setItem('meetingflow_deleted_items', JSON.stringify(deletedItems))
+        }
 
         // ALWAYS check IndexedDB for more complete data (iOS sync saves there when localStorage quota is full)
         // This fixes the issue where manual sync downloads 28 meetings but only 2 show (from localStorage)
@@ -1101,32 +1212,56 @@ export function AppProvider({ children }) {
           try {
             // Skip if a full sync is in progress to prevent race conditions
             if (isSyncInProgress()) {
-              console.log('🔥 Firestore: Skipping meetings callback - sync in progress')
+              logDeletion('SUBSCRIPTION', 'Skipping callback - sync in progress', {
+                firestoreMeetingsCount: firestoreMeetings.length
+              })
               return
             }
 
-            console.log('🔥 Firestore: Received', firestoreMeetings.length, 'meetings from cloud')
+            logDeletion('SUBSCRIPTION', 'Received meetings from cloud', {
+              firestoreMeetingsCount: firestoreMeetings.length,
+              firestoreMeetingIds: firestoreMeetings.map(m => m.id?.slice(0,8) + '...')
+            })
 
             // Get deleted meeting IDs from tombstone array
             const deletedMeetingIds = getDeletedIds('meeting')
-            console.log('🔥 Firestore: Filtering out', deletedMeetingIds.size, 'deleted meetings')
+            logDeletion('SUBSCRIPTION', 'Retrieved tombstones for filtering', {
+              tombstoneCount: deletedMeetingIds.size,
+              tombstoneIds: Array.from(deletedMeetingIds).map(id => id?.slice(0,8) + '...')
+            })
 
             // Filter out deleted meetings from cloud data BEFORE merging
             const filteredFirestoreMeetings = firestoreMeetings.filter(m => !deletedMeetingIds.has(m.id))
-            console.log('🔥 Firestore: After filtering:', filteredFirestoreMeetings.length, 'meetings')
+
+            // Log if any meetings were filtered out
+            const filteredOutMeetings = firestoreMeetings.filter(m => deletedMeetingIds.has(m.id))
+            if (filteredOutMeetings.length > 0) {
+              logDeletion('SUBSCRIPTION', '⚠️ FILTERED OUT deleted meetings from cloud', {
+                filteredOutCount: filteredOutMeetings.length,
+                filteredOutIds: filteredOutMeetings.map(m => m.id?.slice(0,8) + '...')
+              })
+            }
 
             // Get current local meetings
             const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
             // Also filter local meetings (in case they weren't cleaned up)
             const filteredLocalMeetings = localMeetings.filter(m => !deletedMeetingIds.has(m.id))
-            console.log('🔥 Firestore: Local meetings count:', filteredLocalMeetings.length)
 
             // MERGE: Combine local and Firestore data, keeping newer versions
             const mergedMeetings = mergeMeetingsData(filteredLocalMeetings, filteredFirestoreMeetings)
-            console.log('🔥 Firestore: Merged meetings count:', mergedMeetings.length)
+
+            logDeletion('SUBSCRIPTION', 'Merge complete', {
+              localCount: filteredLocalMeetings.length,
+              cloudCount: filteredFirestoreMeetings.length,
+              mergedCount: mergedMeetings.length
+            })
 
             // Only update if we have data (never overwrite with empty)
             if (mergedMeetings.length > 0 || filteredLocalMeetings.length === 0) {
+              logDeletion('SUBSCRIPTION', 'Dispatching SET_MEETINGS', {
+                count: mergedMeetings.length,
+                ids: mergedMeetings.map(m => m.id?.slice(0,8) + '...')
+              })
               dispatch({ type: 'SET_MEETINGS', payload: mergedMeetings })
               localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
             }
@@ -1528,16 +1663,36 @@ export function AppProvider({ children }) {
       return { success: localStorageSaveSuccess, meeting: updatedMeeting, localStorageError: localStorageError?.message }
     },
     deleteMeeting: async (meetingId) => {
+      logDeletion('DELETE_ACTION', 'Starting deletion', { meetingId })
+
       dispatch({ type: 'DELETE_MEETING', payload: meetingId })
+
+      // Verify tombstone was created by reducer
+      setTimeout(() => {
+        try {
+          const tombstones = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
+          const hasTombstone = tombstones.some(t => t.id === meetingId)
+          logDeletion('DELETE_ACTION', 'Tombstone verification', {
+            meetingId,
+            hasTombstone,
+            tombstoneCount: tombstones.length
+          })
+        } catch (e) {
+          console.error('🗑️ Failed to verify tombstone:', e)
+        }
+      }, 100)
+
       // Also delete from Firestore
       if (ENABLE_FIRESTORE) {
         try {
           const firestoreService = await getFirestoreService()
           if (firestoreService) {
+            logDeletion('DELETE_ACTION', 'Calling Firestore deleteMeeting', { meetingId })
             await firestoreService.deleteMeeting(meetingId)
+            logDeletion('DELETE_ACTION', 'Firestore delete completed', { meetingId })
           }
         } catch (err) {
-          console.warn('🔥 Firestore: Failed to delete meeting:', meetingId, err.message)
+          logDeletion('DELETE_ACTION', '⚠️ Firestore delete FAILED', { meetingId, error: err.message })
         }
       }
     },
@@ -1938,16 +2093,74 @@ export function AppProvider({ children }) {
         console.log('🔄 Reloading data into React state...')
         loadData()
 
-        // NOW it's safe to clear the tombstones - data is saved and state is reloaded
-        // Only keep failed deletions (for retry on next sync)
-        if (failedDeletions.length > 0) {
-          console.log('🔄 Keeping', failedDeletions.length, 'failed deletions for retry')
-          localStorage.setItem('meetingflow_deleted_items', JSON.stringify(failedDeletions))
-        } else {
-          // All synced successfully - clear tombstones
-          console.log('🔄 Clearing deletion tombstones - sync complete')
-          localStorage.setItem('meetingflow_deleted_items', '[]')
+        // TOMBSTONE RETENTION FIX:
+        // Instead of clearing all tombstones immediately, we use a retention-based approach:
+        // 1. Failed deletions are always kept for retry
+        // 2. Successfully synced deletions are kept for TOMBSTONE_RETENTION_MS (5 min)
+        // 3. Only tombstones older than retention period AND successfully synced are removed
+        // This prevents the race condition where Firestore subscriptions fire with
+        // cached/stale data after tombstones are cleared
+
+        const currentTombstones = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
+        logDeletion('SYNC_COMPLETE', 'Processing tombstones with retention policy', {
+          totalCount: currentTombstones.length,
+          failedCount: failedDeletions.length,
+          syncedCount: syncedDeletions.length,
+          retentionMinutes: TOMBSTONE_RETENTION_MS / 60000
+        })
+
+        // Build set of successfully synced deletion IDs
+        const syncedDeletionIds = new Set(syncedDeletions.map(d => d.id))
+
+        // Start with failed deletions (always kept for retry)
+        let tombstonesToKeep = [...failedDeletions]
+
+        // Add tombstones that are still within retention period
+        // (even if synced, keep them to prevent race conditions)
+        for (const tombstone of currentTombstones) {
+          // Skip if already in failed deletions
+          if (failedDeletions.some(f => f.id === tombstone.id)) continue
+
+          const deletedAt = new Date(tombstone.deletedAt).getTime()
+          const age = Date.now() - deletedAt
+
+          if (age <= TOMBSTONE_RETENTION_MS) {
+            // Still within retention period - KEEP IT
+            tombstonesToKeep.push(tombstone)
+            logDeletion('SYNC_COMPLETE', '🛡️ Keeping tombstone (within retention period)', {
+              id: tombstone.id?.slice(0, 8) + '...',
+              type: tombstone.type,
+              ageSeconds: Math.round(age / 1000),
+              retentionSeconds: TOMBSTONE_RETENTION_MS / 1000
+            })
+          } else if (syncedDeletionIds.has(tombstone.id)) {
+            // Old AND synced - safe to remove
+            logDeletion('SYNC_COMPLETE', '🧹 Removing old synced tombstone', {
+              id: tombstone.id?.slice(0, 8) + '...',
+              type: tombstone.type,
+              ageMinutes: Math.round(age / 60000)
+            })
+          } else {
+            // Old but NOT synced - keep for retry
+            tombstonesToKeep.push(tombstone)
+            logDeletion('SYNC_COMPLETE', '⚠️ Keeping old unsynced tombstone for retry', {
+              id: tombstone.id?.slice(0, 8) + '...',
+              type: tombstone.type
+            })
+          }
         }
+
+        // Deduplicate tombstones by ID
+        const uniqueTombstones = Array.from(
+          new Map(tombstonesToKeep.map(t => [t.id, t])).values()
+        )
+
+        logDeletion('SYNC_COMPLETE', 'Final tombstone state after sync', {
+          keptCount: uniqueTombstones.length,
+          removedCount: currentTombstones.length - uniqueTombstones.length
+        })
+
+        localStorage.setItem('meetingflow_deleted_items', JSON.stringify(uniqueTombstones))
 
         // Build result message
         const downloaded = meetingsMerge.toDownload.length + stakeholdersMerge.toDownload.length + categoriesMerge.toDownload.length

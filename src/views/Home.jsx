@@ -980,6 +980,11 @@ export default function Home() {
       onClick: () => setShowStakeholderManagement(true)
     },
     {
+      label: 'Meeting Analyzer',
+      icon: <BarChart3 size={20} />,
+      onClick: () => navigate('/analyzer')
+    },
+    {
       label: 'Settings',
       icon: <Settings size={20} />,
       onClick: () => navigate('/settings')

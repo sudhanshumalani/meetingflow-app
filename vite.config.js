@@ -67,7 +67,7 @@ export default defineConfig({
     }
   },
   define: {
-    __APP_VERSION__: JSON.stringify('1.0.37'), // Bump version for cache bust
+    __APP_VERSION__: JSON.stringify('2.0.0'), // Major: Dexie storage + Analyzer
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   server: {

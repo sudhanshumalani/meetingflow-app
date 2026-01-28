@@ -9,11 +9,13 @@ import Settings from './views/Settings'
 import SimpleMeetingNotes from './components/SimpleMeetingNotes'
 import GoogleAuthCallback from './components/GoogleAuthCallback'
 import SpeakerDiarizationTest from './views/SpeakerDiarizationTest'
+import { AnalyzerDashboard } from './components/analyzer'
 import ErrorBoundary, { ErrorToast } from './components/ErrorBoundary'
 import LoadingSpinner from './components/LoadingSpinner'
 import CrashRecoveryPrompt from './components/CrashRecoveryPrompt'
 import accessibility, { a11y } from './utils/accessibility'
 import storage from './utils/storage'
+import { isMigrationNeeded, migrateToDexie, initializeDexieService, requestPersistentStorage } from './db'
 import './index.css'
 
 // Import debugging utilities (available in both dev and production for troubleshooting)
@@ -22,6 +24,18 @@ import('./utils/tokenTestUtils.js').then(() => {
 })
 import('./utils/syncDebugUtils.js').then(() => {
   console.log('🔧 Sync debugging utilities loaded!')
+})
+
+// Expose Dexie utilities for debugging
+import('./db/index.js').then((dexieModule) => {
+  window.dexieDB = dexieModule.db
+  window.getDexieStats = dexieModule.getDatabaseStats
+  window.migrateToDexie = dexieModule.migrateToDexie
+  window.rollbackMigration = dexieModule.rollbackMigration
+  window.verifyDataIntegrity = dexieModule.verifyDataIntegrity
+  window.manageStorage = dexieModule.manageStorage
+  window.getOutboxStats = dexieModule.getOutboxStats
+  console.log('🗄️ Dexie debugging utilities loaded!')
 })
 
 console.log('🛠️ Debug Commands Available:')
@@ -37,6 +51,12 @@ console.log('  - testGoogleDrive(): Test Google Drive access')
 console.log('  - testUpload(): Test upload to cloud')
 console.log('  - testDownload(): Test download from cloud')
 console.log('  - testFullSync(): Test complete round-trip sync')
+console.log('🗄️ Dexie Database:')
+console.log('  - getDexieStats(): Get database statistics')
+console.log('  - verifyDataIntegrity(): Compare localStorage vs Dexie')
+console.log('  - manageStorage(): Run storage eviction if needed')
+console.log('  - getOutboxStats(): Check pending sync operations')
+console.log('  - rollbackMigration(): Rollback to localStorage (emergency)')
 
 // Page transition component
 function PageTransition({ children }) {
@@ -84,8 +104,36 @@ function AppContent() {
       try {
         a11y.announceLoadingState(true, 'application data')
 
-        // Simulate loading time for better UX
-        await new Promise(resolve => setTimeout(resolve, 100))
+        // Initialize Dexie and run migration if needed
+        try {
+          console.log('🗄️ Initializing Dexie database...')
+          await initializeDexieService()
+
+          // Request persistent storage (important for iOS)
+          await requestPersistentStorage()
+
+          // Check if migration is needed
+          const needsMigration = await isMigrationNeeded()
+          if (needsMigration) {
+            console.log('🔄 Migration needed - migrating data to Dexie...')
+            const migrationResult = await migrateToDexie({
+              onProgress: (progress) => {
+                console.log(`📊 Migration: ${progress.phase} - ${progress.percent}%`)
+              }
+            })
+            if (migrationResult.success) {
+              console.log('✅ Migration complete:', migrationResult.stats)
+            } else {
+              console.error('❌ Migration failed:', migrationResult.error)
+              // Don't block app - localStorage still works as backup
+            }
+          } else {
+            console.log('✅ Dexie already initialized, no migration needed')
+          }
+        } catch (dexieError) {
+          console.error('⚠️ Dexie initialization failed (non-fatal):', dexieError)
+          // App can still work with localStorage fallback
+        }
 
         // Load storage info for debugging
         const storageInfo = await storage.getStorageInfo()
@@ -221,6 +269,7 @@ function AppContent() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/test-notes" element={<SimpleMeetingNotes />} />
             <Route path="/test-speaker-diarization" element={<SpeakerDiarizationTest />} />
+            <Route path="/analyzer" element={<AnalyzerDashboard />} />
             <Route path="/auth/google/callback" element={<GoogleAuthCallback />} />
             {/* Catch-all route for any unmatched paths - redirect to home */}
             <Route path="*" element={<Home />} />

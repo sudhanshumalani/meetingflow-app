@@ -1,7 +1,7 @@
 {
   "name": "meetingflow-app",
   "private": true,
-  "version": "1.0.37",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -21,6 +21,8 @@
     "@huggingface/transformers": "^3.7.3",
     "assemblyai": "^4.16.1",
     "date-fns": "^4.1.0",
+    "dexie": "^4.2.1",
+    "dexie-react-hooks": "^4.2.0",
     "firebase": "^12.8.0",
     "localforage": "^1.10.0",
     "lucide-react": "^0.544.0",

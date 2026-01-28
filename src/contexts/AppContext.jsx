@@ -2,7 +2,20 @@ import { createContext, useContext, useReducer, useEffect, useRef, useCallback }
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
 
+// Import Dexie database and services
+import db from '../db/meetingFlowDB'
+import {
+  getAllMeetingMetadata,
+  getAllStakeholders,
+  getAllCategories,
+  bulkSaveMeetings,
+  bulkSaveStakeholders,
+  bulkSaveCategories,
+  getFullMeeting
+} from '../db/dexieService'
+
 // Lazy-loaded IndexedDB instance - only created when needed to avoid iOS crashes
+// NOTE: This is LEGACY - we're migrating to Dexie as primary source
 let syncStorageInstance = null
 async function getSyncStorage() {
   if (!syncStorageInstance) {
@@ -998,186 +1011,183 @@ export function AppProvider({ children }) {
       isLoadingRef.current = true
       dispatch({ type: 'SET_LOADING', payload: true })
 
-      console.log('📂 LOAD: Starting data load from localStorage...')
+      console.log('📂 LOAD: Starting data load - DEXIE FIRST strategy...')
 
-      // Check storage quota on load
-      const lsUsage = getLocalStorageUsage()
-      console.log('📦 LocalStorage usage:', lsUsage.mb, 'MB')
-
-      // Async check for overall storage
+      // Check storage quota in background
       checkStorageQuota().then(quota => {
         if (quota) {
           console.log('📦 Storage quota:', quota)
           if (quota.isCritical) {
-            console.error('🚨 CRITICAL: Storage space is very low! Please delete old meetings.')
+            console.error('🚨 CRITICAL: Storage space is very low!')
             window.dispatchEvent(new CustomEvent('meetingflow-storage-warning', {
               detail: { type: 'critical', ...quota }
-            }))
-          } else if (quota.isLow) {
-            console.warn('⚠️ Storage space is running low.')
-            window.dispatchEvent(new CustomEvent('meetingflow-storage-warning', {
-              detail: { type: 'low', ...quota }
             }))
           }
         }
       })
 
-      console.log('🔍 DEBUG: localStorage before load:', {
-        hasLocalStorage: typeof localStorage !== 'undefined',
-        localStorageLength: localStorage?.length,
-        keys: localStorage ? Object.keys(localStorage).filter(k => k.startsWith('meetingflow_')) : [],
-        meetingsRaw: localStorage?.getItem('meetingflow_meetings')?.substring(0, 100) + '...'
-      })
-
-      // Load from localStorage ONLY (synchronous, reliable)
-      let meetings, localStakeholders, localCategories, deletedItems
-      // Final data to dispatch (may come from localStorage or IndexedDB)
-      let finalMeetings = []
-      let finalStakeholders = []
-      let finalCategories = []
-
+      // Load tombstones from localStorage (these are small, localStorage is fine)
+      let deletedItems = []
       try {
-        // Load from localStorage first (synchronous and immediate)
-        meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-        localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-        localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
         deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
 
-        console.log('🔍 DEBUG: Initial load from localStorage:', {
-          meetings: meetings.length,
-          stakeholders: localStakeholders.length,
-          categories: localCategories.length,
-          tombstones: deletedItems.length
-        })
-
-        // PERIODIC TOMBSTONE CLEANUP: Remove very old tombstones (> 24 hours)
-        // This prevents tombstone accumulation if user doesn't sync regularly
-        // Note: 5-minute retention is for sync race conditions, 24-hour is for general cleanup
-        const TOMBSTONE_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
+        // Cleanup old tombstones (> 24 hours)
+        const TOMBSTONE_MAX_AGE_MS = 24 * 60 * 60 * 1000
         const now = Date.now()
         const freshTombstones = deletedItems.filter(t => {
           const age = now - new Date(t.deletedAt).getTime()
           return age <= TOMBSTONE_MAX_AGE_MS
         })
         if (freshTombstones.length < deletedItems.length) {
-          const removedCount = deletedItems.length - freshTombstones.length
-          logDeletion('APP_LOAD', `Cleaned up ${removedCount} very old tombstones (> 24h)`, {
-            before: deletedItems.length,
-            after: freshTombstones.length
-          })
           deletedItems = freshTombstones
           localStorage.setItem('meetingflow_deleted_items', JSON.stringify(deletedItems))
         }
-
-        // ALWAYS check IndexedDB for more complete data (iOS sync saves there when localStorage quota is full)
-        // This fixes the issue where manual sync downloads 28 meetings but only 2 show (from localStorage)
-        console.log('📂 LOAD: Checking IndexedDB for synced data...')
-
-        // FIX: Await IndexedDB check instead of fire-and-forget async IIFE
-        // This ensures we dispatch the most complete data on first load
-        finalMeetings = meetings
-        finalStakeholders = localStakeholders
-        finalCategories = localCategories
-
-        try {
-          const syncStorage = await getSyncStorage()
-          const idbMeetings = await syncStorage.getItem('meetings')
-          const idbStakeholders = await syncStorage.getItem('stakeholders')
-          const idbCategories = await syncStorage.getItem('categories')
-
-          console.log('📂 LOAD: IndexedDB data:', {
-            meetings: idbMeetings?.length || 0,
-            stakeholders: idbStakeholders?.length || 0,
-            categories: idbCategories?.length || 0
-          })
-
-          // CRITICAL FIX: Filter out tombstoned (deleted) items from IndexedDB BEFORE comparing counts
-          // This prevents deleted items from being restored when IndexedDB has stale data
-          const tombstonedMeetingIds = new Set(
-            deletedItems.filter(d => d.type === 'meeting').map(d => d.id)
-          )
-          const tombstonedStakeholderIds = new Set(
-            deletedItems.filter(d => d.type === 'stakeholder').map(d => d.id)
-          )
-          const tombstonedCategoryIds = new Set(
-            deletedItems.filter(d => d.type === 'stakeholderCategory').map(d => d.id)
-          )
-
-          // Filter IndexedDB data to exclude tombstoned items
-          const filteredIdbMeetings = (idbMeetings || []).filter(m => !tombstonedMeetingIds.has(m.id))
-          const filteredIdbStakeholders = (idbStakeholders || []).filter(s => !tombstonedStakeholderIds.has(s.id))
-          const filteredIdbCategories = (idbCategories || []).filter(c => !tombstonedCategoryIds.has(c.id))
-
-          if (tombstonedMeetingIds.size > 0) {
-            logDeletion('IDB_LOAD', 'Filtered tombstoned items from IndexedDB', {
-              originalMeetings: idbMeetings?.length || 0,
-              filteredMeetings: filteredIdbMeetings.length,
-              tombstonedMeetingIds: Array.from(tombstonedMeetingIds).map(id => id?.slice(0, 8) + '...')
-            })
-
-            // Also update IndexedDB to remove the tombstoned items (async, don't wait)
-            syncStorage.setItem('meetings', filteredIdbMeetings).catch(err => {
-              console.warn('📂 Failed to clean up IndexedDB meetings:', err)
-            })
-          }
-
-          // Use IndexedDB data if it has MORE items than localStorage AFTER filtering
-          const idbHasMoreData = filteredIdbMeetings.length > meetings.length ||
-                                 filteredIdbStakeholders.length > localStakeholders.length ||
-                                 filteredIdbCategories.length > localCategories.length
-
-          if (filteredIdbMeetings.length > 0 && idbHasMoreData) {
-            console.log('📂 LOAD: IndexedDB has more data than localStorage, using IndexedDB!', {
-              localStorage: { meetings: meetings.length, stakeholders: localStakeholders.length, categories: localCategories.length },
-              indexedDB: { meetings: filteredIdbMeetings.length, stakeholders: filteredIdbStakeholders.length, categories: filteredIdbCategories.length }
-            })
-            finalMeetings = filteredIdbMeetings
-            finalStakeholders = filteredIdbStakeholders.length > 0 ? filteredIdbStakeholders : localStakeholders
-            finalCategories = filteredIdbCategories.length > 0 ? filteredIdbCategories : localCategories
-          }
-        } catch (idbError) {
-          console.warn('📂 LOAD: IndexedDB check failed, using localStorage data:', idbError)
-        }
-
-        console.log('📂 LOAD: Loaded from storage - meetings:', finalMeetings.length)
-
-      } catch (error) {
-        console.error('❌ localStorage failed, using defaults:', error)
-        console.error('❌ Error stack:', error.stack)
-        finalMeetings = []
-        finalStakeholders = []
-        finalCategories = []
-        deletedItems = []
+      } catch (e) {
+        console.warn('📂 LOAD: Failed to load tombstones:', e)
       }
 
-      console.log('📂 LOAD: After storage section, about to process meetings...')
+      const tombstonedIds = new Set(deletedItems.map(d => d.id))
 
-      // Deduplicate meetings before loading
-      console.log('📂 LOAD: Raw meetings from storage:', finalMeetings?.length || 0)
-      const deduplicatedMeetings = deduplicateMeetings(finalMeetings || [])
-      console.log('📂 LOAD: Deduplicated meetings:', deduplicatedMeetings.length)
+      // ============================================
+      // DEXIE-FIRST LOADING STRATEGY
+      // ============================================
+      let finalMeetings = []
+      let finalStakeholders = []
+      let finalCategories = []
+      let dataSource = 'none'
 
-      // Load data - single dispatch with best available data
-      console.log('🔍 DISPATCH: About to dispatch LOAD_DATA with:', {
-        meetings: deduplicatedMeetings?.length || 0,
-        stakeholders: finalStakeholders?.length || 0,
-        stakeholderCategories: finalCategories?.length || 0,
-        deletedItems: deletedItems?.length || 0
+      // STEP 1: Try Dexie first (most reliable on iOS)
+      try {
+        console.log('📂 LOAD: Attempting to load from Dexie (primary)...')
+        await db.open()
+
+        const dexieMeetings = await db.meetings.orderBy('date').reverse().toArray()
+        const dexieStakeholders = await db.stakeholders.toArray()
+        const dexieCategories = await db.stakeholderCategories.toArray()
+
+        console.log('📂 LOAD: Dexie data:', {
+          meetings: dexieMeetings.length,
+          stakeholders: dexieStakeholders.length,
+          categories: dexieCategories.length
+        })
+
+        if (dexieMeetings.length > 0) {
+          // Filter out tombstoned items
+          finalMeetings = dexieMeetings.filter(m => !m.deleted && !tombstonedIds.has(m.id))
+          finalStakeholders = dexieStakeholders.filter(s => !tombstonedIds.has(s.id))
+          finalCategories = dexieCategories.filter(c => !tombstonedIds.has(c.id))
+          dataSource = 'dexie'
+          console.log('✅ LOAD: Using Dexie as primary source -', finalMeetings.length, 'meetings')
+        }
+      } catch (dexieError) {
+        console.warn('📂 LOAD: Dexie read failed:', dexieError)
+      }
+
+      // STEP 2: If Dexie is empty, try localforage (legacy sync storage)
+      if (finalMeetings.length === 0) {
+        try {
+          console.log('📂 LOAD: Dexie empty, trying localforage (secondary)...')
+          const syncStorage = await getSyncStorage()
+          const lfMeetings = await syncStorage.getItem('meetings')
+          const lfStakeholders = await syncStorage.getItem('stakeholders')
+          const lfCategories = await syncStorage.getItem('categories')
+
+          console.log('📂 LOAD: localforage data:', {
+            meetings: lfMeetings?.length || 0,
+            stakeholders: lfStakeholders?.length || 0,
+            categories: lfCategories?.length || 0
+          })
+
+          if (lfMeetings?.length > 0) {
+            finalMeetings = lfMeetings.filter(m => !m.deleted && !tombstonedIds.has(m.id))
+            finalStakeholders = (lfStakeholders || []).filter(s => !tombstonedIds.has(s.id))
+            finalCategories = (lfCategories || []).filter(c => !tombstonedIds.has(c.id))
+            dataSource = 'localforage'
+            console.log('✅ LOAD: Using localforage as source -', finalMeetings.length, 'meetings')
+
+            // Migrate this data to Dexie for next time
+            console.log('📂 LOAD: Migrating localforage data to Dexie...')
+            try {
+              await bulkSaveMeetings(finalMeetings, { queueSync: false })
+              await bulkSaveStakeholders(finalStakeholders, { queueSync: false })
+              await bulkSaveCategories(finalCategories, { queueSync: false })
+              console.log('✅ LOAD: Migrated localforage data to Dexie')
+            } catch (migrationErr) {
+              console.warn('📂 LOAD: Migration to Dexie failed:', migrationErr)
+            }
+          }
+        } catch (lfError) {
+          console.warn('📂 LOAD: localforage read failed:', lfError)
+        }
+      }
+
+      // STEP 3: If still empty, try localStorage (last resort)
+      if (finalMeetings.length === 0) {
+        try {
+          console.log('📂 LOAD: Both DBs empty, trying localStorage (fallback)...')
+          const lsMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+          const lsStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+          const lsCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+
+          console.log('📂 LOAD: localStorage data:', {
+            meetings: lsMeetings.length,
+            stakeholders: lsStakeholders.length,
+            categories: lsCategories.length
+          })
+
+          if (lsMeetings.length > 0) {
+            finalMeetings = lsMeetings.filter(m => !m.deleted && !tombstonedIds.has(m.id))
+            finalStakeholders = lsStakeholders.filter(s => !tombstonedIds.has(s.id))
+            finalCategories = lsCategories.filter(c => !tombstonedIds.has(c.id))
+            dataSource = 'localStorage'
+            console.log('✅ LOAD: Using localStorage as source -', finalMeetings.length, 'meetings')
+
+            // Migrate this data to Dexie for next time
+            console.log('📂 LOAD: Migrating localStorage data to Dexie...')
+            try {
+              await bulkSaveMeetings(finalMeetings, { queueSync: false })
+              await bulkSaveStakeholders(finalStakeholders, { queueSync: false })
+              await bulkSaveCategories(finalCategories, { queueSync: false })
+              console.log('✅ LOAD: Migrated localStorage data to Dexie')
+            } catch (migrationErr) {
+              console.warn('📂 LOAD: Migration to Dexie failed:', migrationErr)
+            }
+          }
+        } catch (lsError) {
+          console.warn('📂 LOAD: localStorage read failed:', lsError)
+        }
+      }
+
+      // STEP 4: If all sources are empty, we need a cloud sync
+      if (finalMeetings.length === 0) {
+        console.log('⚠️ LOAD: All local sources empty. User should sync with cloud.')
+        dataSource = 'empty'
+      }
+
+      // Deduplicate meetings
+      const deduplicatedMeetings = deduplicateMeetings(finalMeetings)
+
+      console.log('🔍 DISPATCH: Loading data from', dataSource, ':', {
+        meetings: deduplicatedMeetings.length,
+        stakeholders: finalStakeholders.length,
+        categories: finalCategories.length,
+        tombstones: deletedItems.length
       })
 
       dispatch({
         type: 'LOAD_DATA',
         payload: {
           meetings: deduplicatedMeetings,
-          stakeholders: finalStakeholders || [],
-          stakeholderCategories: finalCategories || [],
-          deletedItems: deletedItems || []
+          stakeholders: finalStakeholders,
+          stakeholderCategories: finalCategories,
+          deletedItems: deletedItems
         }
       })
 
-      // Skip n8n cache for now to avoid interference with core functionality
-      console.log('🔄 LOAD: Skipping n8n cache to focus on core persistence')
+      console.log('✅ LOAD: Data load complete from', dataSource)
+
     } catch (error) {
+      console.error('❌ LOAD: Critical error:', error)
       dispatch({ type: 'SET_ERROR', payload: 'Failed to load data from storage' })
     } finally {
       isLoadingRef.current = false
@@ -2111,25 +2121,48 @@ export function AppProvider({ children }) {
         const categoriesJson = JSON.stringify(categoriesMerge.merged)
 
         try {
-          // Save to IndexedDB
-          console.log('🔄 Saving to IndexedDB...')
+          // ============================================
+          // DEXIE: PRIMARY STORAGE (most reliable on iOS)
+          // ============================================
+          console.log('🔄 Saving to Dexie (primary)...')
+          try {
+            await db.open()
+            const dexieSaveResult = await bulkSaveMeetings(strippedMeetings, { queueSync: false })
+            const dexieStakeholderResult = await bulkSaveStakeholders(stakeholdersMerge.merged, { queueSync: false })
+            const dexieCategoryResult = await bulkSaveCategories(categoriesMerge.merged, { queueSync: false })
+            console.log('✅ Saved to Dexie:', {
+              meetings: dexieSaveResult.saved,
+              stakeholders: dexieStakeholderResult.saved,
+              categories: dexieCategoryResult.saved
+            })
+          } catch (dexieError) {
+            console.error('❌ Dexie save failed:', dexieError)
+            // Continue to save to other storages as backup
+          }
+
+          // ============================================
+          // LOCALFORAGE: SECONDARY BACKUP
+          // ============================================
+          console.log('🔄 Saving to localforage (secondary)...')
           const syncStorage = await getSyncStorage()
           await syncStorage.setItem('meetings', strippedMeetings)
           await syncStorage.setItem('stakeholders', stakeholdersMerge.merged)
           await syncStorage.setItem('categories', categoriesMerge.merged)
 
-          // Also save to localStorage for AppContext compatibility
-          console.log('🔄 Saving to localStorage...')
+          // ============================================
+          // LOCALSTORAGE: TERTIARY BACKUP (may fail on iOS)
+          // ============================================
+          console.log('🔄 Saving to localStorage (tertiary)...')
           try {
             localStorage.setItem('meetingflow_meetings', meetingsJson)
             localStorage.setItem('meetingflow_stakeholders', stakeholdersJson)
             localStorage.setItem('meetingflow_stakeholder_categories', categoriesJson)
-            console.log('🔄 Saved to localStorage!')
+            console.log('✅ Saved to localStorage!')
           } catch (lsError) {
-            console.warn('🔄 localStorage save failed (quota), but IndexedDB has the data:', lsError.message)
+            console.warn('⚠️ localStorage save failed (quota), but Dexie has the data:', lsError.message)
           }
 
-          console.log('🔄 All data saved successfully!')
+          console.log('✅ All data saved to all storage layers!')
         } catch (storageError) {
           console.error('🔄 Storage error:', storageError)
           throw new Error(`Failed to save data: ${storageError.message}`)

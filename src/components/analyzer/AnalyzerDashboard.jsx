@@ -58,15 +58,15 @@ function StatCard({ icon: Icon, label, value, subValue, color = 'blue', onClick 
 
   return (
     <div
-      className={`p-4 rounded-lg border ${colorClasses[color]} ${onClick ? 'cursor-pointer hover:opacity-80' : ''}`}
+      className={`p-2 sm:p-4 rounded-lg border ${colorClasses[color]} ${onClick ? 'cursor-pointer hover:opacity-80' : ''}`}
       onClick={onClick}
     >
-      <div className="flex items-center gap-3">
-        <Icon className="w-5 h-5" />
-        <div>
-          <div className="text-2xl font-bold">{value}</div>
-          <div className="text-sm opacity-80">{label}</div>
-          {subValue && <div className="text-xs opacity-60">{subValue}</div>}
+      <div className="flex items-center gap-2 sm:gap-3">
+        <Icon className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+        <div className="min-w-0">
+          <div className="text-lg sm:text-2xl font-bold truncate">{value}</div>
+          <div className="text-xs sm:text-sm opacity-80 truncate">{label}</div>
+          {subValue && <div className="text-xs opacity-60 truncate">{subValue}</div>}
         </div>
       </div>
     </div>
@@ -84,14 +84,14 @@ function ActionItemCard({ item }) {
   const isOverdue = item.dueDate && new Date(item.dueDate) < new Date()
 
   return (
-    <div className={`p-3 border-l-4 rounded-r-lg ${priorityColors[priority]} mb-2`}>
-      <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <div className="font-medium text-gray-900">{item.text || item.task || item.description}</div>
-          <div className="text-sm text-gray-600 mt-1">
-            From: {item.meetingTitle}
+    <div className={`p-2 sm:p-3 border-l-4 rounded-r-lg ${priorityColors[priority]} mb-2`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm sm:text-base font-medium text-gray-900 break-words">{item.text || item.task || item.description}</div>
+          <div className="text-xs sm:text-sm text-gray-600 mt-1 truncate">
+            {item.meetingTitle}
           </div>
-          <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
+          <div className="flex items-center flex-wrap gap-2 sm:gap-3 mt-1 sm:mt-2 text-xs text-gray-500">
             {item.assignee && (
               <span className="flex items-center gap-1">
                 <UserCheck className="w-3 h-3" />
@@ -102,15 +102,15 @@ function ActionItemCard({ item }) {
               <span className={`flex items-center gap-1 ${isOverdue ? 'text-red-600 font-medium' : ''}`}>
                 <Clock className="w-3 h-3" />
                 {new Date(item.dueDate).toLocaleDateString()}
-                {isOverdue && ' (Overdue)'}
+                {isOverdue && ' !'}
               </span>
             )}
           </div>
         </div>
         {item.status === 'completed' ? (
-          <CheckCircle className="w-5 h-5 text-green-600" />
+          <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 text-green-600 flex-shrink-0" />
         ) : (
-          <Circle className="w-5 h-5 text-gray-400" />
+          <Circle className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400 flex-shrink-0" />
         )}
       </div>
     </div>
@@ -125,27 +125,24 @@ function StakeholderEngagementCard({ engagement }) {
   }
 
   return (
-    <div className="p-3 bg-white rounded-lg border border-gray-200 mb-2">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="font-medium text-gray-900">
+    <div className="p-2 sm:p-3 bg-white rounded-lg border border-gray-200 mb-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm sm:text-base font-medium text-gray-900 truncate">
             {engagement.stakeholder.name || engagement.stakeholder.company}
           </div>
           {engagement.stakeholder.company && engagement.stakeholder.name && (
-            <div className="text-sm text-gray-600">{engagement.stakeholder.company}</div>
+            <div className="text-xs sm:text-sm text-gray-600 truncate">{engagement.stakeholder.company}</div>
           )}
         </div>
-        <span className={`text-xs px-2 py-1 rounded-full ${statusColors[engagement.status]}`}>
+        <span className={`text-xs px-2 py-0.5 sm:py-1 rounded-full flex-shrink-0 ${statusColors[engagement.status]}`}>
           {engagement.status}
         </span>
       </div>
-      <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
-        <span>{engagement.meetingCount} meetings</span>
-        {engagement.lastMeetingDate && (
-          <span>Last: {new Date(engagement.lastMeetingDate).toLocaleDateString()}</span>
-        )}
+      <div className="flex items-center flex-wrap gap-2 sm:gap-4 mt-1 sm:mt-2 text-xs sm:text-sm text-gray-500">
+        <span>{engagement.meetingCount} mtgs</span>
         {engagement.daysSinceContact !== null && (
-          <span>{engagement.daysSinceContact} days ago</span>
+          <span>{engagement.daysSinceContact}d ago</span>
         )}
       </div>
     </div>
@@ -154,23 +151,23 @@ function StakeholderEngagementCard({ engagement }) {
 
 function StalledProjectCard({ project }) {
   return (
-    <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200 mb-2">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="font-medium text-gray-900">{project.projectId}</div>
-          <div className="text-sm text-gray-600 mt-1">
-            Last meeting: {project.lastMeetingTitle}
+    <div className="p-2 sm:p-3 bg-yellow-50 rounded-lg border border-yellow-200 mb-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm sm:text-base font-medium text-gray-900 truncate">{project.projectId}</div>
+          <div className="text-xs sm:text-sm text-gray-600 mt-1 truncate">
+            {project.lastMeetingTitle}
           </div>
-          <div className="text-sm text-gray-500 mt-1">
-            {project.daysSinceActivity} days since last activity
+          <div className="text-xs text-gray-500 mt-1">
+            {project.daysSinceActivity}d inactive
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-sm font-medium text-yellow-700">
-            {project.openActionItems} open items
+        <div className="text-right flex-shrink-0">
+          <div className="text-xs sm:text-sm font-medium text-yellow-700">
+            {project.openActionItems} open
           </div>
           <div className="text-xs text-gray-500">
-            {project.totalMeetings} total meetings
+            {project.totalMeetings} mtgs
           </div>
         </div>
       </div>
@@ -183,7 +180,7 @@ function SearchResults({ query }) {
 
   if (!query || query.length < 2) {
     return (
-      <div className="text-gray-500 text-center py-8">
+      <div className="text-gray-500 text-center py-6 sm:py-8 text-sm sm:text-base">
         Enter at least 2 characters to search
       </div>
     )
@@ -191,7 +188,7 @@ function SearchResults({ query }) {
 
   if (!results) {
     return (
-      <div className="flex items-center justify-center py-8">
+      <div className="flex items-center justify-center py-6 sm:py-8">
         <RefreshCw className="w-5 h-5 animate-spin text-gray-400" />
       </div>
     )
@@ -199,7 +196,7 @@ function SearchResults({ query }) {
 
   if (results.length === 0) {
     return (
-      <div className="text-gray-500 text-center py-8">
+      <div className="text-gray-500 text-center py-6 sm:py-8 text-sm sm:text-base">
         No meetings found for "{query}"
       </div>
     )
@@ -208,11 +205,11 @@ function SearchResults({ query }) {
   return (
     <div className="space-y-2">
       {results.map(meeting => (
-        <div key={meeting.id} className="p-3 bg-white rounded-lg border border-gray-200">
-          <div className="font-medium text-gray-900">{meeting.title}</div>
-          <div className="text-sm text-gray-600">{meeting.date}</div>
+        <div key={meeting.id} className="p-2 sm:p-3 bg-white rounded-lg border border-gray-200">
+          <div className="text-sm sm:text-base font-medium text-gray-900">{meeting.title}</div>
+          <div className="text-xs sm:text-sm text-gray-600">{meeting.date}</div>
           {meeting.summaryPreview && (
-            <div className="text-sm text-gray-500 mt-1 line-clamp-2">
+            <div className="text-xs sm:text-sm text-gray-500 mt-1 line-clamp-2">
               {meeting.summaryPreview}
             </div>
           )}
@@ -313,41 +310,41 @@ export default function AnalyzerDashboard() {
   ]
 
   return (
-    <div className="max-w-6xl mx-auto p-4">
+    <div className="max-w-6xl mx-auto px-3 py-4 sm:p-4">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <BarChart3 className="w-7 h-7 text-blue-600" />
+      <div className="mb-4 sm:mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <BarChart3 className="w-6 h-6 sm:w-7 sm:h-7 text-blue-600" />
           Meeting Analyzer
         </h1>
-        <p className="text-gray-600 mt-1">
+        <p className="text-sm sm:text-base text-gray-600 mt-1">
           Intelligence across {meetingStats.total} meetings
         </p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 mb-6 border-b border-gray-200 pb-2 overflow-x-auto">
+      {/* Tabs - Mobile: scrollable pills, Desktop: tabs */}
+      <div className="flex gap-1 sm:gap-2 mb-4 sm:mb-6 border-b border-gray-200 pb-2 overflow-x-auto scrollbar-hide -mx-3 px-3 sm:mx-0 sm:px-0">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-t-lg transition-colors whitespace-nowrap ${
+            className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg sm:rounded-t-lg text-sm sm:text-base transition-colors whitespace-nowrap flex-shrink-0 ${
               activeTab === tab.id
                 ? 'bg-blue-600 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
+                : 'bg-gray-100 sm:bg-transparent text-gray-600 hover:bg-gray-200 sm:hover:bg-gray-100'
             }`}
           >
             <tab.icon className="w-4 h-4" />
-            {tab.label}
+            <span className="hidden xs:inline sm:inline">{tab.label}</span>
           </button>
         ))}
       </div>
 
       {/* Overview Tab */}
       {activeTab === 'overview' && (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           {/* Stats Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4">
             <StatCard
               icon={Calendar}
               label="Total Meetings"
@@ -380,27 +377,27 @@ export default function AnalyzerDashboard() {
 
           {/* Alerts Section */}
           {(actionItems.overdue > 0 || stalledProjects.length > 0 || stakeholderEngagement.inactive > 3) && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-              <h3 className="font-medium text-yellow-800 flex items-center gap-2 mb-3">
-                <AlertTriangle className="w-5 h-5" />
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 sm:p-4">
+              <h3 className="text-sm sm:text-base font-medium text-yellow-800 flex items-center gap-2 mb-2 sm:mb-3">
+                <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5" />
                 Needs Attention
               </h3>
-              <div className="space-y-2 text-sm">
+              <div className="space-y-1 sm:space-y-2 text-xs sm:text-sm">
                 {actionItems.overdue > 0 && (
                   <div className="flex items-center gap-2 text-yellow-800">
-                    <AlertCircle className="w-4 h-4" />
-                    {actionItems.overdue} overdue action items
+                    <AlertCircle className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />
+                    {actionItems.overdue} overdue items
                   </div>
                 )}
                 {stalledProjects.length > 0 && (
                   <div className="flex items-center gap-2 text-yellow-800">
-                    <Clock className="w-4 h-4" />
-                    {stalledProjects.length} stalled projects (no activity in 30+ days)
+                    <Clock className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />
+                    {stalledProjects.length} stalled projects
                   </div>
                 )}
                 {stakeholderEngagement.inactive > 3 && (
                   <div className="flex items-center gap-2 text-yellow-800">
-                    <Users className="w-4 h-4" />
+                    <Users className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />
                     {stakeholderEngagement.inactive} inactive stakeholders
                   </div>
                 )}
@@ -411,9 +408,9 @@ export default function AnalyzerDashboard() {
           {/* Overdue Action Items */}
           {actionItems.overdueItems.length > 0 && (
             <div>
-              <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-red-600" />
-                Overdue Action Items
+              <h3 className="text-sm sm:text-base font-medium text-gray-900 mb-2 sm:mb-3 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-red-600" />
+                Overdue Items
               </h3>
               <div className="space-y-2">
                 {actionItems.overdueItems.slice(0, 5).map((item, idx) => (
@@ -422,7 +419,7 @@ export default function AnalyzerDashboard() {
                 {actionItems.overdueItems.length > 5 && (
                   <button
                     onClick={() => setActiveTab('actions')}
-                    className="text-blue-600 text-sm hover:underline"
+                    className="text-blue-600 text-xs sm:text-sm hover:underline"
                   >
                     View all {actionItems.overdueItems.length} overdue items
                   </button>
@@ -434,9 +431,9 @@ export default function AnalyzerDashboard() {
           {/* Stakeholders Needing Attention */}
           {stakeholderEngagement.needsAttention.length > 0 && (
             <div>
-              <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
-                <Users className="w-5 h-5 text-yellow-600" />
-                Stakeholders Needing Follow-up
+              <h3 className="text-sm sm:text-base font-medium text-gray-900 mb-2 sm:mb-3 flex items-center gap-2">
+                <Users className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-600" />
+                Follow-up Needed
               </h3>
               <div className="space-y-2">
                 {stakeholderEngagement.needsAttention.slice(0, 5).map((engagement, idx) => (
@@ -445,7 +442,7 @@ export default function AnalyzerDashboard() {
                 {stakeholderEngagement.needsAttention.length > 5 && (
                   <button
                     onClick={() => setActiveTab('stakeholders')}
-                    className="text-blue-600 text-sm hover:underline"
+                    className="text-blue-600 text-xs sm:text-sm hover:underline"
                   >
                     View all {stakeholderEngagement.needsAttention.length} stakeholders
                   </button>
@@ -456,27 +453,27 @@ export default function AnalyzerDashboard() {
 
           {/* Storage Info */}
           {dbStats && (
-            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-              <h3 className="font-medium text-gray-900 flex items-center gap-2 mb-3">
-                <Database className="w-5 h-5" />
+            <div className="bg-gray-50 rounded-lg p-3 sm:p-4 border border-gray-200">
+              <h3 className="text-sm sm:text-base font-medium text-gray-900 flex items-center gap-2 mb-2 sm:mb-3">
+                <Database className="w-4 h-4 sm:w-5 sm:h-5" />
                 Storage Status
               </h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4 text-xs sm:text-sm">
                 <div>
-                  <div className="text-gray-500">Hot Meetings</div>
+                  <div className="text-gray-500">Hot</div>
                   <div className="font-medium">{dbStats.meetings.hot}</div>
                 </div>
                 <div>
-                  <div className="text-gray-500">Warm Meetings</div>
+                  <div className="text-gray-500">Warm</div>
                   <div className="font-medium">{dbStats.meetings.warm}</div>
                 </div>
                 <div>
-                  <div className="text-gray-500">Cold Meetings</div>
+                  <div className="text-gray-500">Cold</div>
                   <div className="font-medium">{dbStats.meetings.cold}</div>
                 </div>
                 {dbStats.storage && (
                   <div>
-                    <div className="text-gray-500">Storage Used</div>
+                    <div className="text-gray-500">Used</div>
                     <div className="font-medium">{dbStats.storage.usageMB} MB</div>
                   </div>
                 )}
@@ -488,8 +485,8 @@ export default function AnalyzerDashboard() {
 
       {/* Action Items Tab */}
       {activeTab === 'actions' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="space-y-4 sm:space-y-6">
+          <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4">
             <StatCard icon={Target} label="Open" value={actionItems.open} color="blue" />
             <StatCard icon={AlertTriangle} label="Overdue" value={actionItems.overdue} color="red" />
             <StatCard icon={CheckCircle} label="Completed" value={actionItems.completed} color="green" />
@@ -538,8 +535,8 @@ export default function AnalyzerDashboard() {
 
       {/* Stakeholders Tab */}
       {activeTab === 'stakeholders' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-4 sm:space-y-6">
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
             <StatCard icon={UserCheck} label="Active" value={stakeholderEngagement.active} color="green" />
             <StatCard icon={Clock} label="Recent" value={stakeholderEngagement.recent} color="yellow" />
             <StatCard icon={AlertCircle} label="Inactive" value={stakeholderEngagement.inactive} color="red" />
@@ -569,71 +566,71 @@ export default function AnalyzerDashboard() {
 
       {/* AI Insights Tab */}
       {activeTab === 'ai' && (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           {/* Quick Analysis Buttons */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3">
             <button
               onClick={() => runAIAnalysis('patterns')}
               disabled={aiLoading}
-              className="p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
+              className="p-3 sm:p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
             >
-              <TrendingUp className="w-5 h-5 text-blue-600 mb-2" />
-              <div className="font-medium text-gray-900">Meeting Patterns</div>
-              <div className="text-sm text-gray-500">Analyze your meeting habits</div>
+              <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 mb-1 sm:mb-2" />
+              <div className="text-sm sm:text-base font-medium text-gray-900">Patterns</div>
+              <div className="text-xs sm:text-sm text-gray-500 hidden sm:block">Analyze your meeting habits</div>
             </button>
 
             <button
               onClick={() => runAIAnalysis('followups')}
               disabled={aiLoading}
-              className="p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
+              className="p-3 sm:p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
             >
-              <AlertTriangle className="w-5 h-5 text-yellow-600 mb-2" />
-              <div className="font-medium text-gray-900">Follow-up Finder</div>
-              <div className="text-sm text-gray-500">Meetings needing follow-up</div>
+              <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-600 mb-1 sm:mb-2" />
+              <div className="text-sm sm:text-base font-medium text-gray-900">Follow-ups</div>
+              <div className="text-xs sm:text-sm text-gray-500 hidden sm:block">Meetings needing follow-up</div>
             </button>
 
             <button
               onClick={() => runAIAnalysis('stakeholderGaps')}
               disabled={aiLoading}
-              className="p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
+              className="p-3 sm:p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
             >
-              <Users className="w-5 h-5 text-purple-600 mb-2" />
-              <div className="font-medium text-gray-900">Relationship Gaps</div>
-              <div className="text-sm text-gray-500">Stakeholders needing attention</div>
+              <Users className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600 mb-1 sm:mb-2" />
+              <div className="text-sm sm:text-base font-medium text-gray-900">Gaps</div>
+              <div className="text-xs sm:text-sm text-gray-500 hidden sm:block">Stakeholders needing attention</div>
             </button>
 
             <button
               onClick={() => runAIAnalysis('weekSummary')}
               disabled={aiLoading}
-              className="p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
+              className="p-3 sm:p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
             >
-              <Calendar className="w-5 h-5 text-green-600 mb-2" />
-              <div className="font-medium text-gray-900">Weekly Summary</div>
-              <div className="text-sm text-gray-500">This week's highlights</div>
+              <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-green-600 mb-1 sm:mb-2" />
+              <div className="text-sm sm:text-base font-medium text-gray-900">Weekly</div>
+              <div className="text-xs sm:text-sm text-gray-500 hidden sm:block">This week's highlights</div>
             </button>
 
             <button
               onClick={() => runAIAnalysis('monthSummary')}
               disabled={aiLoading}
-              className="p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
+              className="p-3 sm:p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left"
             >
-              <FileText className="w-5 h-5 text-indigo-600 mb-2" />
-              <div className="font-medium text-gray-900">Monthly Summary</div>
-              <div className="text-sm text-gray-500">This month's overview</div>
+              <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 mb-1 sm:mb-2" />
+              <div className="text-sm sm:text-base font-medium text-gray-900">Monthly</div>
+              <div className="text-xs sm:text-sm text-gray-500 hidden sm:block">This month's overview</div>
             </button>
           </div>
 
           {/* Meeting Brief */}
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-yellow-500" />
-              Prepare Meeting Brief
+          <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4">
+            <h3 className="text-sm sm:text-base font-medium text-gray-900 mb-2 sm:mb-3 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-500" />
+              Meeting Brief
             </h3>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <select
                 value={selectedStakeholderForBrief}
                 onChange={(e) => setSelectedStakeholderForBrief(e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="flex-1 px-3 py-2 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">Select stakeholder...</option>
                 {stakeholders?.map(s => (
@@ -645,32 +642,32 @@ export default function AnalyzerDashboard() {
               <button
                 onClick={() => runAIAnalysis('meetingBrief', { stakeholderId: selectedStakeholderForBrief })}
                 disabled={aiLoading || !selectedStakeholderForBrief}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                className="px-4 py-2 text-sm sm:text-base bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
-                Generate Brief
+                Generate
               </button>
             </div>
           </div>
 
           {/* Ask a Question */}
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
-              <MessageSquare className="w-5 h-5 text-blue-500" />
-              Ask About Your Meetings
+          <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4">
+            <h3 className="text-sm sm:text-base font-medium text-gray-900 mb-2 sm:mb-3 flex items-center gap-2">
+              <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
+              Ask About Meetings
             </h3>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={aiQuestion}
                 onChange={(e) => setAiQuestion(e.target.value)}
-                placeholder="e.g., Which meetings discussed budget this quarter?"
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g., Which meetings discussed budget?"
+                className="flex-1 px-3 py-2 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                 onKeyDown={(e) => e.key === 'Enter' && aiQuestion && runAIAnalysis('question', { question: aiQuestion })}
               />
               <button
                 onClick={() => runAIAnalysis('question', { question: aiQuestion })}
                 disabled={aiLoading || !aiQuestion}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                className="px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
                 <Send className="w-4 h-4" />
               </button>
@@ -703,16 +700,16 @@ export default function AnalyzerDashboard() {
           )}
 
           {aiResponse && !aiLoading && (
-            <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4">
-              <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
-                <Brain className="w-5 h-5 text-purple-600" />
-                AI Analysis Results
+            <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-3 sm:p-4">
+              <h3 className="text-sm sm:text-base font-medium text-gray-900 mb-2 sm:mb-3 flex items-center gap-2 flex-wrap">
+                <Brain className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" />
+                AI Results
                 <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
                   {selectedAnalysis}
                 </span>
               </h3>
-              <div className="bg-white rounded-lg p-4 max-h-[400px] overflow-y-auto">
-                <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">
+              <div className="bg-white rounded-lg p-2 sm:p-4 max-h-[300px] sm:max-h-[400px] overflow-y-auto">
+                <pre className="text-xs sm:text-sm text-gray-700 whitespace-pre-wrap font-sans break-words">
                   {JSON.stringify(aiResponse, null, 2)}
                 </pre>
               </div>
@@ -721,14 +718,14 @@ export default function AnalyzerDashboard() {
 
           {/* No API Key Notice */}
           {!localStorage.getItem('claude_api_key') && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-              <div className="flex items-center gap-2 text-yellow-800 mb-2">
-                <AlertTriangle className="w-5 h-5" />
-                <span className="font-medium">Claude API Key Required</span>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 sm:p-4">
+              <div className="flex items-center gap-2 text-yellow-800 mb-1 sm:mb-2">
+                <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+                <span className="text-sm sm:text-base font-medium">API Key Required</span>
               </div>
-              <p className="text-yellow-700 text-sm">
-                To use AI-powered analysis, add your Claude API key in Settings.
-                Get a key at <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="underline">console.anthropic.com</a>
+              <p className="text-yellow-700 text-xs sm:text-sm">
+                Add your Claude API key in Settings.
+                <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="underline ml-1">Get a key</a>
               </p>
             </div>
           )}
@@ -737,15 +734,15 @@ export default function AnalyzerDashboard() {
 
       {/* Search Tab */}
       {activeTab === 'search' && (
-        <div className="space-y-4">
+        <div className="space-y-3 sm:space-y-4">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 sm:w-5 sm:h-5" />
             <input
               type="text"
-              placeholder="Search meetings by title, keywords, or content..."
+              placeholder="Search meetings..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full pl-9 sm:pl-10 pr-4 py-2 sm:py-3 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
           <SearchResults query={searchQuery} />

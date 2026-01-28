@@ -63,24 +63,9 @@ export function useSync() {
         console.log('📱 App resumed - triggering visibility sync')
 
         try {
-          // Step 1: Refresh token proactively (critical for iOS token expiration)
-          const tokenManager = await syncService.getTokenManager()
-          if (tokenManager) {
-            await tokenManager.getValidToken()
-          }
-
-          // Step 2: Sync from cloud to get latest data
-          const cloudResult = await syncService.syncFromCloud()
-
-          // Step 3: Upload any local changes if they exist
-          if (cloudResult.success) {
-            const localData = await syncService.getLocalData()
-            if (localData && localData.hasLocalChanges) {
-              console.log('📤 Uploading local changes after resume')
-              await syncService.syncToCloud(localData.data)
-            }
-          }
-
+          // Sync from cloud to get latest data
+          // Note: syncFromCloud handles token refresh internally via GoogleDriveAuth
+          await syncService.syncFromCloud()
           console.log('✅ Visibility sync completed')
         } catch (error) {
           console.error('❌ Visibility sync failed:', error)

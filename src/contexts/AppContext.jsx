@@ -1158,10 +1158,23 @@ export function AppProvider({ children }) {
         }
       }
 
-      // STEP 4: If all sources are empty, we need a cloud sync
+      // STEP 4: If all sources are empty, check if we should auto-sync from cloud
       if (finalMeetings.length === 0) {
-        console.log('⚠️ LOAD: All local sources empty. User should sync with cloud.')
-        dataSource = 'empty'
+        const userId = localStorage.getItem('meetingflow_firestore_user_id')
+        if (userId) {
+          console.log('⚠️ LOAD: All local sources empty but user is logged in - will auto-sync from cloud')
+          dataSource = 'empty-will-sync'
+
+          // Trigger auto-sync in background after a short delay
+          // This allows the UI to render first, then sync happens
+          setTimeout(() => {
+            console.log('🔄 AUTO-SYNC: Triggering background sync due to empty local storage...')
+            window.dispatchEvent(new CustomEvent('meetingflow-auto-sync-needed'))
+          }, 500)
+        } else {
+          console.log('⚠️ LOAD: All local sources empty. User should configure sync in Settings.')
+          dataSource = 'empty'
+        }
       }
 
       // Deduplicate meetings

@@ -217,6 +217,32 @@ export default function Home() {
     ])
   }, [displayMeetings, displayStakeholders])
 
+  // Auto-sync listener: When Dexie is empty but user is logged in, trigger sync
+  useEffect(() => {
+    const handleAutoSync = async () => {
+      console.log('🔄 AUTO-SYNC: Received auto-sync request, triggering performFullSync...')
+      setIsSyncing(true)
+      setSyncResult(null)
+      try {
+        const result = await performFullSync()
+        console.log('🔄 AUTO-SYNC: Completed with result:', result)
+        setSyncResult(result)
+        if (result?.success) {
+          // Show a subtle notification that data was loaded
+          console.log('✅ AUTO-SYNC: Successfully loaded', result.stats?.meetings || 0, 'meetings from cloud')
+        }
+      } catch (error) {
+        console.error('❌ AUTO-SYNC: Failed:', error)
+        setSyncResult({ success: false, message: error.message })
+      } finally {
+        setIsSyncing(false)
+      }
+    }
+
+    window.addEventListener('meetingflow-auto-sync-needed', handleAutoSync)
+    return () => window.removeEventListener('meetingflow-auto-sync-needed', handleAutoSync)
+  }, [performFullSync])
+
   // Close stakeholder dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {

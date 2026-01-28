@@ -1,8 +1,29 @@
 # Phase 2: Full Dexie Migration Implementation Plan
 
+## Current Status
+
+### ✅ COMPLETED
+
+**Phase 1** (commits bf4ddb5, 62cac21):
+- Dexie-first loading strategy in `loadData()`
+- Triple-write to Dexie + localforage + localStorage in `performFullSync()`
+- Auto-sync from cloud when Dexie is empty on cold start
+
+**Phase 2 Steps 1-3** (commit 4e674b7):
+- Created `src/hooks/useMeetings.js` with reactive Dexie query hooks
+- Updated `Home.jsx` to use `useMeetings()`, `useStakeholders()`, `useStakeholderCategories()`
+- Updated `Meeting.jsx` to use `useFullMeeting(id)`, `useStakeholders()`
+
+### 🔄 REMAINING
+
+- **Step 4**: Simplify AppContext (optional - can be deferred)
+- **Step 5**: Remove fallback chains and localStorage writes
+
+---
+
 ## Overview
 
-Phase 1 (completed) implemented a Dexie-first loading strategy where AppContext reads from Dexie first, then falls back to localforage/localStorage. This fixes the iOS cold start issue.
+Phase 1 implemented a Dexie-first loading strategy where AppContext reads from Dexie first, then falls back to localforage/localStorage. This fixes the iOS cold start issue.
 
 Phase 2 migrates the app to use **Dexie's reactive `useLiveQuery()` hooks** directly in components, eliminating the need for AppContext to manage meeting data state and ensuring real-time reactivity.
 

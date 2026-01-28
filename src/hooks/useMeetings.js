@@ -8,7 +8,7 @@
  */
 
 import { useLiveQuery } from 'dexie-react-hooks'
-import db from '../db/meetingFlowDB'
+import db, { reconstructMeeting } from '../db/meetingFlowDB'
 
 // ============================================
 // MEETING HOOKS
@@ -60,6 +60,7 @@ export function useMeeting(meetingId) {
 /**
  * Get full meeting with blob data (for viewing/editing)
  * This is slower as it loads transcript, notes, etc.
+ * Uses the same reconstructMeeting logic as dexieService.getFullMeeting()
  */
 export function useFullMeeting(meetingId) {
   return useLiveQuery(
@@ -75,24 +76,9 @@ export function useFullMeeting(meetingId) {
         .equals(meetingId)
         .toArray()
 
-      // Reconstruct full meeting from metadata + blobs
-      const fullMeeting = { ...metadata }
-
-      blobs.forEach(blob => {
-        if (blob.type === 'transcript') {
-          fullMeeting.transcript = blob.content
-        } else if (blob.type === 'notes') {
-          fullMeeting.notes = blob.content
-        } else if (blob.type === 'summary') {
-          fullMeeting.summary = blob.content
-        } else if (blob.type === 'actionItems') {
-          fullMeeting.actionItems = blob.content
-        } else if (blob.type === 'audioData') {
-          fullMeeting.audioData = blob.content
-        }
-      })
-
-      return fullMeeting
+      // Use the same reconstructMeeting function as dexieService
+      // This properly handles blob.data, blob.chunks, etc.
+      return reconstructMeeting(metadata, blobs)
     },
     [meetingId],
     undefined

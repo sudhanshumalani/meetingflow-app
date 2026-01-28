@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import { useApp } from '../contexts/AppContext'
@@ -71,6 +71,9 @@ export default function Meeting() {
   // PHASE 2: Read data directly from Dexie (reactive via useLiveQuery)
   const dexieMeeting = useFullMeeting(id !== 'new' ? id : null)
   const dexieStakeholders = useStakeholders()
+
+  // Ref to track which meeting ID has been initialized (prevents infinite loop)
+  const loadedMeetingIdRef = useRef(null)
 
   // Handle loading state
   const stakeholders = dexieStakeholders ?? []
@@ -202,12 +205,9 @@ export default function Meeting() {
   }, [isProcessingSpeakers, saveError])
 
   useEffect(() => {
-    console.log('🔄 useEffect triggered for ID:', id)
-    console.log('📝 Meeting component loading with ID:', id)
-    console.log('📝 Dexie meeting:', dexieMeeting ? { id: dexieMeeting.id, title: dexieMeeting.title } : 'loading or not found')
-
-    // Only run this effect when ID changes or when Dexie meeting is loaded
+    // Only run this effect when ID changes or when Dexie meeting is first loaded
     if (!id || id === 'new') {
+      loadedMeetingIdRef.current = null
       console.log('📝 New meeting mode - no restoration needed')
       return
     }
@@ -218,11 +218,22 @@ export default function Meeting() {
       return
     }
 
+    // CRITICAL: Prevent infinite loop by checking if we already loaded this meeting
+    // useLiveQuery returns new object references, so we track by ID
+    if (loadedMeetingIdRef.current === id) {
+      console.log('📝 Meeting already loaded for ID:', id, '- skipping re-initialization')
+      return
+    }
+
+    console.log('🔄 Loading meeting data for ID:', id)
+
     // PHASE 2: Use meeting from Dexie (primary) or fallback to currentMeeting
     const meetingData = dexieMeeting ?? currentMeeting
     console.log('📝 Found meeting:', meetingData ? { id: meetingData.id, title: meetingData.title } : 'NOT FOUND')
 
     if (meetingData) {
+      // Mark this meeting as loaded to prevent re-initialization
+      loadedMeetingIdRef.current = id
       console.log('🔍 DEBUG: Loading meeting data:', {
         digitalNotes: meetingData.digitalNotes,
         aiResult: meetingData.aiResult,
@@ -371,7 +382,8 @@ export default function Meeting() {
     } else {
       console.log('📝 No meeting found - this is a new meeting')
     }
-  }, [id, dexieMeeting]) // Depend on ID and Dexie meeting data
+  }, [id, dexieMeeting, currentMeeting, setCurrentMeeting]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Note: We use loadedMeetingIdRef to prevent infinite loops from dexieMeeting object changes
 
   // Debug: Check state after restoration (with delay to account for setTimeout)
   useEffect(() => {

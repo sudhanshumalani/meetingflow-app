@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import { useApp } from '../contexts/AppContext'
+import { useFullMeeting, useStakeholders } from '../hooks/useMeetings'
 import { v4 as uuidv4 } from 'uuid'
 import TranscriptStorage from '../utils/transcriptStorage'
 import {
@@ -66,14 +67,25 @@ const SAVE_CONFIRMATION_TIMEOUT = 3000
 export default function Meeting() {
   const { id } = useParams()
   const navigate = useNavigate()
+
+  // PHASE 2: Read data directly from Dexie (reactive via useLiveQuery)
+  const dexieMeeting = useFullMeeting(id !== 'new' ? id : null)
+  const dexieStakeholders = useStakeholders()
+
+  // Handle loading state
+  const stakeholders = dexieStakeholders ?? []
+  const isDataLoading = id !== 'new' && dexieMeeting === undefined
+
+  // Keep action functions from AppContext (will migrate in Phase 2 Step 5)
   const {
-    meetings,
-    stakeholders,
     currentMeeting,
     addMeeting,
     updateMeeting,
     setCurrentMeeting
   } = useApp()
+
+  // Use Dexie meeting if available, fallback to currentMeeting for compatibility
+  const meeting = dexieMeeting ?? currentMeeting
 
   // Form state
   const [formData, setFormData] = useState({
@@ -190,65 +202,68 @@ export default function Meeting() {
   }, [isProcessingSpeakers, saveError])
 
   useEffect(() => {
-    console.log('🔄 useEffect triggered for ID:', id, 'Run count:', Math.random())
+    console.log('🔄 useEffect triggered for ID:', id)
     console.log('📝 Meeting component loading with ID:', id)
-    console.log('📝 Available meetings count:', meetings.length)
-    console.log('📝 CurrentMeeting ID:', currentMeeting?.id)
+    console.log('📝 Dexie meeting:', dexieMeeting ? { id: dexieMeeting.id, title: dexieMeeting.title } : 'loading or not found')
 
-    // Only run this effect when ID changes or when meetings array is first loaded
+    // Only run this effect when ID changes or when Dexie meeting is loaded
     if (!id || id === 'new') {
       console.log('📝 New meeting mode - no restoration needed')
       return
     }
 
-    // Find meeting from currentMeeting or fallback to meetings array
-    const meeting = (currentMeeting && currentMeeting.id === id)
-      ? currentMeeting
-      : meetings.find(m => m.id === id) || null
-    console.log('📝 Found meeting:', meeting ? {id: meeting.id, title: meeting.title} : 'NOT FOUND')
+    // Wait for Dexie to load the meeting
+    if (dexieMeeting === undefined) {
+      console.log('📝 Waiting for Dexie to load meeting...')
+      return
+    }
 
-    if (meeting) {
+    // PHASE 2: Use meeting from Dexie (primary) or fallback to currentMeeting
+    const meetingData = dexieMeeting ?? currentMeeting
+    console.log('📝 Found meeting:', meetingData ? { id: meetingData.id, title: meetingData.title } : 'NOT FOUND')
+
+    if (meetingData) {
       console.log('🔍 DEBUG: Loading meeting data:', {
-        digitalNotes: meeting.digitalNotes,
-        aiResult: meeting.aiResult,
-        notes: meeting.notes,
-        originalInputs: meeting.originalInputs,
-        audioTranscript: meeting.audioTranscript
+        digitalNotes: meetingData.digitalNotes,
+        aiResult: meetingData.aiResult,
+        notes: meetingData.notes,
+        originalInputs: meetingData.originalInputs,
+        audioTranscript: meetingData.audioTranscript
       })
 
-      setCurrentMeeting(meeting)
+      setCurrentMeeting(meetingData)
 
       // Set form data
       console.log('🔍 DEBUG: Loading meeting data:', {
-        id: meeting.id,
-        selectedStakeholder: meeting.selectedStakeholder,
-        stakeholderIds: meeting.stakeholderIds,
-        formDataBeingSaved: meeting
+        id: meetingData.id,
+        selectedStakeholder: meetingData.selectedStakeholder,
+        stakeholderIds: meetingData.stakeholderIds,
+        formDataBeingSaved: meetingData
       })
 
       setFormData({
-        title: meeting.title || '',
-        selectedStakeholder: meeting.selectedStakeholder || meeting.stakeholderIds?.[0] || '',
-        date: meeting.scheduledAt ? meeting.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
-        priority: meeting.priority || 'medium',
-        template: meeting.template || null
+        title: meetingData.title || '',
+        selectedStakeholder: meetingData.selectedStakeholder || meetingData.stakeholderIds?.[0] || '',
+        date: meetingData.scheduledAt ? meetingData.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
+        priority: meetingData.priority || 'medium',
+        template: meetingData.template || null
       })
 
       // Load existing notes if any
-      if (meeting.digitalNotes && Object.values(meeting.digitalNotes).some(v => v)) {
-        console.log('🔄 LOADING: Restoring digital notes:', meeting.digitalNotes)
-        setDigitalNotes(meeting.digitalNotes)
+      if (meetingData.digitalNotes && Object.values(meetingData.digitalNotes).some(v => v)) {
+        console.log('🔄 LOADING: Restoring digital notes:', meetingData.digitalNotes)
+        setDigitalNotes(meetingData.digitalNotes)
       }
 
       // Load existing AI result if any
-      if (meeting.aiResult) {
-        console.log('🔄 LOADING: Restoring AI result:', meeting.aiResult)
-        setAiResult(meeting.aiResult)
+      if (meetingData.aiResult) {
+        console.log('🔄 LOADING: Restoring AI result:', meetingData.aiResult)
+        setAiResult(meetingData.aiResult)
       }
 
       // Load original input sources if any - this is the critical part
-      if (meeting.originalInputs) {
-        console.log('🔄 LOADING: Restoring original inputs:', meeting.originalInputs)
+      if (meetingData.originalInputs) {
+        console.log('🔄 LOADING: Restoring original inputs:', meetingData.originalInputs)
 
         // Set restoration flag to prevent unwanted AI analysis during restoration
         setIsRestoringMeeting(true)
@@ -263,49 +278,49 @@ export default function Meeting() {
           // Restore all content types first
 
           // Restore manual text (copy-pasted notes)
-          if (meeting.originalInputs.manualText) {
-            console.log('📝 RESTORING manual text:', meeting.originalInputs.manualText.substring(0, 100) + '...')
-            setManualText(meeting.originalInputs.manualText)
+          if (meetingData.originalInputs.manualText) {
+            console.log('📝 RESTORING manual text:', meetingData.originalInputs.manualText.substring(0, 100) + '...')
+            setManualText(meetingData.originalInputs.manualText)
             setShowManualInput(true) // Show the manual input section
             hasManualText = true
             console.log('✅ Manual text restored and section shown')
           }
 
           // Restore OCR results and extracted text
-          if (meeting.originalInputs.ocrResults) {
-            console.log('📝 RESTORING OCR results:', meeting.originalInputs.ocrResults)
-            setOcrResult(meeting.originalInputs.ocrResults)
-            if (meeting.originalInputs.extractedText) {
-              console.log('📝 RESTORING extracted text:', meeting.originalInputs.extractedText.substring(0, 100) + '...')
-              setExtractedText(meeting.originalInputs.extractedText)
+          if (meetingData.originalInputs.ocrResults) {
+            console.log('📝 RESTORING OCR results:', meetingData.originalInputs.ocrResults)
+            setOcrResult(meetingData.originalInputs.ocrResults)
+            if (meetingData.originalInputs.extractedText) {
+              console.log('📝 RESTORING extracted text:', meetingData.originalInputs.extractedText.substring(0, 100) + '...')
+              setExtractedText(meetingData.originalInputs.extractedText)
             }
             hasOcrResults = true
             console.log('✅ OCR data restored')
           }
 
           // Restore audio transcript from originalInputs (this takes precedence)
-          if (meeting.originalInputs.audioTranscript) {
-            console.log('📝 RESTORING audio transcript from originalInputs:', meeting.originalInputs.audioTranscript.substring(0, 100) + '...')
-            setAudioTranscript(meeting.originalInputs.audioTranscript)
+          if (meetingData.originalInputs.audioTranscript) {
+            console.log('📝 RESTORING audio transcript from originalInputs:', meetingData.originalInputs.audioTranscript.substring(0, 100) + '...')
+            setAudioTranscript(meetingData.originalInputs.audioTranscript)
             hasAudioTranscript = true
             console.log('✅ Audio transcript restored from originalInputs')
-          } else if (meeting.audioTranscript) {
+          } else if (meetingData.audioTranscript) {
             // Fallback to top-level audioTranscript
-            console.log('📝 RESTORING audio transcript from meeting:', meeting.audioTranscript.substring(0, 100) + '...')
-            setAudioTranscript(meeting.audioTranscript)
+            console.log('📝 RESTORING audio transcript from meetingData:', meetingData.audioTranscript.substring(0, 100) + '...')
+            setAudioTranscript(meetingData.audioTranscript)
             hasAudioTranscript = true
-            console.log('✅ Audio transcript restored from meeting')
+            console.log('✅ Audio transcript restored from meetingData')
           }
 
           // Restore speaker data
-          if (meeting.originalInputs.speakerData) {
-            console.log('👥 RESTORING speaker data from originalInputs:', meeting.originalInputs.speakerData.speakers_detected, 'speakers')
-            setSpeakerData(meeting.originalInputs.speakerData)
+          if (meetingData.originalInputs.speakerData) {
+            console.log('👥 RESTORING speaker data from originalInputs:', meetingData.originalInputs.speakerData.speakers_detected, 'speakers')
+            setSpeakerData(meetingData.originalInputs.speakerData)
             console.log('✅ Speaker data restored from originalInputs')
-          } else if (meeting.speakerData) {
-            console.log('👥 RESTORING speaker data from meeting:', meeting.speakerData.speakers_detected, 'speakers')
-            setSpeakerData(meeting.speakerData)
-            console.log('✅ Speaker data restored from meeting')
+          } else if (meetingData.speakerData) {
+            console.log('👥 RESTORING speaker data from meetingData:', meetingData.speakerData.speakers_detected, 'speakers')
+            setSpeakerData(meetingData.speakerData)
+            console.log('✅ Speaker data restored from meetingData')
           }
 
           // Determine which mode to switch to (priority: manual text > OCR > audio)
@@ -341,9 +356,9 @@ export default function Meeting() {
         setExtractedText('')
 
         // Still check for top-level audioTranscript if no originalInputs
-        if (meeting.audioTranscript) {
-          console.log('🔄 LOADING: Restoring audio transcript (no originalInputs):', meeting.audioTranscript.substring(0, 100) + '...')
-          setAudioTranscript(meeting.audioTranscript)
+        if (meetingData.audioTranscript) {
+          console.log('🔄 LOADING: Restoring audio transcript (no originalInputs):', meetingData.audioTranscript.substring(0, 100) + '...')
+          setAudioTranscript(meetingData.audioTranscript)
         } else {
           setAudioTranscript('')
         }
@@ -352,11 +367,11 @@ export default function Meeting() {
         setUploadedImageUrls([])
       }
 
-      console.log('✅ Meeting loaded successfully:', meeting.title)
+      console.log('✅ Meeting loaded successfully:', meetingData.title)
     } else {
       console.log('📝 No meeting found - this is a new meeting')
     }
-  }, [id]) // Only depend on ID to prevent excessive re-runs
+  }, [id, dexieMeeting]) // Depend on ID and Dexie meeting data
 
   // Debug: Check state after restoration (with delay to account for setTimeout)
   useEffect(() => {
@@ -1097,27 +1112,27 @@ export default function Meeting() {
   const template = formData.template
 
   const handleRefresh = async () => {
-    // Refresh meeting data
-    const meeting = meetings.find(m => m.id === id)
-    if (meeting) {
-      setCurrentMeeting(meeting)
-      console.log('🔍 DEBUG: Loading meeting data:', {
-        id: meeting.id,
-        selectedStakeholder: meeting.selectedStakeholder,
-        stakeholderIds: meeting.stakeholderIds,
-        formDataBeingSaved: meeting
+    // PHASE 2: Use Dexie meeting data (reactive via useLiveQuery)
+    const meetingData = dexieMeeting
+    if (meetingData) {
+      setCurrentMeeting(meetingData)
+      console.log('🔍 DEBUG: Refreshing meeting data:', {
+        id: meetingData.id,
+        selectedStakeholder: meetingData.selectedStakeholder,
+        stakeholderIds: meetingData.stakeholderIds,
+        formDataBeingSaved: meetingData
       })
 
       setFormData({
-        title: meeting.title || '',
-        selectedStakeholder: meeting.selectedStakeholder || meeting.stakeholderIds?.[0] || '',
-        date: meeting.scheduledAt ? meeting.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
-        priority: meeting.priority || 'medium',
-        template: meeting.template || null
+        title: meetingData.title || '',
+        selectedStakeholder: meetingData.selectedStakeholder || meetingData.stakeholderIds?.[0] || '',
+        date: meetingData.scheduledAt ? meetingData.scheduledAt.split('T')[0] : new Date().toISOString().split('T')[0],
+        priority: meetingData.priority || 'medium',
+        template: meetingData.template || null
       })
-      
-      if (meeting.digitalNotes) {
-        setDigitalNotes(meeting.digitalNotes)
+
+      if (meetingData.digitalNotes) {
+        setDigitalNotes(meetingData.digitalNotes)
       }
     }
   }

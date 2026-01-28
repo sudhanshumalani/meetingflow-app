@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
+import { useMeetings, useStakeholders, useStakeholderCategories } from '../hooks/useMeetings'
 import { useSyncContext } from '../contexts/SyncProvider'
 import {
   Search,
@@ -116,8 +117,21 @@ const parseMeetingDate = (dateString) => {
 
 export default function Home() {
   const navigate = useNavigate()
-  const { meetings, stakeholders, stakeholderCategories, addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder, addStakeholderCategory, updateStakeholderCategory, deleteStakeholderCategory, performFullSync } = useApp()
+
+  // PHASE 2: Read data directly from Dexie (reactive via useLiveQuery)
+  const dexieMeetings = useMeetings()
+  const dexieStakeholders = useStakeholders()
+  const dexieCategories = useStakeholderCategories()
+
+  // Keep action functions from AppContext (will migrate in Phase 2 Step 5)
+  const { addMeeting, setCurrentMeeting, updateMeeting, deleteMeeting, addStakeholder, updateStakeholder, deleteStakeholder, addStakeholderCategory, updateStakeholderCategory, deleteStakeholderCategory, performFullSync } = useApp()
   const sync = useSyncContext()
+
+  // Handle loading state - useLiveQuery returns undefined while loading
+  const meetings = dexieMeetings ?? []
+  const stakeholders = dexieStakeholders ?? []
+  const stakeholderCategories = dexieCategories ?? []
+  const isDataLoading = dexieMeetings === undefined
   const { measureInteraction } = usePerformanceMonitor('Home')
   const [searchTerm, setSearchTerm] = useState('')
   const [notifications, setNotifications] = useState([])

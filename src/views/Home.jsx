@@ -43,7 +43,8 @@ import {
   Lightbulb,
   RefreshCw,
   AlertCircle,
-  HardDrive
+  HardDrive,
+  Smartphone
 } from 'lucide-react'
 import { format, isToday, isThisWeek, startOfDay, endOfDay, differenceInDays } from 'date-fns'
 import {
@@ -74,6 +75,8 @@ import { processWithClaude } from '../utils/ocrServiceNew'
 import { findOrphanedSessions, recoverOrphanedSession, deleteOrphanedSession } from '../utils/transcriptRecovery'
 import StreamingAudioBuffer from '../utils/StreamingAudioBuffer'
 import StreamingTranscriptBuffer from '../utils/StreamingTranscriptBuffer'
+import { IS_IOS } from '../config/firebase'
+import MobileRecordingsImport from '../components/MobileRecordingsImport'
 
 // Helper to parse meeting dates correctly (handles both UTC 'Z' format and local format)
 // This ensures dates display correctly regardless of how they were stored
@@ -195,6 +198,7 @@ export default function Home() {
   // Bulk selection states
   const [selectedMeetings, setSelectedMeetings] = useState(new Set())
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false)
+  const [showMobileRecordings, setShowMobileRecordings] = useState(false)
 
   // Bulk stakeholder selection states
   const [selectedStakeholders, setSelectedStakeholders] = useState(new Set())
@@ -1163,6 +1167,18 @@ export default function Home() {
                 {isSyncing ? 'Syncing...' : 'Sync'}
               </button>
 
+              {/* Mobile Recordings Import Button (Desktop only) */}
+              {!IS_IOS && (
+                <button
+                  onClick={() => setShowMobileRecordings(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium shadow-sm hover:shadow-md transition-all"
+                  title="Import Mobile Recordings"
+                >
+                  <Smartphone size={18} />
+                  Mobile
+                </button>
+              )}
+
               {/* User Menu */}
               <div className="relative">
                 <button
@@ -1274,6 +1290,22 @@ export default function Home() {
                 <Plus size={20} className="mr-2" />
                 New Meeting
               </TouchButton>
+
+              {/* iOS Mobile Recorder - Simplified recording for iOS */}
+              {IS_IOS && (
+                <TouchButton
+                  onClick={() => navigate('/mobile-record')}
+                  variant="secondary"
+                  size="large"
+                  fullWidth
+                  hapticType="light"
+                  ariaLabel="Open simplified mobile recorder"
+                  className="mt-3"
+                >
+                  <Smartphone size={20} className="mr-2" />
+                  Simple Recorder (iOS)
+                </TouchButton>
+              )}
             </div>
 
             {/* Export Progress */}
@@ -2667,6 +2699,17 @@ export default function Home() {
                 <X size={16} />
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Recordings Import Modal */}
+      {showMobileRecordings && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-2xl">
+            <MobileRecordingsImport
+              onClose={() => setShowMobileRecordings(false)}
+            />
           </div>
         </div>
       )}

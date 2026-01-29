@@ -9,6 +9,7 @@ import Settings from './views/Settings'
 import SimpleMeetingNotes from './components/SimpleMeetingNotes'
 import GoogleAuthCallback from './components/GoogleAuthCallback'
 import SpeakerDiarizationTest from './views/SpeakerDiarizationTest'
+import MobileRecordView from './views/MobileRecordView'
 import { AnalyzerDashboard } from './components/analyzer'
 import ErrorBoundary, { ErrorToast } from './components/ErrorBoundary'
 import LoadingSpinner from './components/LoadingSpinner'
@@ -269,6 +270,7 @@ function AppContent() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/test-notes" element={<SimpleMeetingNotes />} />
             <Route path="/test-speaker-diarization" element={<SpeakerDiarizationTest />} />
+            <Route path="/mobile-record" element={<MobileRecordView />} />
             <Route path="/analyzer" element={<AnalyzerDashboard />} />
             <Route path="/auth/google/callback" element={<GoogleAuthCallback />} />
             {/* Catch-all route for any unmatched paths - redirect to home */}

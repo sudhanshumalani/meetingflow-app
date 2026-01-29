@@ -449,6 +449,118 @@ class AssemblyAISpeakerService {
   }
 
   /**
+   * Fetch a transcript by ID from AssemblyAI
+   * Used by desktop to retrieve transcripts from mobile recordings
+   * @param {string} transcriptId - AssemblyAI transcript ID
+   * @returns {Promise<Object>} - Full transcript data or null if not ready
+   */
+  async fetchTranscriptById(transcriptId) {
+    if (!this.baseService.isConfigured()) {
+      throw new Error('AssemblyAI API key not configured')
+    }
+
+    const apiKey = this.baseService.apiKey
+    if (!apiKey || apiKey === 'your_api_key_here') {
+      throw new Error('API key required to fetch transcript')
+    }
+
+    console.log(`📥 Fetching transcript: ${transcriptId}`)
+
+    try {
+      const response = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
+        headers: { 'authorization': apiKey }
+      })
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.warn(`⚠️ Transcript ${transcriptId} not found`)
+          return null
+        }
+        throw new Error(`Failed to fetch transcript: ${response.status} ${response.statusText}`)
+      }
+
+      const transcript = await response.json()
+      console.log(`📥 Transcript ${transcriptId} status: ${transcript.status}`)
+
+      if (transcript.status === 'completed') {
+        return {
+          id: transcriptId,
+          status: 'completed',
+          text: transcript.text,
+          utterances: transcript.utterances || [],
+          words: transcript.words || [],
+          speakers_detected: this.countSpeakers(transcript.utterances),
+          confidence: transcript.confidence,
+          audio_duration: transcript.audio_duration,
+          created: transcript.created,
+          completed: transcript.completed
+        }
+      } else if (transcript.status === 'error') {
+        return {
+          id: transcriptId,
+          status: 'error',
+          error: transcript.error
+        }
+      } else {
+        // Still processing
+        return {
+          id: transcriptId,
+          status: transcript.status // 'queued' or 'processing'
+        }
+      }
+    } catch (error) {
+      console.error(`❌ Failed to fetch transcript ${transcriptId}:`, error)
+      throw error
+    }
+  }
+
+  /**
+   * List all transcripts from AssemblyAI
+   * Useful for finding transcripts that may have been lost
+   * @param {number} limit - Maximum number of transcripts to return (default 50)
+   * @returns {Promise<Array>} - Array of transcript summaries
+   */
+  async listTranscripts(limit = 50) {
+    if (!this.baseService.isConfigured()) {
+      throw new Error('AssemblyAI API key not configured')
+    }
+
+    const apiKey = this.baseService.apiKey
+    if (!apiKey || apiKey === 'your_api_key_here') {
+      throw new Error('API key required to list transcripts')
+    }
+
+    console.log(`📋 Listing transcripts (limit: ${limit})`)
+
+    try {
+      const response = await fetch(`https://api.assemblyai.com/v2/transcript?limit=${limit}`, {
+        headers: { 'authorization': apiKey }
+      })
+
+      if (!response.ok) {
+        throw new Error(`Failed to list transcripts: ${response.status} ${response.statusText}`)
+      }
+
+      const data = await response.json()
+      const transcripts = data.transcripts || []
+
+      console.log(`📋 Found ${transcripts.length} transcripts`)
+
+      return transcripts.map(t => ({
+        id: t.id,
+        status: t.status,
+        created: t.created,
+        completed: t.completed,
+        audio_duration: t.audio_duration,
+        error: t.error
+      }))
+    } catch (error) {
+      console.error('❌ Failed to list transcripts:', error)
+      throw error
+    }
+  }
+
+  /**
    * Format speaker data for display
    * Converts utterances into a readable format
    */

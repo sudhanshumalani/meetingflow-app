@@ -221,6 +221,7 @@ function getTimestamp(item) {
 }
 
 // Helper function to merge arrays by ID with timestamp-based conflict resolution
+// SYNC FIX: Now handles deleted=true properly - deletion ALWAYS wins
 // Returns: { merged: [], toUpload: [], toDownload: [] }
 function mergeByIdWithTracking(localItems, cloudItems) {
   const merged = new Map()
@@ -247,35 +248,54 @@ function mergeByIdWithTracking(localItems, cloudItems) {
       merged.set(id, localItem)
       toUpload.push(localItem)
     } else {
-      // Exists in both - compare timestamps
-      const localTime = getTimestamp(localItem)
-      const cloudTime = getTimestamp(cloudItem)
+      // Exists in both - SYNC FIX: deleted=true ALWAYS wins
+      const isDeleted = cloudItem.deleted || localItem.deleted
 
-      if (localTime > cloudTime) {
-        // Local is newer - use local and upload it
-        merged.set(id, localItem)
-        toUpload.push(localItem)
-      } else if (cloudTime > localTime) {
-        // Cloud is newer - use cloud metadata BUT preserve local blob data
-        // Cloud doesn't store large fields like aiResult, digitalNotes, transcript
-        // So we merge cloud metadata with local blobs
-        const mergedItem = {
-          ...cloudItem,
-          // Preserve blob data from local if cloud doesn't have it
-          aiResult: cloudItem.aiResult || localItem.aiResult,
-          digitalNotes: cloudItem.digitalNotes || localItem.digitalNotes,
-          audioTranscript: cloudItem.audioTranscript || localItem.audioTranscript,
-          transcript: cloudItem.transcript || localItem.transcript,
-          notes: cloudItem.notes || localItem.notes,
-          originalInputs: cloudItem.originalInputs || localItem.originalInputs,
-          speakerData: cloudItem.speakerData || localItem.speakerData,
-          images: cloudItem.images || localItem.images,
+      if (isDeleted) {
+        // Either side is deleted - result is deleted
+        const deletedItem = {
+          ...(cloudItem.deleted ? cloudItem : localItem),
+          deleted: true,
+          deletedAt: cloudItem.deletedAt || localItem.deletedAt || new Date().toISOString()
         }
-        merged.set(id, mergedItem)
-        toDownload.push(mergedItem)
+        merged.set(id, deletedItem)
+        // Upload if local was the source of deletion, download otherwise
+        if (localItem.deleted && !cloudItem.deleted) {
+          toUpload.push(deletedItem)
+        } else if (cloudItem.deleted && !localItem.deleted) {
+          toDownload.push(deletedItem)
+        }
       } else {
-        // Same time - keep local (arbitrary choice)
-        merged.set(id, localItem)
+        // Neither is deleted - compare timestamps
+        const localTime = getTimestamp(localItem)
+        const cloudTime = getTimestamp(cloudItem)
+
+        if (localTime > cloudTime) {
+          // Local is newer - use local and upload it
+          merged.set(id, localItem)
+          toUpload.push(localItem)
+        } else if (cloudTime > localTime) {
+          // Cloud is newer - use cloud metadata BUT preserve local blob data
+          // Cloud doesn't store large fields like aiResult, digitalNotes, transcript
+          // So we merge cloud metadata with local blobs
+          const mergedItem = {
+            ...cloudItem,
+            // Preserve blob data from local if cloud doesn't have it
+            aiResult: cloudItem.aiResult || localItem.aiResult,
+            digitalNotes: cloudItem.digitalNotes || localItem.digitalNotes,
+            audioTranscript: cloudItem.audioTranscript || localItem.audioTranscript,
+            transcript: cloudItem.transcript || localItem.transcript,
+            notes: cloudItem.notes || localItem.notes,
+            originalInputs: cloudItem.originalInputs || localItem.originalInputs,
+            speakerData: cloudItem.speakerData || localItem.speakerData,
+            images: cloudItem.images || localItem.images,
+          }
+          merged.set(id, mergedItem)
+          toDownload.push(mergedItem)
+        } else {
+          // Same time - keep local (arbitrary choice)
+          merged.set(id, localItem)
+        }
       }
     }
   }
@@ -283,7 +303,7 @@ function mergeByIdWithTracking(localItems, cloudItems) {
   // Process cloud items not in local
   for (const [id, cloudItem] of cloudMap) {
     if (!localMap.has(id)) {
-      // Only in cloud - needs to be downloaded
+      // Only in cloud - needs to be downloaded (including deleted items)
       merged.set(id, cloudItem)
       toDownload.push(cloudItem)
     }
@@ -1062,38 +1082,13 @@ export function AppProvider({ children }) {
         // PHASE 4: Soft delete - no tombstones, use deleted field
 
         // Subscribe to meetings - trust cloud data with deleted field
+        // SYNC FIX: NEVER skip subscription callbacks - we must always capture tombstones
         const unsubMeetings = firestoreService.subscribeMeetings((firestoreMeetings) => {
           try {
-            // Skip if a full sync is in progress or user is interacting
-            if (isSyncInProgress() || isUserInteractionInProgress()) {
-              console.log('🔥 Subscription: Skipping - sync or interaction in progress')
-              return
-            }
-
             console.log('🔥 Subscription: Received', firestoreMeetings.length, 'meetings from cloud')
 
-            // PHASE 4: Filter by deleted field (soft delete), not tombstones
-            const activeMeetings = firestoreMeetings.filter(m => !m.deleted)
-            const deletedMeetings = firestoreMeetings.filter(m => m.deleted)
-
-            if (deletedMeetings.length > 0) {
-              console.log('🗑️ Found', deletedMeetings.length, 'soft-deleted meetings in cloud')
-            }
-
-            // Get current local meetings
-            const localMeetings = currentMeetingsRef.current || []
-            const activeLocalMeetings = localMeetings.filter(m => !m.deleted)
-
-            // Merge active meetings (cloud is authoritative for deleted status)
-            const mergedMeetings = mergeMeetingsData(activeLocalMeetings, activeMeetings)
-
-            console.log('🔥 Subscription: Merge complete -', mergedMeetings.length, 'active meetings')
-
-            // Update React state with active meetings only
-            dispatch({ type: 'SET_MEETINGS', payload: mergedMeetings })
-
-            // Save ALL meetings to Dexie (including deleted ones for sync)
-            // This ensures deleted status propagates
+            // SYNC FIX: Always save ALL data to Dexie FIRST (including deleted=true tombstones)
+            // This ensures delete propagation even during locks
             try {
               bulkSaveMeetings(firestoreMeetings, { queueSync: false })
                 .then(result => {
@@ -1105,58 +1100,92 @@ export function AppProvider({ children }) {
             } catch (dexieErr) {
               console.warn('🔥 Subscription: Dexie error:', dexieErr.message)
             }
+
+            // Skip UI updates during sync/interaction to prevent race conditions
+            // But Dexie save above ensures tombstones are captured
+            if (isSyncInProgress() || isUserInteractionInProgress()) {
+              console.log('🔥 Subscription: Dexie saved, skipping UI update - sync or interaction in progress')
+              return
+            }
+
+            // PHASE 4: Filter by deleted field (soft delete)
+            const activeMeetings = firestoreMeetings.filter(m => !m.deleted)
+            const deletedMeetings = firestoreMeetings.filter(m => m.deleted)
+
+            if (deletedMeetings.length > 0) {
+              console.log('🗑️ Found', deletedMeetings.length, 'soft-deleted meetings in cloud')
+            }
+
+            // Get current local meetings
+            const localMeetings = currentMeetingsRef.current || []
+
+            // SYNC FIX: Pass ALL meetings to merge (including deleted), let merge handle it
+            const mergedMeetings = mergeMeetingsData(localMeetings, firestoreMeetings)
+
+            // Filter for UI - only show active meetings
+            const activeMerged = mergedMeetings.filter(m => !m.deleted)
+            console.log('🔥 Subscription: Merge complete -', activeMerged.length, 'active meetings')
+
+            // Update React state with active meetings only
+            dispatch({ type: 'SET_MEETINGS', payload: activeMerged })
           } catch (callbackErr) {
             console.error('🔥 Subscription: Error processing meetings:', callbackErr)
           }
         })
 
         // Subscribe to stakeholders - PHASE 4: soft delete
+        // SYNC FIX: NEVER skip - always save to Dexie for tombstone propagation
         const unsubStakeholders = firestoreService.subscribeStakeholders((firestoreStakeholders) => {
           try {
-            if (isSyncInProgress()) return
-
             console.log('🔥 Subscription: Received', firestoreStakeholders.length, 'stakeholders from cloud')
 
-            // Filter by deleted field
-            const activeStakeholders = firestoreStakeholders.filter(s => !s.deleted)
-            const localStakeholders = currentStakeholdersRef.current || []
-            const mergedStakeholders = mergeByIdKeepNewer(
-              localStakeholders.filter(s => !s.deleted),
-              activeStakeholders
-            )
-
-            dispatch({ type: 'SET_STAKEHOLDERS', payload: mergedStakeholders })
-
-            // Save all to Dexie
+            // SYNC FIX: Always save ALL data to Dexie FIRST (including deleted=true)
             bulkSaveStakeholders(firestoreStakeholders, { queueSync: false })
               .then(result => console.log('🔥 Subscription: Saved', result.saved, 'stakeholders to Dexie'))
               .catch(err => console.warn('🔥 Subscription: Dexie stakeholders error:', err.message))
+
+            // Skip UI updates during sync, but Dexie save ensures tombstones captured
+            if (isSyncInProgress()) {
+              console.log('🔥 Subscription: Dexie saved, skipping UI update - sync in progress')
+              return
+            }
+
+            // SYNC FIX: Pass ALL to merge (including deleted), let merge handle it
+            const localStakeholders = currentStakeholdersRef.current || []
+            const mergedStakeholders = mergeByIdKeepNewer(localStakeholders, firestoreStakeholders)
+
+            // Filter for UI - only show active stakeholders
+            const activeStakeholders = mergedStakeholders.filter(s => !s.deleted)
+            dispatch({ type: 'SET_STAKEHOLDERS', payload: activeStakeholders })
           } catch (callbackErr) {
             console.error('🔥 Subscription: Error processing stakeholders:', callbackErr)
           }
         })
 
         // Subscribe to categories - PHASE 4: soft delete
+        // SYNC FIX: NEVER skip - always save to Dexie for tombstone propagation
         const unsubCategories = firestoreService.subscribeStakeholderCategories((firestoreCategories) => {
           try {
-            if (isSyncInProgress()) return
-
             console.log('🔥 Subscription: Received', firestoreCategories.length, 'categories from cloud')
 
-            // Filter by deleted field (soft delete)
-            const activeCategories = firestoreCategories.filter(c => !c.deleted)
-            const localCategories = currentCategoriesRef.current || []
-            const mergedCategories = mergeByIdKeepNewer(
-              localCategories.filter(c => !c.deleted),
-              activeCategories
-            )
-
-            dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: mergedCategories })
-
-            // Save all to Dexie (including deleted for sync propagation)
+            // SYNC FIX: Always save ALL data to Dexie FIRST (including deleted=true)
             bulkSaveCategories(firestoreCategories, { queueSync: false })
               .then(result => console.log('🔥 Subscription: Saved', result.saved, 'categories to Dexie'))
               .catch(err => console.warn('🔥 Subscription: Dexie categories error:', err.message))
+
+            // Skip UI updates during sync, but Dexie save ensures tombstones captured
+            if (isSyncInProgress()) {
+              console.log('🔥 Subscription: Dexie saved, skipping UI update - sync in progress')
+              return
+            }
+
+            // SYNC FIX: Pass ALL to merge (including deleted), let merge handle it
+            const localCategories = currentCategoriesRef.current || []
+            const mergedCategories = mergeByIdKeepNewer(localCategories, firestoreCategories)
+
+            // Filter for UI - only show active categories
+            const activeCategories = mergedCategories.filter(c => !c.deleted)
+            dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: activeCategories })
           } catch (callbackErr) {
             console.error('🔥 Subscription: Error processing categories:', callbackErr)
           }
@@ -1185,20 +1214,20 @@ export function AppProvider({ children }) {
   }, []) // Empty deps - only run once on mount
 
   // Helper: Merge meetings, keeping newer versions and avoiding duplicates
-  // FIXED: Cloud is authoritative for what EXISTS. Local meetings not in cloud
-  // are removed UNLESS they were created recently (grace period for sync).
+  // SYNC FIX: Now handles deleted=true properly - deletion ALWAYS wins
   //
-  // Trade-off documented:
-  // - Cloud is authoritative: if a meeting is deleted from cloud, it's gone from local
-  // - New local meetings (created < 5 min ago) are preserved to allow time to sync
+  // Key principles:
+  // - If EITHER side has deleted=true, the merged result is deleted=true
+  // - Timestamp comparison only applies to non-delete fields
   // - Binary data (audio, large images) is always preserved from local since Firestore never stores it
+  // - New local meetings (created < 5 min ago) are preserved to allow time to sync
   function mergeMeetingsData(localMeetings, cloudMeetings) {
     const merged = new Map()
     const cloudIds = new Set(cloudMeetings.map(m => m.id).filter(Boolean))
     const now = Date.now()
     const NEW_MEETING_GRACE_PERIOD = 5 * 60 * 1000 // 5 minutes
 
-    // Create a map of local meetings for binary data lookup
+    // Create a map of local meetings for lookup
     const localMeetingsMap = new Map()
     localMeetings.forEach(meeting => {
       if (meeting.id) {
@@ -1206,17 +1235,34 @@ export function AppProvider({ children }) {
       }
     })
 
-    // Start with cloud meetings (authoritative for existence)
+    // Process all cloud meetings
     cloudMeetings.forEach(cloudMeeting => {
       if (!cloudMeeting.id) return
 
       const localMeeting = localMeetingsMap.get(cloudMeeting.id)
       if (localMeeting) {
-        // Exists in both - compare timestamps
+        // Exists in both - merge with delete-wins logic
         const localTime = new Date(localMeeting.updatedAt || localMeeting.createdAt || 0).getTime()
         const cloudTime = new Date(cloudMeeting.updatedAt || cloudMeeting.createdAt || 0).getTime()
 
-        if (cloudTime >= localTime) {
+        // SYNC FIX: deleted=true ALWAYS wins, regardless of timestamp
+        const isDeleted = cloudMeeting.deleted || localMeeting.deleted
+
+        if (isDeleted) {
+          // If either is deleted, result is deleted (use the deleted one's data)
+          const deletedSource = cloudMeeting.deleted ? cloudMeeting : localMeeting
+          merged.set(cloudMeeting.id, {
+            ...deletedSource,
+            deleted: true,
+            deletedAt: deletedSource.deletedAt || new Date().toISOString(),
+            // Preserve local binary data
+            audioBlob: localMeeting.audioBlob,
+            audioData: localMeeting.audioData,
+            audioUrl: localMeeting.audioUrl,
+            recordingBlob: localMeeting.recordingBlob,
+          })
+          console.log(`🗑️ Merge: Meeting ${cloudMeeting.id?.slice(0,8)} marked as deleted (delete-wins)`)
+        } else if (cloudTime >= localTime) {
           // Cloud is newer or equal - use cloud values, preserve local binary data
           merged.set(cloudMeeting.id, {
             ...cloudMeeting,
@@ -1231,16 +1277,22 @@ export function AppProvider({ children }) {
           merged.set(cloudMeeting.id, localMeeting)
         }
       } else {
-        // Only in cloud - add it
+        // Only in cloud - add it (including if deleted)
         merged.set(cloudMeeting.id, cloudMeeting)
       }
     })
 
     // Add local-only meetings that are NEW (not yet synced)
-    // These are meetings created locally that haven't had time to sync to cloud
     localMeetings.forEach(localMeeting => {
       if (!localMeeting.id) return
       if (cloudIds.has(localMeeting.id)) return // Already handled above
+
+      // If locally deleted, still include for sync propagation
+      if (localMeeting.deleted) {
+        merged.set(localMeeting.id, localMeeting)
+        console.log(`🗑️ Keeping locally deleted meeting for sync:`, localMeeting.id?.slice(0,8))
+        return
+      }
 
       // Check if this is a recently created meeting (grace period)
       const createdAt = new Date(localMeeting.createdAt || 0).getTime()
@@ -1251,8 +1303,14 @@ export function AppProvider({ children }) {
         console.log(`🔄 Keeping new local meeting (age: ${Math.round(age/1000)}s):`, localMeeting.id?.slice(0,8))
         merged.set(localMeeting.id, localMeeting)
       } else {
-        // Old meeting not in cloud = deleted from another device
-        console.log(`🗑️ Removing meeting deleted from cloud:`, localMeeting.id?.slice(0,8))
+        // Old meeting not in cloud = was deleted from another device
+        // Mark it as deleted rather than removing (for consistency)
+        console.log(`🗑️ Old local meeting not in cloud, marking deleted:`, localMeeting.id?.slice(0,8))
+        merged.set(localMeeting.id, {
+          ...localMeeting,
+          deleted: true,
+          deletedAt: new Date().toISOString()
+        })
       }
     })
 
@@ -1260,6 +1318,7 @@ export function AppProvider({ children }) {
   }
 
   // Helper: Generic merge by ID, keeping newer versions
+  // SYNC FIX: Now handles deleted=true properly - deletion ALWAYS wins
   function mergeByIdKeepNewer(localItems, cloudItems) {
     const merged = new Map()
 
@@ -1273,10 +1332,24 @@ export function AppProvider({ children }) {
       if (!existing) {
         merged.set(cloudItem.id, cloudItem)
       } else {
-        const existingTime = new Date(existing.updatedAt || existing.createdAt || existing.lastModified || 0).getTime()
-        const cloudTime = new Date(cloudItem.updatedAt || cloudItem.createdAt || cloudItem.lastModified || 0).getTime()
-        if (cloudTime > existingTime) {
-          merged.set(cloudItem.id, cloudItem)
+        // SYNC FIX: deleted=true ALWAYS wins, regardless of timestamp
+        const isDeleted = cloudItem.deleted || existing.deleted
+
+        if (isDeleted) {
+          // Either side is deleted - result is deleted
+          const deletedItem = {
+            ...(cloudItem.deleted ? cloudItem : existing),
+            deleted: true,
+            deletedAt: cloudItem.deletedAt || existing.deletedAt || new Date().toISOString()
+          }
+          merged.set(cloudItem.id, deletedItem)
+        } else {
+          // Neither is deleted - compare timestamps
+          const existingTime = new Date(existing.updatedAt || existing.createdAt || existing.lastModified || 0).getTime()
+          const cloudTime = new Date(cloudItem.updatedAt || cloudItem.createdAt || cloudItem.lastModified || 0).getTime()
+          if (cloudTime > existingTime) {
+            merged.set(cloudItem.id, cloudItem)
+          }
         }
       }
     })
@@ -1820,44 +1893,47 @@ export function AppProvider({ children }) {
           categories: localCategories.length
         })
 
-        // PHASE 4: Soft delete - filter by deleted field, not tombstones
-        // Items with deleted=true are filtered out for UI, but still synced
-        const filteredLocalMeetings = localMeetings.filter(m => !m.deleted)
-        const filteredLocalStakeholders = localStakeholders.filter(s => !s.deleted)
-        const filteredLocalCategories = localCategories.filter(c => !c.deleted)
+        // SYNC FIX: Do NOT filter deleted items before merge!
+        // The merge functions now handle deleted=true with "delete-wins" logic
+        // Filtering before merge would LOSE the tombstones and break delete sync
+        const localDeletedMeetings = localMeetings.filter(m => m.deleted).length
+        const cloudDeletedMeetings = cloudMeetings.filter(m => m.deleted).length
+        const localDeletedStakeholders = localStakeholders.filter(s => s.deleted).length
+        const cloudDeletedStakeholders = cloudStakeholders.filter(s => s.deleted).length
 
-        // Also filter cloud data by deleted field
-        const filteredCloudMeetings = cloudMeetings.filter(m => !m.deleted)
-        const filteredCloudStakeholders = cloudStakeholders.filter(s => !s.deleted)
-        const filteredCloudCategories = cloudCategories.filter(c => !c.deleted)
-
-        console.log('🔄 After filtering soft-deleted items:', {
-          localMeetings: `${localMeetings.length} -> ${filteredLocalMeetings.length}`,
-          cloudMeetings: `${cloudMeetings.length} -> ${filteredCloudMeetings.length}`,
-          localStakeholders: `${localStakeholders.length} -> ${filteredLocalStakeholders.length}`,
-          localCategories: `${localCategories.length} -> ${filteredLocalCategories.length}`
+        console.log('🔄 Delete status (included in merge for proper sync):', {
+          localDeletedMeetings,
+          cloudDeletedMeetings,
+          localDeletedStakeholders,
+          cloudDeletedStakeholders
         })
 
-        // Merge with timestamp-based conflict resolution
-        console.log('🔄 Merging data with timestamp comparison...')
-        const meetingsMerge = mergeByIdWithTracking(filteredLocalMeetings, filteredCloudMeetings)
-        const stakeholdersMerge = mergeByIdWithTracking(filteredLocalStakeholders, filteredCloudStakeholders)
-        const categoriesMerge = mergeByIdWithTracking(filteredLocalCategories, filteredCloudCategories)
+        // Merge with timestamp-based conflict resolution AND delete-wins logic
+        // SYNC FIX: Pass ALL data (including deleted) to merge functions
+        console.log('🔄 Merging data with timestamp comparison and delete-wins logic...')
+        const meetingsMerge = mergeByIdWithTracking(localMeetings, cloudMeetings)
+        const stakeholdersMerge = mergeByIdWithTracking(localStakeholders, cloudStakeholders)
+        const categoriesMerge = mergeByIdWithTracking(localCategories, cloudCategories)
+
+        // Count active (non-deleted) items in merged results
+        const activeMergedMeetings = meetingsMerge.merged.filter(m => !m.deleted).length
+        const activeMergedStakeholders = stakeholdersMerge.merged.filter(s => !s.deleted).length
+        const activeMergedCategories = categoriesMerge.merged.filter(c => !c.deleted).length
 
         console.log('🔄 Merge results:', {
-          meetings: { total: meetingsMerge.merged.length, toUpload: meetingsMerge.toUpload.length, toDownload: meetingsMerge.toDownload.length },
-          stakeholders: { total: stakeholdersMerge.merged.length, toUpload: stakeholdersMerge.toUpload.length, toDownload: stakeholdersMerge.toDownload.length },
-          categories: { total: categoriesMerge.merged.length, toUpload: categoriesMerge.toUpload.length, toDownload: categoriesMerge.toDownload.length }
+          meetings: { total: meetingsMerge.merged.length, active: activeMergedMeetings, toUpload: meetingsMerge.toUpload.length, toDownload: meetingsMerge.toDownload.length },
+          stakeholders: { total: stakeholdersMerge.merged.length, active: activeMergedStakeholders, toUpload: stakeholdersMerge.toUpload.length, toDownload: stakeholdersMerge.toDownload.length },
+          categories: { total: categoriesMerge.merged.length, active: activeMergedCategories, toUpload: categoriesMerge.toUpload.length, toDownload: categoriesMerge.toDownload.length }
         })
 
-        // Safety checks
-        if (meetingsMerge.merged.length < filteredLocalMeetings.length && meetingsMerge.merged.length < filteredCloudMeetings.length) {
+        // Safety checks - compare total counts (including deleted)
+        if (meetingsMerge.merged.length < localMeetings.length && meetingsMerge.merged.length < cloudMeetings.length) {
           console.error('🚨 MERGE ERROR: Would lose meetings data!')
         }
-        if (stakeholdersMerge.merged.length < filteredLocalStakeholders.length && stakeholdersMerge.merged.length < filteredCloudStakeholders.length) {
+        if (stakeholdersMerge.merged.length < localStakeholders.length && stakeholdersMerge.merged.length < cloudStakeholders.length) {
           console.error('🚨 MERGE ERROR: Would lose stakeholders data!')
         }
-        if (categoriesMerge.merged.length < filteredLocalCategories.length && categoriesMerge.merged.length < filteredCloudCategories.length) {
+        if (categoriesMerge.merged.length < localCategories.length && categoriesMerge.merged.length < cloudCategories.length) {
           console.error('🚨 MERGE ERROR: Would lose categories data!')
         }
 

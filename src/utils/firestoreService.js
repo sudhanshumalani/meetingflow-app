@@ -270,10 +270,11 @@ class FirestoreService {
 
     try {
       const { collection, query, where, getDocs } = firestoreModule
+      // SYNC FIX: Include ALL meetings (including deleted=true)
+      // Manual sync needs to see tombstones to propagate deletes
       const q = query(
         collection(db, 'meetings'),
-        where('userId', '==', this.userId),
-        where('deleted', '==', false)
+        where('userId', '==', this.userId)
       )
 
       const querySnapshot = await getDocs(q)
@@ -287,7 +288,7 @@ class FirestoreService {
         })
       })
 
-      debugLog(`getMeetings: Fetched ${meetings.length} meetings`)
+      debugLog(`getMeetings: Fetched ${meetings.length} meetings (includes deleted)`)
       return meetings
     } catch (error) {
       debugLog(`getMeetings error: ${error.message}`, 'error')
@@ -342,13 +343,15 @@ class FirestoreService {
 
       try {
         const { collection, query, where, onSnapshot } = firestoreModule
+        // SYNC FIX: Include ALL meetings (including deleted=true)
+        // Tombstones must propagate to other devices for delete sync to work
+        // UI layer filters by !deleted, not the query
         const q = query(
           collection(db, 'meetings'),
-          where('userId', '==', this.userId),
-          where('deleted', '==', false)
+          where('userId', '==', this.userId)
         )
 
-        debugLog('Setting up meetings onSnapshot listener...')
+        debugLog('Setting up meetings onSnapshot listener (includes deleted)...')
 
         const unsubscribe = onSnapshot(q,
           (querySnapshot) => {
@@ -442,17 +445,17 @@ class FirestoreService {
 
     try {
       const { collection, query, where, getDocs } = firestoreModule
+      // SYNC FIX: Include ALL stakeholders (including deleted=true)
       const q = query(
         collection(db, 'stakeholders'),
-        where('userId', '==', this.userId),
-        where('deleted', '==', false)
+        where('userId', '==', this.userId)
       )
       const querySnapshot = await getDocs(q)
       const items = []
       querySnapshot.forEach((docSnap) => {
         items.push({ id: docSnap.id, ...docSnap.data() })
       })
-      debugLog(`getStakeholders: Fetched ${items.length}`)
+      debugLog(`getStakeholders: Fetched ${items.length} (includes deleted)`)
       return items
     } catch (error) {
       debugLog(`getStakeholders error: ${error.message}`, 'error')
@@ -466,10 +469,10 @@ class FirestoreService {
 
       try {
         const { collection, query, where, onSnapshot } = firestoreModule
+        // SYNC FIX: Include ALL stakeholders (including deleted=true)
         const q = query(
           collection(db, 'stakeholders'),
-          where('userId', '==', this.userId),
-          where('deleted', '==', false)
+          where('userId', '==', this.userId)
         )
         const unsubscribe = onSnapshot(q, (snapshot) => {
           try {
@@ -552,17 +555,17 @@ class FirestoreService {
 
     try {
       const { collection, query, where, getDocs } = firestoreModule
+      // SYNC FIX: Include ALL categories (including deleted=true)
       const q = query(
         collection(db, 'stakeholderCategories'),
-        where('userId', '==', this.userId),
-        where('deleted', '==', false)
+        where('userId', '==', this.userId)
       )
       const snapshot = await getDocs(q)
       const items = []
       snapshot.forEach((docSnap) => {
         items.push({ id: docSnap.id, ...docSnap.data() })
       })
-      debugLog(`getStakeholderCategories: Fetched ${items.length}`)
+      debugLog(`getStakeholderCategories: Fetched ${items.length} (includes deleted)`)
       return items
     } catch (error) {
       debugLog(`getStakeholderCategories error: ${error.message}`, 'error')
@@ -576,10 +579,10 @@ class FirestoreService {
 
       try {
         const { collection, query, where, onSnapshot } = firestoreModule
+        // SYNC FIX: Include ALL categories (including deleted=true)
         const q = query(
           collection(db, 'stakeholderCategories'),
-          where('userId', '==', this.userId),
-          where('deleted', '==', false)
+          where('userId', '==', this.userId)
         )
         const unsubscribe = onSnapshot(q, (snapshot) => {
           try {

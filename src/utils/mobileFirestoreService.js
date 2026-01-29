@@ -17,8 +17,9 @@ import { IS_IOS } from '../config/firebase'
 // Collection name for mobile recordings
 const COLLECTION = 'mobile_recordings'
 
-// Firestore REST API endpoint
+// Firestore REST API endpoint (same config as firestoreRestService.js)
 const FIRESTORE_PROJECT = 'meetingflow-app-bcb76'
+const FIREBASE_API_KEY = 'AIzaSyC_r2K8JIWFGEjmTbIuTgp7sgY5F4FuryI'
 const FIRESTORE_REST_BASE = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents`
 
 /**
@@ -135,7 +136,7 @@ export async function saveMobileRecording(recordingData) {
 
   try {
     const response = await fetch(
-      `${FIRESTORE_REST_BASE}/${COLLECTION}?documentId=${id}`,
+      `${FIRESTORE_REST_BASE}/${COLLECTION}?documentId=${id}&key=${FIREBASE_API_KEY}`,
       {
         method: 'POST',
         headers: {
@@ -192,7 +193,7 @@ export async function getMobileRecordings() {
 
   try {
     const response = await fetch(
-      `${FIRESTORE_REST_BASE}/${COLLECTION}`,
+      `${FIRESTORE_REST_BASE}/${COLLECTION}?key=${FIREBASE_API_KEY}`,
       {
         method: 'GET',
         headers: {
@@ -261,7 +262,7 @@ export async function updateMobileRecording(id, updates) {
 
   try {
     const response = await fetch(
-      `${FIRESTORE_REST_BASE}/${COLLECTION}/${id}?${updateMask}`,
+      `${FIRESTORE_REST_BASE}/${COLLECTION}/${id}?${updateMask}&key=${FIREBASE_API_KEY}`,
       {
         method: 'PATCH',
         headers: {
@@ -329,7 +330,7 @@ export async function syncPendingRecordings() {
         }
 
         const response = await fetch(
-          `${FIRESTORE_REST_BASE}/${COLLECTION}?documentId=${data.id}`,
+          `${FIRESTORE_REST_BASE}/${COLLECTION}?documentId=${data.id}&key=${FIREBASE_API_KEY}`,
           {
             method: 'POST',
             headers: {

@@ -13,7 +13,9 @@ import {
   bulkSaveCategories,
   getFullMeeting,
   saveMeeting as saveMeetingToDexie,
-  deleteMeeting as deleteMeetingFromDexie
+  deleteMeeting as deleteMeetingFromDexie,
+  deleteStakeholder as deleteStakeholderFromDexie,
+  deleteCategory as deleteCategoryFromDexie
 } from '../db/dexieService'
 
 // Lazy-loaded IndexedDB instance - only created when needed to avoid iOS crashes
@@ -1938,6 +1940,15 @@ export function AppProvider({ children }) {
     },
     deleteStakeholder: async (stakeholderId) => {
       dispatch({ type: 'DELETE_STAKEHOLDER', payload: stakeholderId })
+
+      // Delete from Dexie (primary local storage)
+      try {
+        await deleteStakeholderFromDexie(stakeholderId, { queueSync: false })
+        console.log('🗑️ Stakeholder deleted from Dexie:', stakeholderId)
+      } catch (dexieErr) {
+        console.warn('🗑️ Failed to delete stakeholder from Dexie:', dexieErr.message)
+      }
+
       // Also delete from Firestore
       if (ENABLE_FIRESTORE) {
         try {
@@ -1991,6 +2002,15 @@ export function AppProvider({ children }) {
     },
     deleteStakeholderCategory: async (categoryKey) => {
       dispatch({ type: 'DELETE_STAKEHOLDER_CATEGORY', payload: categoryKey })
+
+      // Delete from Dexie (primary local storage)
+      try {
+        await deleteCategoryFromDexie(categoryKey, { queueSync: false })
+        console.log('🗑️ Category deleted from Dexie:', categoryKey)
+      } catch (dexieErr) {
+        console.warn('🗑️ Failed to delete category from Dexie:', dexieErr.message)
+      }
+
       // Also delete from Firestore
       if (ENABLE_FIRESTORE) {
         try {

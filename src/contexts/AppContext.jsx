@@ -154,6 +154,41 @@ export function isSyncInProgress() {
 }
 
 // ============================================
+// USER INTERACTION LOCK - Prevents auto-refresh during delete/edit
+// ============================================
+let isUserInteracting = false
+let interactionLockTimestamp = 0
+const INTERACTION_LOCK_TIMEOUT = 10000 // 10 seconds max lock
+
+function acquireInteractionLock(action = 'unknown') {
+  const now = Date.now()
+  // Auto-release if lock is stale
+  if (isUserInteracting && (now - interactionLockTimestamp) > INTERACTION_LOCK_TIMEOUT) {
+    console.warn('🔒 Interaction lock was stale, releasing...')
+    isUserInteracting = false
+  }
+
+  isUserInteracting = true
+  interactionLockTimestamp = now
+  console.log(`🔒 Interaction lock acquired for: ${action}`)
+  return true
+}
+
+function releaseInteractionLock() {
+  isUserInteracting = false
+  interactionLockTimestamp = 0
+  console.log('🔓 Interaction lock released')
+}
+
+export function isUserInteractionInProgress() {
+  const now = Date.now()
+  if (isUserInteracting && (now - interactionLockTimestamp) > INTERACTION_LOCK_TIMEOUT) {
+    return false
+  }
+  return isUserInteracting
+}
+
+// ============================================
 // SYNC HELPER FUNCTIONS
 // ============================================
 
@@ -1361,6 +1396,14 @@ export function AppProvider({ children }) {
               return
             }
 
+            // Skip if user is interacting (e.g., deleting a meeting)
+            if (isUserInteractionInProgress()) {
+              logDeletion('SUBSCRIPTION', 'Skipping callback - user interaction in progress', {
+                firestoreMeetingsCount: firestoreMeetings.length
+              })
+              return
+            }
+
             logDeletion('SUBSCRIPTION', 'Received meetings from cloud', {
               firestoreMeetingsCount: firestoreMeetings.length,
               firestoreMeetingIds: firestoreMeetings.map(m => m.id?.slice(0,8) + '...')
@@ -1408,9 +1451,13 @@ export function AppProvider({ children }) {
               dispatch({ type: 'SET_MEETINGS', payload: mergedMeetings })
               localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
 
-              // CRITICAL: Also save to Dexie so useMeetings() hook picks up new data
-              // This is essential for Home.jsx which uses useMeetings() from Dexie
+              // Find meetings that were deleted (in local but not in merged)
+              const mergedIds = new Set(mergedMeetings.map(m => m.id))
+              const deletedFromCloud = filteredLocalMeetings.filter(m => m.id && !mergedIds.has(m.id))
+
+              // CRITICAL: Save to Dexie AND delete removed meetings
               try {
+                // First, save the merged meetings
                 bulkSaveMeetings(mergedMeetings, { queueSync: false })
                   .then(result => {
                     console.log('🔥 Firestore: Subscription - saved', result.saved, 'meetings to Dexie')
@@ -1418,8 +1465,21 @@ export function AppProvider({ children }) {
                   .catch(err => {
                     console.warn('🔥 Firestore: Subscription - failed to save to Dexie:', err.message)
                   })
+
+                // Then, delete meetings that were removed from cloud
+                if (deletedFromCloud.length > 0) {
+                  console.log('🗑️ Deleting', deletedFromCloud.length, 'meetings from Dexie (deleted from cloud)')
+                  deletedFromCloud.forEach(async (meeting) => {
+                    try {
+                      await deleteMeetingFromDexie(meeting.id, { queueSync: false })
+                      console.log('🗑️ Deleted from Dexie:', meeting.id?.slice(0,8))
+                    } catch (err) {
+                      console.warn('🗑️ Failed to delete from Dexie:', meeting.id?.slice(0,8), err.message)
+                    }
+                  })
+                }
               } catch (dexieErr) {
-                console.warn('🔥 Firestore: Subscription - Dexie save error:', dexieErr.message)
+                console.warn('🔥 Firestore: Subscription - Dexie error:', dexieErr.message)
               }
             }
           } catch (callbackErr) {
@@ -1538,49 +1598,74 @@ export function AppProvider({ children }) {
   }, []) // Empty deps - only run once on mount
 
   // Helper: Merge meetings, keeping newer versions and avoiding duplicates
-  // FIXED: When cloud is newer, trust ALL cloud values for text fields,
-  // but preserve local binary data (audio, large images) since Firestore never stores it.
+  // FIXED: Cloud is authoritative for what EXISTS. Local meetings not in cloud
+  // are removed UNLESS they were created recently (grace period for sync).
   //
   // Trade-off documented:
-  // - When Firestore has newer timestamp, we trust ALL Firestore values including text fields
-  // - If Firestore clears a field (sets to null/undefined), the local value is also cleared
+  // - Cloud is authoritative: if a meeting is deleted from cloud, it's gone from local
+  // - New local meetings (created < 5 min ago) are preserved to allow time to sync
   // - Binary data (audio, large images) is always preserved from local since Firestore never stores it
   function mergeMeetingsData(localMeetings, cloudMeetings) {
     const merged = new Map()
+    const cloudIds = new Set(cloudMeetings.map(m => m.id).filter(Boolean))
+    const now = Date.now()
+    const NEW_MEETING_GRACE_PERIOD = 5 * 60 * 1000 // 5 minutes
 
-    // Add all local meetings first
+    // Create a map of local meetings for binary data lookup
+    const localMeetingsMap = new Map()
     localMeetings.forEach(meeting => {
       if (meeting.id) {
-        merged.set(meeting.id, meeting)
+        localMeetingsMap.set(meeting.id, meeting)
       }
     })
 
-    // Merge cloud meetings
+    // Start with cloud meetings (authoritative for existence)
     cloudMeetings.forEach(cloudMeeting => {
       if (!cloudMeeting.id) return
 
-      const existing = merged.get(cloudMeeting.id)
-      if (!existing) {
-        // New from cloud - add it
-        merged.set(cloudMeeting.id, cloudMeeting)
-      } else {
+      const localMeeting = localMeetingsMap.get(cloudMeeting.id)
+      if (localMeeting) {
         // Exists in both - compare timestamps
-        const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime()
+        const localTime = new Date(localMeeting.updatedAt || localMeeting.createdAt || 0).getTime()
         const cloudTime = new Date(cloudMeeting.updatedAt || cloudMeeting.createdAt || 0).getTime()
 
-        if (cloudTime > existingTime) {
-          // Cloud is newer - trust ALL cloud values for text fields
-          // Only preserve local binary data (Firestore never stores these)
+        if (cloudTime >= localTime) {
+          // Cloud is newer or equal - use cloud values, preserve local binary data
           merged.set(cloudMeeting.id, {
             ...cloudMeeting,
             // Binary data is local-only, always preserve from local
-            audioBlob: existing.audioBlob,
-            audioData: existing.audioData,
-            audioUrl: existing.audioUrl,
-            recordingBlob: existing.recordingBlob,
+            audioBlob: localMeeting.audioBlob,
+            audioData: localMeeting.audioData,
+            audioUrl: localMeeting.audioUrl,
+            recordingBlob: localMeeting.recordingBlob,
           })
+        } else {
+          // Local is newer - keep local (user made changes not yet synced)
+          merged.set(cloudMeeting.id, localMeeting)
         }
-        // If local is newer or equal, keep local (already in map)
+      } else {
+        // Only in cloud - add it
+        merged.set(cloudMeeting.id, cloudMeeting)
+      }
+    })
+
+    // Add local-only meetings that are NEW (not yet synced)
+    // These are meetings created locally that haven't had time to sync to cloud
+    localMeetings.forEach(localMeeting => {
+      if (!localMeeting.id) return
+      if (cloudIds.has(localMeeting.id)) return // Already handled above
+
+      // Check if this is a recently created meeting (grace period)
+      const createdAt = new Date(localMeeting.createdAt || 0).getTime()
+      const age = now - createdAt
+
+      if (age < NEW_MEETING_GRACE_PERIOD) {
+        // New meeting, give it time to sync
+        console.log(`🔄 Keeping new local meeting (age: ${Math.round(age/1000)}s):`, localMeeting.id?.slice(0,8))
+        merged.set(localMeeting.id, localMeeting)
+      } else {
+        // Old meeting not in cloud = deleted from another device
+        console.log(`🗑️ Removing meeting deleted from cloud:`, localMeeting.id?.slice(0,8))
       }
     })
 
@@ -1857,46 +1942,55 @@ export function AppProvider({ children }) {
       }
     },
     deleteMeeting: async (meetingId) => {
+      // Acquire interaction lock to prevent auto-refresh during deletion
+      acquireInteractionLock('deleteMeeting')
       logDeletion('DELETE_ACTION', 'Starting deletion', { meetingId })
 
-      dispatch({ type: 'DELETE_MEETING', payload: meetingId })
-
-      // Delete from Dexie (primary local storage)
       try {
-        logDeletion('DELETE_ACTION', 'Deleting from Dexie', { meetingId })
-        await deleteMeetingFromDexie(meetingId, { queueSync: false }) // Don't queue sync, we handle Firestore directly
-        logDeletion('DELETE_ACTION', 'Dexie delete completed', { meetingId })
-      } catch (dexieErr) {
-        logDeletion('DELETE_ACTION', '⚠️ Dexie delete FAILED', { meetingId, error: dexieErr.message })
-      }
+        dispatch({ type: 'DELETE_MEETING', payload: meetingId })
 
-      // Verify tombstone was created by reducer
-      setTimeout(() => {
+        // Delete from Dexie (primary local storage)
         try {
-          const tombstones = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
-          const hasTombstone = tombstones.some(t => t.id === meetingId)
-          logDeletion('DELETE_ACTION', 'Tombstone verification', {
-            meetingId,
-            hasTombstone,
-            tombstoneCount: tombstones.length
-          })
-        } catch (e) {
-          console.error('🗑️ Failed to verify tombstone:', e)
+          logDeletion('DELETE_ACTION', 'Deleting from Dexie', { meetingId })
+          await deleteMeetingFromDexie(meetingId, { queueSync: false }) // Don't queue sync, we handle Firestore directly
+          logDeletion('DELETE_ACTION', 'Dexie delete completed', { meetingId })
+        } catch (dexieErr) {
+          logDeletion('DELETE_ACTION', '⚠️ Dexie delete FAILED', { meetingId, error: dexieErr.message })
         }
-      }, 100)
 
-      // Also delete from Firestore
-      if (ENABLE_FIRESTORE) {
-        try {
-          const firestoreService = await getFirestoreService()
-          if (firestoreService) {
-            logDeletion('DELETE_ACTION', 'Calling Firestore deleteMeeting', { meetingId })
-            await firestoreService.deleteMeeting(meetingId)
-            logDeletion('DELETE_ACTION', 'Firestore delete completed', { meetingId })
+        // Verify tombstone was created by reducer
+        setTimeout(() => {
+          try {
+            const tombstones = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
+            const hasTombstone = tombstones.some(t => t.id === meetingId)
+            logDeletion('DELETE_ACTION', 'Tombstone verification', {
+              meetingId,
+              hasTombstone,
+              tombstoneCount: tombstones.length
+            })
+          } catch (e) {
+            console.error('🗑️ Failed to verify tombstone:', e)
           }
-        } catch (err) {
-          logDeletion('DELETE_ACTION', '⚠️ Firestore delete FAILED', { meetingId, error: err.message })
+        }, 100)
+
+        // Also delete from Firestore
+        if (ENABLE_FIRESTORE) {
+          try {
+            const firestoreService = await getFirestoreService()
+            if (firestoreService) {
+              logDeletion('DELETE_ACTION', 'Calling Firestore deleteMeeting', { meetingId })
+              await firestoreService.deleteMeeting(meetingId)
+              logDeletion('DELETE_ACTION', 'Firestore delete completed', { meetingId })
+            }
+          } catch (err) {
+            logDeletion('DELETE_ACTION', '⚠️ Firestore delete FAILED', { meetingId, error: err.message })
+          }
         }
+      } finally {
+        // Release lock after a short delay to ensure state has settled
+        setTimeout(() => {
+          releaseInteractionLock()
+        }, 2000) // 2 second grace period
       }
     },
     setCurrentMeeting: (meeting) => dispatch({ type: 'SET_CURRENT_MEETING', payload: meeting }),

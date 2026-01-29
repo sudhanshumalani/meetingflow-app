@@ -1038,7 +1038,50 @@ export default function Settings() {
 function StorageDiagnostic() {
   const [diagnosticData, setDiagnosticData] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingFirestore, setIsLoadingFirestore] = useState(false)
+  const [firestoreData, setFirestoreData] = useState(null)
   const [expandedStorage, setExpandedStorage] = useState(null)
+
+  // Check Firestore (cloud) separately
+  const checkFirestore = async () => {
+    setIsLoadingFirestore(true)
+    try {
+      const userId = localStorage.getItem('meetingflow_firestore_user_id')
+      if (!userId) {
+        setFirestoreData({ error: 'No Firestore user ID found' })
+        setIsLoadingFirestore(false)
+        return
+      }
+
+      // Dynamically load firestore service
+      let firestoreService
+      if (IS_IOS) {
+        const module = await import('../utils/firestoreRestService')
+        firestoreService = module.default
+      } else {
+        const module = await import('../utils/firestoreService')
+        firestoreService = module.default
+      }
+
+      // Fetch all data from Firestore
+      const [meetings, stakeholders, categories] = await Promise.all([
+        firestoreService.getAllMeetings(),
+        firestoreService.getAllStakeholders(),
+        firestoreService.getAllCategories()
+      ])
+
+      setFirestoreData({
+        meetings: meetings || [],
+        stakeholders: stakeholders || [],
+        categories: categories || [],
+        error: null
+      })
+    } catch (e) {
+      console.error('Firestore check error:', e)
+      setFirestoreData({ meetings: [], stakeholders: [], categories: [], error: e.message })
+    }
+    setIsLoadingFirestore(false)
+  }
 
   const runDiagnostic = async () => {
     setIsLoading(true)
@@ -1279,6 +1322,63 @@ function StorageDiagnostic() {
           </div>
         </div>
       )}
+
+      {/* Firestore (Cloud) Check - Separate button since it requires network */}
+      <div className="mt-6 pt-6 border-t">
+        <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+          <Cloud className="w-5 h-5" />
+          Check Firestore (Cloud Database)
+        </h4>
+        <p className="text-sm text-gray-600 mb-3">
+          Check if your data exists in the cloud. This might have blob data that local storage lost.
+        </p>
+
+        <button
+          onClick={checkFirestore}
+          disabled={isLoadingFirestore}
+          className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-colors mb-4 ${
+            isLoadingFirestore ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'
+          }`}
+        >
+          {isLoadingFirestore ? (
+            <>
+              <RefreshCw className="w-5 h-5 animate-spin" />
+              Fetching from Firestore...
+            </>
+          ) : (
+            <>
+              <Cloud className="w-5 h-5" />
+              Check Firestore Cloud Data
+            </>
+          )}
+        </button>
+
+        {firestoreData && (
+          <div className="space-y-3">
+            {firestoreData.error ? (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-800">Error: {firestoreData.error}</p>
+              </div>
+            ) : (
+              <>
+                {renderStorageCard('firestore', 'Firestore (Cloud)', firestoreData,
+                  <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
+                    <Cloud className="w-5 h-5 text-yellow-600" />
+                  </div>
+                )}
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    <strong>Firestore:</strong> {firestoreData.meetings?.length || 0} meetings
+                    {checkHasBlobData(firestoreData.meetings).hasBlobs
+                      ? ` (WITH blob data ✓ - ${checkHasBlobData(firestoreData.meetings).count} meetings have content!)`
+                      : ' (no blob data)'}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

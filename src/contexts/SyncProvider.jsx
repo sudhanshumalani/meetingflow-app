@@ -21,6 +21,7 @@ export function SyncProvider({ children }) {
 
   /**
    * Sync app data to cloud when data changes
+   * PHASE 4: Google Drive sync disabled - using Firestore with soft delete instead
    */
   const handleDataChange = useCallback(async () => {
     // Skip Google Drive sync when Firestore is enabled
@@ -42,30 +43,21 @@ export function SyncProvider({ children }) {
       const appData = {
         meetings: app.meetings,
         stakeholders: app.stakeholders,
-        stakeholderCategories: app.stakeholderCategories,
-        deletedItems: app.deletedItems
+        stakeholderCategories: app.stakeholderCategories
       }
 
-      // Only sync if we have actual data or deletions
-      if (appData.meetings.length > 0 || appData.stakeholders.length > 0 || appData.stakeholderCategories.length > 0 || appData.deletedItems.length > 0) {
+      // Only sync if we have actual data
+      if (appData.meetings.length > 0 || appData.stakeholders.length > 0 || appData.stakeholderCategories.length > 0) {
         console.log('🔄 Auto-syncing app data to cloud...', {
           meetings: appData.meetings.length,
           stakeholders: appData.stakeholders.length,
-          categories: appData.stakeholderCategories.length,
-          deletedItems: appData.deletedItems.length,
-          deletionDetails: appData.deletedItems.map(d => `${d.type}:${d.id}`)
+          categories: appData.stakeholderCategories.length
         })
 
         const result = await sync.syncToCloud(appData)
 
-        // Validate sync success, especially for deletions
         if (result.success) {
           console.log('✅ AUTO-SYNC COMPLETED SUCCESSFULLY')
-          if (appData.deletedItems.length > 0) {
-            console.log('✅ DELETION SYNC CONFIRMED IN AUTO-SYNC:',
-              appData.deletedItems.map(d => `${d.type}:${d.id}`)
-            )
-          }
         } else if (result.queued) {
           console.log('📴 Sync queued - device is offline')
         }
@@ -75,7 +67,7 @@ export function SyncProvider({ children }) {
     } catch (error) {
       console.log('Auto-sync failed (will retry):', error.message)
     }
-  }, [app.meetings, app.stakeholders, app.stakeholderCategories, app.deletedItems, app.isLoading, sync.isConfigured, sync.canSync, sync.syncToCloud])
+  }, [app.meetings, app.stakeholders, app.stakeholderCategories, app.isLoading, sync.isConfigured, sync.canSync, sync.syncToCloud])
 
   /**
    * Auto-sync data when app state changes (debounced)
@@ -90,86 +82,16 @@ export function SyncProvider({ children }) {
   }, [handleDataChange])
 
   /**
-   * IMMEDIATE sync for deletions (no debounce)
-   * Critical: Ensures deletions are synced immediately without waiting
+   * PHASE 4: Deletion sync effect removed
+   * Soft delete now uses deleted=true field synced via Firestore subscriptions
+   * No need for immediate tombstone sync - deletions sync like any other field update
    */
-  useEffect(() => {
-    // Skip Google Drive sync when Firestore is enabled
-    if (ENABLE_FIRESTORE) {
-      return
-    }
-
-    // Skip if not configured or offline
-    if (!sync.isConfigured || !sync.canSync) {
-      console.log('⏸️ Deletion sync skipped - sync not configured or offline')
-      return
-    }
-
-    // Skip during initial load
-    if (app.isLoading) {
-      return
-    }
-
-    // Only trigger if we have deletions
-    if (app.deletedItems.length > 0) {
-      console.log('🚨 IMMEDIATE DELETION SYNC TRIGGERED:', {
-        deletedItemsCount: app.deletedItems.length,
-        deletedItems: app.deletedItems.map(d => `${d.type}:${d.id}`)
-      })
-
-      const appData = {
-        meetings: app.meetings,
-        stakeholders: app.stakeholders,
-        stakeholderCategories: app.stakeholderCategories,
-        deletedItems: app.deletedItems
-      }
-
-      sync.syncToCloud(appData)
-        .then(result => {
-          if (result.success) {
-            console.log('✅ DELETION SYNC CONFIRMED - deletions uploaded to cloud')
-          }
-        })
-        .catch(err => {
-          console.error('❌ IMMEDIATE DELETION SYNC FAILED:', err)
-        })
-    }
-  }, [app.deletedItems.length, sync.isConfigured, sync.canSync, app.isLoading])
 
   /**
-   * Emergency sync before app closes (safety net)
-   * Ensures pending deletions are synced before user closes the app
+   * PHASE 4: Emergency sync effect removed
+   * Soft delete syncs via Firestore real-time subscriptions
+   * No emergency tombstone sync needed
    */
-  useEffect(() => {
-    // Skip Google Drive sync when Firestore is enabled
-    if (ENABLE_FIRESTORE) {
-      return
-    }
-
-    const handleBeforeUnload = async (e) => {
-      if (app.deletedItems.length > 0 && sync.canSync) {
-        console.log('⚠️ APP CLOSING WITH PENDING DELETIONS - forcing emergency sync')
-
-        const appData = {
-          meetings: app.meetings,
-          stakeholders: app.stakeholders,
-          stakeholderCategories: app.stakeholderCategories,
-          deletedItems: app.deletedItems
-        }
-
-        // Attempt synchronous sync before close
-        try {
-          await sync.syncToCloud(appData)
-          console.log('✅ Emergency sync completed')
-        } catch (error) {
-          console.error('❌ Emergency sync failed:', error)
-        }
-      }
-    }
-
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [app.deletedItems, app.meetings, app.stakeholders, app.stakeholderCategories, sync])
 
   /**
    * Handle sync from cloud with app data update
@@ -298,21 +220,18 @@ export function SyncProvider({ children }) {
       stakeholderCategories: app.stakeholderCategories
     }),
 
-    // Manual sync trigger
+    // Manual sync trigger (Google Drive - disabled when Firestore enabled)
     forceSyncToCloud: async () => {
       const appData = {
         meetings: app.meetings,
         stakeholders: app.stakeholders,
-        stakeholderCategories: app.stakeholderCategories,
-        deletedItems: app.deletedItems
+        stakeholderCategories: app.stakeholderCategories
       }
 
       console.log('🔄 FORCE SYNC TO CLOUD triggered:', {
         meetings: appData.meetings.length,
         stakeholders: appData.stakeholders.length,
-        categories: appData.stakeholderCategories.length,
-        deletedItems: appData.deletedItems.length,
-        deletionDetails: appData.deletedItems.map(d => `${d.type}:${d.id}`)
+        categories: appData.stakeholderCategories.length
       })
 
       return await sync.syncToCloud(appData)

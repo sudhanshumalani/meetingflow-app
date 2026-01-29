@@ -16,7 +16,7 @@ import db, { reconstructMeeting } from '../db/meetingFlowDB'
 
 /**
  * Get all meetings (sorted by date, newest first)
- * Returns undefined while loading, then the array of meetings
+ * Returns empty array while loading, then the array of meetings
  */
 export function useMeetings() {
   return useLiveQuery(
@@ -26,7 +26,7 @@ export function useMeetings() {
       .filter(m => !m.deleted)
       .toArray(),
     [], // dependencies
-    undefined // default value (undefined = loading)
+    [] // Return empty array while loading to prevent .length errors
   )
 }
 
@@ -153,7 +153,7 @@ export function useStakeholders() {
   return useLiveQuery(
     () => db.stakeholders.filter(s => !s.deleted).toArray(),
     [],
-    undefined
+    [] // Return empty array while loading to prevent .length errors
   )
 }
 
@@ -205,7 +205,7 @@ export function useStakeholderCategories() {
   return useLiveQuery(
     () => db.stakeholderCategories.filter(c => !c.deleted).toArray(),
     [],
-    undefined
+    [] // Return empty array while loading to prevent .length errors
   )
 }
 

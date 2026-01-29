@@ -147,22 +147,22 @@ export function useRecentMeetings(days = 7) {
 // ============================================
 
 /**
- * Get all stakeholders
+ * Get all stakeholders (excludes soft-deleted)
  */
 export function useStakeholders() {
   return useLiveQuery(
-    () => db.stakeholders.toArray(),
+    () => db.stakeholders.filter(s => !s.deleted).toArray(),
     [],
     undefined
   )
 }
 
 /**
- * Get stakeholder count
+ * Get stakeholder count (excludes soft-deleted)
  */
 export function useStakeholdersCount() {
   return useLiveQuery(
-    () => db.stakeholders.count(),
+    () => db.stakeholders.filter(s => !s.deleted).count(),
     [],
     0
   )
@@ -180,13 +180,14 @@ export function useStakeholder(stakeholderId) {
 }
 
 /**
- * Get stakeholders by category
+ * Get stakeholders by category (excludes soft-deleted)
  */
 export function useStakeholdersByCategory(categoryId) {
   return useLiveQuery(
     () => db.stakeholders
       .where('categoryId')
       .equals(categoryId)
+      .filter(s => !s.deleted)
       .toArray(),
     [categoryId],
     []
@@ -198,11 +199,11 @@ export function useStakeholdersByCategory(categoryId) {
 // ============================================
 
 /**
- * Get all stakeholder categories
+ * Get all stakeholder categories (excludes soft-deleted)
  */
 export function useStakeholderCategories() {
   return useLiveQuery(
-    () => db.stakeholderCategories.toArray(),
+    () => db.stakeholderCategories.filter(c => !c.deleted).toArray(),
     [],
     undefined
   )
@@ -256,8 +257,8 @@ export function useDashboardStats() {
   return useLiveQuery(
     async () => {
       const meetingsCount = await db.meetings.filter(m => !m.deleted).count()
-      const stakeholdersCount = await db.stakeholders.count()
-      const categoriesCount = await db.stakeholderCategories.count()
+      const stakeholdersCount = await db.stakeholders.filter(s => !s.deleted).count()
+      const categoriesCount = await db.stakeholderCategories.filter(c => !c.deleted).count()
 
       // Get meetings this week
       const weekAgo = new Date()

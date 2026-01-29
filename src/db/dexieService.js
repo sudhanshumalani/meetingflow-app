@@ -322,6 +322,26 @@ export async function deleteStakeholder(stakeholderId, options = {}) {
 }
 
 /**
+ * Soft delete a stakeholder (set deleted=true)
+ * PHASE 4: Soft delete pattern for sync consistency
+ */
+export async function softDeleteStakeholder(stakeholderId, options = {}) {
+  const { queueSync = true } = options
+
+  await db.stakeholders.update(stakeholderId, {
+    deleted: true,
+    deletedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  })
+
+  console.log(`🗑️ Soft deleted stakeholder ${stakeholderId.slice(0, 8)}...`)
+
+  if (queueSync) {
+    await queueStakeholderDeletion(stakeholderId)
+  }
+}
+
+/**
  * Get stakeholders by category
  */
 export async function getStakeholdersByCategory(categoryId) {
@@ -377,6 +397,26 @@ export async function deleteCategory(categoryId, options = {}) {
 
   await db.stakeholderCategories.delete(categoryId)
   console.log(`🗑️ Deleted category ${categoryId}`)
+
+  if (queueSync) {
+    await queueCategoryChange({ id: categoryId }, 'DELETE')
+  }
+}
+
+/**
+ * Soft delete a category (set deleted=true)
+ * PHASE 4: Soft delete pattern for sync consistency
+ */
+export async function softDeleteCategory(categoryId, options = {}) {
+  const { queueSync = true } = options
+
+  await db.stakeholderCategories.update(categoryId, {
+    deleted: true,
+    deletedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  })
+
+  console.log(`🗑️ Soft deleted category ${categoryId}`)
 
   if (queueSync) {
     await queueCategoryChange({ id: categoryId }, 'DELETE')
@@ -619,11 +659,13 @@ export default {
   getStakeholder,
   saveStakeholder,
   deleteStakeholder,
+  softDeleteStakeholder,
   getStakeholdersByCategory,
   // Categories
   getAllCategories,
   saveCategory,
   deleteCategory,
+  softDeleteCategory,
   // Tiering
   updateMeetingTiers,
   evictColdMeetingBlobs,

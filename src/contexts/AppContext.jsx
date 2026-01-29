@@ -1,8 +1,8 @@
 import { createContext, useContext, useReducer, useEffect, useRef, useCallback } from 'react'
-import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
 
 // Import Dexie database and services
+// PHASE 4: Soft delete + Outbox pattern for reliable sync
 import db from '../db/meetingFlowDB'
 import {
   getAllMeetingMetadata,
@@ -13,23 +13,10 @@ import {
   bulkSaveCategories,
   getFullMeeting,
   saveMeeting as saveMeetingToDexie,
-  deleteMeeting as deleteMeetingFromDexie,
-  deleteStakeholder as deleteStakeholderFromDexie,
-  deleteCategory as deleteCategoryFromDexie
+  softDeleteMeeting as softDeleteMeetingInDexie,
+  softDeleteStakeholder as softDeleteStakeholderInDexie,
+  softDeleteCategory as softDeleteCategoryInDexie
 } from '../db/dexieService'
-
-// Lazy-loaded IndexedDB instance - only created when needed to avoid iOS crashes
-// NOTE: This is LEGACY - we're migrating to Dexie as primary source
-let syncStorageInstance = null
-async function getSyncStorage() {
-  if (!syncStorageInstance) {
-    syncStorageInstance = localforage.createInstance({
-      name: 'MeetingFlowSync',
-      storeName: 'sync_data'
-    })
-  }
-  return syncStorageInstance
-}
 
 // ============================================
 // DELETION DEBUG LOGGING
@@ -517,7 +504,7 @@ const initialState = {
   meetings: [],
   stakeholders: [],
   stakeholderCategories: [], // Start empty, will be loaded from storage or set by sync
-  deletedItems: [], // Tombstone records for deleted items to prevent resurrection
+  // PHASE 4: No deletedItems/tombstones - soft delete uses deleted field in Dexie
   currentMeeting: null,
   isLoading: false,
   error: null,
@@ -538,30 +525,20 @@ function appReducer(state, action) {
       return { ...state, error: action.payload, isLoading: false }
 
     case 'LOAD_DATA':
-      console.log('🔍 LOAD_DATA REDUCER: Processing data load...')
-      console.log('🔍 LOAD_DATA REDUCER: Payload:', {
+      // PHASE 4: No deletedItems - soft delete uses deleted field in Dexie
+      console.log('🔍 LOAD_DATA: Loading data:', {
         meetings: action.payload.meetings?.length || 0,
         stakeholders: action.payload.stakeholders?.length || 0,
-        stakeholderCategories: action.payload.stakeholderCategories?.length || 0,
-        deletedItems: action.payload.deletedItems?.length || 0
+        stakeholderCategories: action.payload.stakeholderCategories?.length || 0
       })
 
-      const loadedState = {
+      return {
         ...state,
         meetings: action.payload.meetings || [],
         stakeholders: action.payload.stakeholders || [],
         stakeholderCategories: action.payload.stakeholderCategories || [],
-        deletedItems: action.payload.deletedItems || [],
         isLoading: false
       }
-
-      console.log('🔍 LOAD_DATA REDUCER: New state:', {
-        meetings: loadedState.meetings?.length || 0,
-        stakeholders: loadedState.stakeholders?.length || 0,
-        stakeholderCategories: loadedState.stakeholderCategories?.length || 0
-      })
-
-      return loadedState
 
     case 'ADD_MEETING':
       // UUID must be provided - never generate inside reducer to avoid duplicates
@@ -608,23 +585,11 @@ function appReducer(state, action) {
       }
 
     case 'DELETE_MEETING':
-      const deletedMeeting = state.meetings.find(meeting => meeting.id === action.payload)
+      // PHASE 4: Soft delete - just remove from UI state
+      // No tombstones needed - deleted field is synced via Dexie/Firestore
       return {
         ...state,
         meetings: state.meetings.filter(meeting => meeting.id !== action.payload),
-        deletedItems: [
-          ...state.deletedItems,
-          {
-            type: 'meeting',
-            id: action.payload,
-            deletedAt: new Date().toISOString(),
-            deletedBy: `device_${navigator.userAgent.slice(0, 50)}`, // Basic device identification
-            originalItem: deletedMeeting ? {
-              title: deletedMeeting.title,
-              date: deletedMeeting.date
-            } : null
-          }
-        ],
         currentMeeting: state.currentMeeting?.id === action.payload ? null : state.currentMeeting
       }
 
@@ -660,23 +625,10 @@ function appReducer(state, action) {
       }
 
     case 'DELETE_STAKEHOLDER':
-      const deletedStakeholder = state.stakeholders.find(stakeholder => stakeholder.id === action.payload)
+      // PHASE 4: Soft delete - just remove from UI state, no tombstones
       return {
         ...state,
-        stakeholders: state.stakeholders.filter(stakeholder => stakeholder.id !== action.payload),
-        deletedItems: [
-          ...state.deletedItems,
-          {
-            type: 'stakeholder',
-            id: action.payload,
-            deletedAt: new Date().toISOString(),
-            deletedBy: `device_${navigator.userAgent.slice(0, 50)}`,
-            originalItem: deletedStakeholder ? {
-              name: deletedStakeholder.name,
-              role: deletedStakeholder.role
-            } : null
-          }
-        ]
+        stakeholders: state.stakeholders.filter(stakeholder => stakeholder.id !== action.payload)
       }
 
     case 'ADD_STAKEHOLDER_CATEGORY':
@@ -706,13 +658,13 @@ function appReducer(state, action) {
       }
 
     case 'DELETE_STAKEHOLDER_CATEGORY':
+      // PHASE 4: Soft delete - just remove from UI state, no tombstones
       const categoryToDelete = action.payload
       const deletedCategory = state.stakeholderCategories.find(category =>
         category.key === categoryToDelete || category.id === categoryToDelete || category.name === categoryToDelete
       )
       // Also update any stakeholders using this category to remove the category reference
       const updatedStakeholders = state.stakeholders.map(stakeholder => {
-        // Check if stakeholder references this category by any identifier
         const referencesCategory = stakeholder.category === categoryToDelete ||
                                    stakeholder.category === deletedCategory?.key ||
                                    stakeholder.category === deletedCategory?.id
@@ -725,24 +677,7 @@ function appReducer(state, action) {
         stakeholderCategories: state.stakeholderCategories.filter(category =>
           category.key !== categoryToDelete && category.id !== categoryToDelete && category.name !== categoryToDelete
         ),
-        stakeholders: updatedStakeholders,
-        deletedItems: [
-          ...state.deletedItems,
-          {
-            type: 'stakeholderCategory',
-            // Store ALL possible identifiers for robust deletion matching
-            id: deletedCategory?.id || categoryToDelete,
-            key: deletedCategory?.key || null,
-            name: deletedCategory?.name || deletedCategory?.label || null,
-            deletedAt: new Date().toISOString(),
-            deletedBy: `device_${navigator.userAgent.slice(0, 50)}`,
-            originalItem: deletedCategory ? {
-              id: deletedCategory.id,
-              name: deletedCategory.name || deletedCategory.label,
-              key: deletedCategory.key
-            } : null
-          }
-        ]
+        stakeholders: updatedStakeholders
       }
 
     case 'SET_STAKEHOLDER_CATEGORIES':
@@ -982,100 +917,28 @@ export function AppProvider({ children }) {
   const isLoadingRef = useRef(false)
   const firestoreSetupRef = useRef(false)
 
+  // Refs to track current local data for subscription callbacks
+  // PHASE 3: Used instead of localStorage for subscription merges
+  const currentMeetingsRef = useRef([])
+  const currentStakeholdersRef = useRef([])
+  const currentCategoriesRef = useRef([])
+
+  // Keep refs in sync with state
   useEffect(() => {
-    console.log('🚀 AppContext: Initial mount, checking localStorage before load:', {
-      hasData: localStorage?.getItem('meetingflow_meetings') !== null,
-      meetingsCount: JSON.parse(localStorage?.getItem('meetingflow_meetings') || '[]').length,
-      stakeholdersCount: JSON.parse(localStorage?.getItem('meetingflow_stakeholders') || '[]').length
-    })
+    currentMeetingsRef.current = state.meetings
+    currentStakeholdersRef.current = state.stakeholders
+    currentCategoriesRef.current = state.stakeholderCategories
+  }, [state.meetings, state.stakeholders, state.stakeholderCategories])
+
+  useEffect(() => {
+    console.log('🚀 AppContext: Initial mount - loading data from Dexie')
     loadData()
   }, [])
 
 
-  // Save immediately when data changes (no debouncing to avoid issues)
-  // CRITICAL: Wrapped in try-catch to prevent crashes from QuotaExceededError
-  useEffect(() => {
-    console.log('🔥 SAVE EFFECT: Triggered', {
-      isLoading: state.isLoading,
-      meetingsLength: state.meetings.length,
-      shouldSave: !state.isLoading
-    })
-
-    if (!state.isLoading) {
-      console.log('💾 AppContext: SYNCHRONOUS save triggered')
-      console.log('💾 AppContext: Saving meetings count:', state.meetings.length)
-
-      try {
-        // Calculate approximate data size before saving
-        const meetingsJson = JSON.stringify(state.meetings)
-        const stakeholdersJson = JSON.stringify(state.stakeholders)
-        const categoriesJson = JSON.stringify(state.stakeholderCategories)
-        const deletedJson = JSON.stringify(state.deletedItems)
-
-        const totalSize = meetingsJson.length + stakeholdersJson.length + categoriesJson.length + deletedJson.length
-        console.log('💾 AppContext: Total data size:', Math.round(totalSize / 1024), 'KB')
-
-        // Warn if data is getting large (approaching 5MB localStorage limit)
-        if (totalSize > 3 * 1024 * 1024) {
-          console.warn('⚠️ AppContext: Data size exceeds 3MB, approaching localStorage limit!')
-        }
-
-        // Save to localStorage
-        localStorage.setItem('meetingflow_meetings', meetingsJson)
-        localStorage.setItem('meetingflow_stakeholders', stakeholdersJson)
-        localStorage.setItem('meetingflow_stakeholder_categories', categoriesJson)
-        localStorage.setItem('meetingflow_deleted_items', deletedJson)
-
-        // Log tombstone changes
-        if (state.deletedItems.length > 0) {
-          logDeletion('SAVE_EFFECT', 'Persisting tombstones to localStorage', {
-            count: state.deletedItems.length,
-            ids: state.deletedItems.map(d => d.id?.slice(0,8) + '...'),
-            types: state.deletedItems.map(d => d.type)
-          })
-        }
-
-        // CRITICAL FIX: Also update IndexedDB to keep it in sync with localStorage
-        // This prevents deleted items from being restored when IndexedDB is checked on load
-        ;(async () => {
-          try {
-            const syncStorage = await getSyncStorage()
-            await syncStorage.setItem('meetings', state.meetings)
-            await syncStorage.setItem('stakeholders', state.stakeholders)
-            await syncStorage.setItem('categories', state.stakeholderCategories)
-            logDeletion('SAVE_EFFECT', 'Also updated IndexedDB', {
-              meetings: state.meetings.length
-            })
-          } catch (idbErr) {
-            console.warn('💾 IndexedDB save failed (non-critical):', idbErr.message)
-          }
-        })()
-
-        console.log('✅ AppContext: Save effect completed successfully')
-      } catch (saveError) {
-        // CRITICAL: Catch QuotaExceededError and other storage errors
-        // This prevents the app from crashing when localStorage is full
-        console.error('❌ AppContext: Save effect FAILED:', saveError.name, saveError.message)
-
-        if (saveError.name === 'QuotaExceededError' || saveError.message?.includes('quota')) {
-          console.error('❌ AppContext: localStorage quota exceeded! Data may not be persisted.')
-          console.error('❌ AppContext: Consider deleting old meetings to free up space.')
-          // Dispatch an error event that UI can listen to
-          window.dispatchEvent(new CustomEvent('meetingflow-storage-error', {
-            detail: {
-              type: 'quota_exceeded',
-              message: 'Storage is full. Some data may not be saved. Please delete old meetings.',
-              size: Math.round((JSON.stringify(state.meetings).length) / 1024)
-            }
-          }))
-        }
-        // Don't re-throw - we don't want to crash the app
-      }
-
-      // NOTE: Firestore sync is handled via real-time subscriptions
-      // We do NOT re-save to Firestore here to avoid infinite loops
-    }
-  }, [state.meetings, state.stakeholders, state.stakeholderCategories, state.deletedItems, state.isLoading])
+  // PHASE 4: No tombstone save effect needed
+  // Soft delete uses the deleted field in Dexie, which syncs to Firestore
+  // No localStorage is used for deletion tracking anymore
 
   // Listen for n8n data updates
   useEffect(() => {
@@ -1192,80 +1055,9 @@ export function AppProvider({ children }) {
         console.warn('📂 LOAD: Dexie read failed:', dexieError)
       }
 
-      // STEP 2: If Dexie is empty, try localforage (legacy sync storage)
-      if (finalMeetings.length === 0) {
-        try {
-          console.log('📂 LOAD: Dexie empty, trying localforage (secondary)...')
-          const syncStorage = await getSyncStorage()
-          const lfMeetings = await syncStorage.getItem('meetings')
-          const lfStakeholders = await syncStorage.getItem('stakeholders')
-          const lfCategories = await syncStorage.getItem('categories')
-
-          console.log('📂 LOAD: localforage data:', {
-            meetings: lfMeetings?.length || 0,
-            stakeholders: lfStakeholders?.length || 0,
-            categories: lfCategories?.length || 0
-          })
-
-          if (lfMeetings?.length > 0) {
-            finalMeetings = lfMeetings.filter(m => !m.deleted && !tombstonedIds.has(m.id))
-            finalStakeholders = (lfStakeholders || []).filter(s => !tombstonedIds.has(s.id))
-            finalCategories = (lfCategories || []).filter(c => !tombstonedIds.has(c.id))
-            dataSource = 'localforage'
-            console.log('✅ LOAD: Using localforage as source -', finalMeetings.length, 'meetings')
-
-            // Migrate this data to Dexie for next time
-            console.log('📂 LOAD: Migrating localforage data to Dexie...')
-            try {
-              await bulkSaveMeetings(finalMeetings, { queueSync: false })
-              await bulkSaveStakeholders(finalStakeholders, { queueSync: false })
-              await bulkSaveCategories(finalCategories, { queueSync: false })
-              console.log('✅ LOAD: Migrated localforage data to Dexie')
-            } catch (migrationErr) {
-              console.warn('📂 LOAD: Migration to Dexie failed:', migrationErr)
-            }
-          }
-        } catch (lfError) {
-          console.warn('📂 LOAD: localforage read failed:', lfError)
-        }
-      }
-
-      // STEP 3: If still empty, try localStorage (last resort)
-      if (finalMeetings.length === 0) {
-        try {
-          console.log('📂 LOAD: Both DBs empty, trying localStorage (fallback)...')
-          const lsMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-          const lsStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-          const lsCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
-
-          console.log('📂 LOAD: localStorage data:', {
-            meetings: lsMeetings.length,
-            stakeholders: lsStakeholders.length,
-            categories: lsCategories.length
-          })
-
-          if (lsMeetings.length > 0) {
-            finalMeetings = lsMeetings.filter(m => !m.deleted && !tombstonedIds.has(m.id))
-            finalStakeholders = lsStakeholders.filter(s => !tombstonedIds.has(s.id))
-            finalCategories = lsCategories.filter(c => !tombstonedIds.has(c.id))
-            dataSource = 'localStorage'
-            console.log('✅ LOAD: Using localStorage as source -', finalMeetings.length, 'meetings')
-
-            // Migrate this data to Dexie for next time
-            console.log('📂 LOAD: Migrating localStorage data to Dexie...')
-            try {
-              await bulkSaveMeetings(finalMeetings, { queueSync: false })
-              await bulkSaveStakeholders(finalStakeholders, { queueSync: false })
-              await bulkSaveCategories(finalCategories, { queueSync: false })
-              console.log('✅ LOAD: Migrated localStorage data to Dexie')
-            } catch (migrationErr) {
-              console.warn('📂 LOAD: Migration to Dexie failed:', migrationErr)
-            }
-          }
-        } catch (lsError) {
-          console.warn('📂 LOAD: localStorage read failed:', lsError)
-        }
-      }
+      // PHASE 3: Dexie is the ONLY local storage
+      // Legacy sources (localforage, localStorage) are no longer used for data
+      // If Dexie is empty, we rely on Firestore sync to populate it
 
       // STEP 4: If all sources are empty, check if we should auto-sync from cloud
       if (finalMeetings.length === 0) {
@@ -1371,207 +1163,106 @@ export function AppProvider({ children }) {
           return
         }
 
-        // Helper to get deleted IDs from tombstone array
-        const getDeletedIds = (type) => {
-          try {
-            const deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
-            return new Set(
-              deletedItems
-                .filter(item => !type || item.type === type)
-                .map(item => item.id)
-            )
-          } catch (e) {
-            return new Set()
-          }
-        }
+        // PHASE 4: Soft delete - no tombstones, use deleted field
 
-        // Subscribe to meetings - MERGE with local, don't replace
+        // Subscribe to meetings - trust cloud data with deleted field
         const unsubMeetings = firestoreService.subscribeMeetings((firestoreMeetings) => {
           try {
-            // Skip if a full sync is in progress to prevent race conditions
-            if (isSyncInProgress()) {
-              logDeletion('SUBSCRIPTION', 'Skipping callback - sync in progress', {
-                firestoreMeetingsCount: firestoreMeetings.length
-              })
+            // Skip if a full sync is in progress or user is interacting
+            if (isSyncInProgress() || isUserInteractionInProgress()) {
+              console.log('🔥 Subscription: Skipping - sync or interaction in progress')
               return
             }
 
-            // Skip if user is interacting (e.g., deleting a meeting)
-            if (isUserInteractionInProgress()) {
-              logDeletion('SUBSCRIPTION', 'Skipping callback - user interaction in progress', {
-                firestoreMeetingsCount: firestoreMeetings.length
-              })
-              return
-            }
+            console.log('🔥 Subscription: Received', firestoreMeetings.length, 'meetings from cloud')
 
-            logDeletion('SUBSCRIPTION', 'Received meetings from cloud', {
-              firestoreMeetingsCount: firestoreMeetings.length,
-              firestoreMeetingIds: firestoreMeetings.map(m => m.id?.slice(0,8) + '...')
-            })
+            // PHASE 4: Filter by deleted field (soft delete), not tombstones
+            const activeMeetings = firestoreMeetings.filter(m => !m.deleted)
+            const deletedMeetings = firestoreMeetings.filter(m => m.deleted)
 
-            // Get deleted meeting IDs from tombstone array
-            const deletedMeetingIds = getDeletedIds('meeting')
-            logDeletion('SUBSCRIPTION', 'Retrieved tombstones for filtering', {
-              tombstoneCount: deletedMeetingIds.size,
-              tombstoneIds: Array.from(deletedMeetingIds).map(id => id?.slice(0,8) + '...')
-            })
-
-            // Filter out deleted meetings from cloud data BEFORE merging
-            const filteredFirestoreMeetings = firestoreMeetings.filter(m => !deletedMeetingIds.has(m.id))
-
-            // Log if any meetings were filtered out
-            const filteredOutMeetings = firestoreMeetings.filter(m => deletedMeetingIds.has(m.id))
-            if (filteredOutMeetings.length > 0) {
-              logDeletion('SUBSCRIPTION', '⚠️ FILTERED OUT deleted meetings from cloud', {
-                filteredOutCount: filteredOutMeetings.length,
-                filteredOutIds: filteredOutMeetings.map(m => m.id?.slice(0,8) + '...')
-              })
+            if (deletedMeetings.length > 0) {
+              console.log('🗑️ Found', deletedMeetings.length, 'soft-deleted meetings in cloud')
             }
 
             // Get current local meetings
-            const localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-            // Also filter local meetings (in case they weren't cleaned up)
-            const filteredLocalMeetings = localMeetings.filter(m => !deletedMeetingIds.has(m.id))
+            const localMeetings = currentMeetingsRef.current || []
+            const activeLocalMeetings = localMeetings.filter(m => !m.deleted)
 
-            // MERGE: Combine local and Firestore data, keeping newer versions
-            const mergedMeetings = mergeMeetingsData(filteredLocalMeetings, filteredFirestoreMeetings)
+            // Merge active meetings (cloud is authoritative for deleted status)
+            const mergedMeetings = mergeMeetingsData(activeLocalMeetings, activeMeetings)
 
-            logDeletion('SUBSCRIPTION', 'Merge complete', {
-              localCount: filteredLocalMeetings.length,
-              cloudCount: filteredFirestoreMeetings.length,
-              mergedCount: mergedMeetings.length
-            })
+            console.log('🔥 Subscription: Merge complete -', mergedMeetings.length, 'active meetings')
 
-            // Only update if we have data (never overwrite with empty)
-            if (mergedMeetings.length > 0 || filteredLocalMeetings.length === 0) {
-              logDeletion('SUBSCRIPTION', 'Dispatching SET_MEETINGS', {
-                count: mergedMeetings.length,
-                ids: mergedMeetings.map(m => m.id?.slice(0,8) + '...')
-              })
-              dispatch({ type: 'SET_MEETINGS', payload: mergedMeetings })
-              localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
+            // Update React state with active meetings only
+            dispatch({ type: 'SET_MEETINGS', payload: mergedMeetings })
 
-              // Find meetings that were deleted (in local but not in merged)
-              const mergedIds = new Set(mergedMeetings.map(m => m.id))
-              const deletedFromCloud = filteredLocalMeetings.filter(m => m.id && !mergedIds.has(m.id))
-
-              // CRITICAL: Save to Dexie AND delete removed meetings
-              try {
-                // First, save the merged meetings
-                bulkSaveMeetings(mergedMeetings, { queueSync: false })
-                  .then(result => {
-                    console.log('🔥 Firestore: Subscription - saved', result.saved, 'meetings to Dexie')
-                  })
-                  .catch(err => {
-                    console.warn('🔥 Firestore: Subscription - failed to save to Dexie:', err.message)
-                  })
-
-                // Then, delete meetings that were removed from cloud
-                if (deletedFromCloud.length > 0) {
-                  console.log('🗑️ Deleting', deletedFromCloud.length, 'meetings from Dexie (deleted from cloud)')
-                  deletedFromCloud.forEach(async (meeting) => {
-                    try {
-                      await deleteMeetingFromDexie(meeting.id, { queueSync: false })
-                      console.log('🗑️ Deleted from Dexie:', meeting.id?.slice(0,8))
-                    } catch (err) {
-                      console.warn('🗑️ Failed to delete from Dexie:', meeting.id?.slice(0,8), err.message)
-                    }
-                  })
-                }
-              } catch (dexieErr) {
-                console.warn('🔥 Firestore: Subscription - Dexie error:', dexieErr.message)
-              }
+            // Save ALL meetings to Dexie (including deleted ones for sync)
+            // This ensures deleted status propagates
+            try {
+              bulkSaveMeetings(firestoreMeetings, { queueSync: false })
+                .then(result => {
+                  console.log('🔥 Subscription: Saved', result.saved, 'meetings to Dexie (including deleted)')
+                })
+                .catch(err => {
+                  console.warn('🔥 Subscription: Dexie save failed:', err.message)
+                })
+            } catch (dexieErr) {
+              console.warn('🔥 Subscription: Dexie error:', dexieErr.message)
             }
           } catch (callbackErr) {
-            console.error('🔥 Firestore: Error processing meetings callback:', callbackErr)
+            console.error('🔥 Subscription: Error processing meetings:', callbackErr)
           }
         })
 
-        // Subscribe to stakeholders - MERGE with local
+        // Subscribe to stakeholders - PHASE 4: soft delete
         const unsubStakeholders = firestoreService.subscribeStakeholders((firestoreStakeholders) => {
           try {
-            // Skip if a full sync is in progress to prevent race conditions
-            if (isSyncInProgress()) {
-              console.log('🔥 Firestore: Skipping stakeholders callback - sync in progress')
-              return
-            }
+            if (isSyncInProgress()) return
 
-            console.log('🔥 Firestore: Received', firestoreStakeholders.length, 'stakeholders from cloud')
+            console.log('🔥 Subscription: Received', firestoreStakeholders.length, 'stakeholders from cloud')
 
-            // Get deleted stakeholder IDs from tombstone array
-            const deletedStakeholderIds = getDeletedIds('stakeholder')
+            // Filter by deleted field
+            const activeStakeholders = firestoreStakeholders.filter(s => !s.deleted)
+            const localStakeholders = currentStakeholdersRef.current || []
+            const mergedStakeholders = mergeByIdKeepNewer(
+              localStakeholders.filter(s => !s.deleted),
+              activeStakeholders
+            )
 
-            // Filter out deleted stakeholders
-            const filteredFirestoreStakeholders = firestoreStakeholders.filter(s => !deletedStakeholderIds.has(s.id))
+            dispatch({ type: 'SET_STAKEHOLDERS', payload: mergedStakeholders })
 
-            const localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-            const filteredLocalStakeholders = localStakeholders.filter(s => !deletedStakeholderIds.has(s.id))
-
-            const mergedStakeholders = mergeByIdKeepNewer(filteredLocalStakeholders, filteredFirestoreStakeholders)
-
-            if (mergedStakeholders.length > 0 || filteredLocalStakeholders.length === 0) {
-              dispatch({ type: 'SET_STAKEHOLDERS', payload: mergedStakeholders })
-              localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
-
-              // Also save to Dexie for hook reactivity
-              try {
-                bulkSaveStakeholders(mergedStakeholders, { queueSync: false })
-                  .then(result => {
-                    console.log('🔥 Firestore: Subscription - saved', result.saved, 'stakeholders to Dexie')
-                  })
-                  .catch(err => {
-                    console.warn('🔥 Firestore: Subscription - failed to save stakeholders to Dexie:', err.message)
-                  })
-              } catch (dexieErr) {
-                console.warn('🔥 Firestore: Subscription - Dexie stakeholders save error:', dexieErr.message)
-              }
-            }
+            // Save all to Dexie
+            bulkSaveStakeholders(firestoreStakeholders, { queueSync: false })
+              .then(result => console.log('🔥 Subscription: Saved', result.saved, 'stakeholders to Dexie'))
+              .catch(err => console.warn('🔥 Subscription: Dexie stakeholders error:', err.message))
           } catch (callbackErr) {
-            console.error('🔥 Firestore: Error processing stakeholders callback:', callbackErr)
+            console.error('🔥 Subscription: Error processing stakeholders:', callbackErr)
           }
         })
 
-        // Subscribe to categories - MERGE with local
+        // Subscribe to categories - PHASE 4: soft delete
         const unsubCategories = firestoreService.subscribeStakeholderCategories((firestoreCategories) => {
           try {
-            // Skip if a full sync is in progress to prevent race conditions
-            if (isSyncInProgress()) {
-              console.log('🔥 Firestore: Skipping categories callback - sync in progress')
-              return
-            }
+            if (isSyncInProgress()) return
 
-            console.log('🔥 Firestore: Received', firestoreCategories.length, 'categories from cloud')
+            console.log('🔥 Subscription: Received', firestoreCategories.length, 'categories from cloud')
 
-            // Get deleted category IDs from tombstone array
-            const deletedCategoryIds = getDeletedIds('stakeholderCategory')
+            // Filter by deleted field (soft delete)
+            const activeCategories = firestoreCategories.filter(c => !c.deleted)
+            const localCategories = currentCategoriesRef.current || []
+            const mergedCategories = mergeByIdKeepNewer(
+              localCategories.filter(c => !c.deleted),
+              activeCategories
+            )
 
-            // Filter out deleted categories
-            const filteredFirestoreCategories = firestoreCategories.filter(c => !deletedCategoryIds.has(c.id))
+            dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: mergedCategories })
 
-            const localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
-            const filteredLocalCategories = localCategories.filter(c => !deletedCategoryIds.has(c.id))
-
-            const mergedCategories = mergeByIdKeepNewer(filteredLocalCategories, filteredFirestoreCategories)
-
-            if (mergedCategories.length > 0 || filteredLocalCategories.length === 0) {
-              dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: mergedCategories })
-              localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
-
-              // Also save to Dexie for hook reactivity
-              try {
-                bulkSaveCategories(mergedCategories, { queueSync: false })
-                  .then(result => {
-                    console.log('🔥 Firestore: Subscription - saved', result.saved, 'categories to Dexie')
-                  })
-                  .catch(err => {
-                    console.warn('🔥 Firestore: Subscription - failed to save categories to Dexie:', err.message)
-                  })
-              } catch (dexieErr) {
-                console.warn('🔥 Firestore: Subscription - Dexie categories save error:', dexieErr.message)
-              }
-            }
+            // Save all to Dexie (including deleted for sync propagation)
+            bulkSaveCategories(firestoreCategories, { queueSync: false })
+              .then(result => console.log('🔥 Subscription: Saved', result.saved, 'categories to Dexie'))
+              .catch(err => console.warn('🔥 Subscription: Dexie categories error:', err.message))
           } catch (callbackErr) {
-            console.error('🔥 Firestore: Error processing categories callback:', callbackErr)
+            console.error('🔥 Subscription: Error processing categories:', callbackErr)
           }
         })
 
@@ -1843,20 +1534,7 @@ export function AppProvider({ children }) {
         }
       }
 
-      // 4. localStorage - Legacy/fallback (stripped data for compatibility)
-      try {
-        const currentMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-        const updatedMeetings = [stripLargeFields(meetingWithId), ...currentMeetings.filter(m => m.id !== meetingWithId.id)]
-        const dataSize = JSON.stringify(updatedMeetings).length
-        console.log('📝 AppContext: localStorage data size:', Math.round(dataSize / 1024), 'KB')
-        localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
-        console.log('✅ AppContext: Meeting saved to localStorage (legacy):', meetingWithId.id)
-        localStorageSaveSuccess = true
-      } catch (localErr) {
-        console.warn('⚠️ AppContext: Failed to save to localStorage (non-critical):', localErr.message)
-        errors.push(`localStorage: ${localErr.message}`)
-        // Don't fail the whole operation for localStorage errors - Dexie is primary
-      }
+      // PHASE 3: localStorage removed - Dexie is the only local storage
 
       // Success if Dexie worked (primary storage)
       const success = dexieSaveSuccess
@@ -1865,7 +1543,6 @@ export function AppProvider({ children }) {
         meeting: meetingWithId,
         dexieSaved: dexieSaveSuccess,
         firestoreSaved: firestoreSaveSuccess,
-        localStorageSaved: localStorageSaveSuccess,
         errors: errors.length > 0 ? errors : undefined
       }
     },
@@ -1913,22 +1590,7 @@ export function AppProvider({ children }) {
         }
       }
 
-      // 4. localStorage - Legacy/fallback (stripped data for compatibility)
-      try {
-        const currentMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-        const updatedMeetings = currentMeetings.map(m =>
-          m.id === updatedMeeting.id ? stripLargeFields(updatedMeeting) : m
-        )
-        const dataSize = JSON.stringify(updatedMeetings).length
-        console.log('📝 AppContext: localStorage data size:', Math.round(dataSize / 1024), 'KB')
-        localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
-        console.log('✅ AppContext: Meeting updated in localStorage (legacy):', updatedMeeting.id)
-        localStorageSaveSuccess = true
-      } catch (localErr) {
-        console.warn('⚠️ AppContext: Failed to update localStorage (non-critical):', localErr.message)
-        errors.push(`localStorage: ${localErr.message}`)
-        // Don't fail the whole operation for localStorage errors - Dexie is primary
-      }
+      // PHASE 3: localStorage removed - Dexie is the only local storage
 
       // Success if Dexie worked (primary storage)
       const success = dexieSaveSuccess
@@ -1937,60 +1599,54 @@ export function AppProvider({ children }) {
         meeting: updatedMeeting,
         dexieSaved: dexieSaveSuccess,
         firestoreSaved: firestoreSaveSuccess,
-        localStorageSaved: localStorageSaveSuccess,
         errors: errors.length > 0 ? errors : undefined
       }
     },
     deleteMeeting: async (meetingId) => {
-      // Acquire interaction lock to prevent auto-refresh during deletion
+      // PHASE 4: Soft delete - set deleted=true instead of removing
+      // The deleted field syncs to Firestore like any other field
       acquireInteractionLock('deleteMeeting')
-      logDeletion('DELETE_ACTION', 'Starting deletion', { meetingId })
+      console.log('🗑️ [SOFT DELETE] Starting soft delete for:', meetingId)
 
       try {
+        // 1. Update React state to hide the meeting
         dispatch({ type: 'DELETE_MEETING', payload: meetingId })
 
-        // Delete from Dexie (primary local storage)
+        // 2. Soft delete in Dexie (sets deleted=true, updatedAt=now)
         try {
-          logDeletion('DELETE_ACTION', 'Deleting from Dexie', { meetingId })
-          await deleteMeetingFromDexie(meetingId, { queueSync: false }) // Don't queue sync, we handle Firestore directly
-          logDeletion('DELETE_ACTION', 'Dexie delete completed', { meetingId })
+          await softDeleteMeetingInDexie(meetingId, { queueSync: false })
+          console.log('🗑️ [SOFT DELETE] Dexie soft delete completed:', meetingId)
         } catch (dexieErr) {
-          logDeletion('DELETE_ACTION', '⚠️ Dexie delete FAILED', { meetingId, error: dexieErr.message })
+          console.error('🗑️ [SOFT DELETE] Dexie soft delete FAILED:', dexieErr.message)
         }
 
-        // Verify tombstone was created by reducer
-        setTimeout(() => {
-          try {
-            const tombstones = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
-            const hasTombstone = tombstones.some(t => t.id === meetingId)
-            logDeletion('DELETE_ACTION', 'Tombstone verification', {
-              meetingId,
-              hasTombstone,
-              tombstoneCount: tombstones.length
-            })
-          } catch (e) {
-            console.error('🗑️ Failed to verify tombstone:', e)
-          }
-        }, 100)
-
-        // Also delete from Firestore
+        // 3. Sync deleted=true to Firestore (not a delete, just an update)
         if (ENABLE_FIRESTORE) {
           try {
             const firestoreService = await getFirestoreService()
             if (firestoreService) {
-              logDeletion('DELETE_ACTION', 'Calling Firestore deleteMeeting', { meetingId })
-              await firestoreService.deleteMeeting(meetingId)
-              logDeletion('DELETE_ACTION', 'Firestore delete completed', { meetingId })
+              // Get the meeting from Dexie to sync with deleted=true
+              const deletedMeeting = await getFullMeeting(meetingId)
+              if (deletedMeeting) {
+                // Save the meeting with deleted=true to Firestore
+                await firestoreService.saveMeeting(stripBinaryOnly({
+                  ...deletedMeeting,
+                  deleted: true,
+                  updatedAt: new Date().toISOString()
+                }))
+                console.log('🗑️ [SOFT DELETE] Firestore sync completed (deleted=true):', meetingId)
+              }
             }
           } catch (err) {
-            logDeletion('DELETE_ACTION', '⚠️ Firestore delete FAILED', { meetingId, error: err.message })
+            console.error('🗑️ [SOFT DELETE] Firestore sync FAILED:', err.message)
+            // The outbox will retry this later
           }
         }
       } finally {
         // Release lock after a short delay to ensure state has settled
         setTimeout(() => {
           releaseInteractionLock()
-        }, 2000) // 2 second grace period
+        }, 1000) // 1 second grace period
       }
     },
     setCurrentMeeting: (meeting) => dispatch({ type: 'SET_CURRENT_MEETING', payload: meeting }),
@@ -2033,26 +1689,42 @@ export function AppProvider({ children }) {
       }
     },
     deleteStakeholder: async (stakeholderId) => {
-      dispatch({ type: 'DELETE_STAKEHOLDER', payload: stakeholderId })
+      // PHASE 4: Soft delete - set deleted=true instead of removing
+      acquireInteractionLock('deleteStakeholder')
+      console.log('🗑️ [SOFT DELETE] Starting soft delete for stakeholder:', stakeholderId)
 
-      // Delete from Dexie (primary local storage)
       try {
-        await deleteStakeholderFromDexie(stakeholderId, { queueSync: false })
-        console.log('🗑️ Stakeholder deleted from Dexie:', stakeholderId)
-      } catch (dexieErr) {
-        console.warn('🗑️ Failed to delete stakeholder from Dexie:', dexieErr.message)
-      }
+        // 1. Update React state to hide the stakeholder
+        dispatch({ type: 'DELETE_STAKEHOLDER', payload: stakeholderId })
 
-      // Also delete from Firestore
-      if (ENABLE_FIRESTORE) {
+        // 2. Soft delete in Dexie (sets deleted=true, updatedAt=now)
         try {
-          const firestoreService = await getFirestoreService()
-          if (firestoreService) {
-            await firestoreService.deleteStakeholder(stakeholderId)
-          }
-        } catch (err) {
-          console.warn('🔥 Firestore: Failed to delete stakeholder:', stakeholderId, err.message)
+          await softDeleteStakeholderInDexie(stakeholderId, { queueSync: false })
+          console.log('🗑️ [SOFT DELETE] Dexie soft delete completed:', stakeholderId)
+        } catch (dexieErr) {
+          console.error('🗑️ [SOFT DELETE] Dexie soft delete FAILED:', dexieErr.message)
         }
+
+        // 3. Sync deleted=true to Firestore (not a delete, just an update)
+        if (ENABLE_FIRESTORE) {
+          try {
+            const firestoreService = await getFirestoreService()
+            if (firestoreService) {
+              await firestoreService.saveStakeholder({
+                id: stakeholderId,
+                deleted: true,
+                updatedAt: new Date().toISOString()
+              })
+              console.log('🗑️ [SOFT DELETE] Firestore sync completed (deleted=true):', stakeholderId)
+            }
+          } catch (err) {
+            console.error('🗑️ [SOFT DELETE] Firestore sync FAILED:', err.message)
+          }
+        }
+      } finally {
+        setTimeout(() => {
+          releaseInteractionLock()
+        }, 1000)
       }
     },
 
@@ -2095,26 +1767,42 @@ export function AppProvider({ children }) {
       }
     },
     deleteStakeholderCategory: async (categoryKey) => {
-      dispatch({ type: 'DELETE_STAKEHOLDER_CATEGORY', payload: categoryKey })
+      // PHASE 4: Soft delete - set deleted=true instead of removing
+      acquireInteractionLock('deleteStakeholderCategory')
+      console.log('🗑️ [SOFT DELETE] Starting soft delete for category:', categoryKey)
 
-      // Delete from Dexie (primary local storage)
       try {
-        await deleteCategoryFromDexie(categoryKey, { queueSync: false })
-        console.log('🗑️ Category deleted from Dexie:', categoryKey)
-      } catch (dexieErr) {
-        console.warn('🗑️ Failed to delete category from Dexie:', dexieErr.message)
-      }
+        // 1. Update React state to hide the category
+        dispatch({ type: 'DELETE_STAKEHOLDER_CATEGORY', payload: categoryKey })
 
-      // Also delete from Firestore
-      if (ENABLE_FIRESTORE) {
+        // 2. Soft delete in Dexie (sets deleted=true, updatedAt=now)
         try {
-          const firestoreService = await getFirestoreService()
-          if (firestoreService) {
-            await firestoreService.deleteStakeholderCategory(categoryKey)
-          }
-        } catch (err) {
-          console.warn('🔥 Firestore: Failed to delete category:', categoryKey, err.message)
+          await softDeleteCategoryInDexie(categoryKey, { queueSync: false })
+          console.log('🗑️ [SOFT DELETE] Dexie soft delete completed:', categoryKey)
+        } catch (dexieErr) {
+          console.error('🗑️ [SOFT DELETE] Dexie soft delete FAILED:', dexieErr.message)
         }
+
+        // 3. Sync deleted=true to Firestore (not a delete, just an update)
+        if (ENABLE_FIRESTORE) {
+          try {
+            const firestoreService = await getFirestoreService()
+            if (firestoreService) {
+              await firestoreService.saveStakeholderCategory({
+                id: categoryKey,
+                deleted: true,
+                updatedAt: new Date().toISOString()
+              })
+              console.log('🗑️ [SOFT DELETE] Firestore sync completed (deleted=true):', categoryKey)
+            }
+          } catch (err) {
+            console.error('🗑️ [SOFT DELETE] Firestore sync FAILED:', err.message)
+          }
+        }
+      } finally {
+        setTimeout(() => {
+          releaseInteractionLock()
+        }, 1000)
       }
     },
     setStakeholderCategories: (categories) => dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: categories }),
@@ -2233,17 +1921,9 @@ export function AppProvider({ children }) {
           localDeletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
 
         } catch (dexieErr) {
-          console.error('❌ Failed to read from Dexie, falling back to localStorage:', dexieErr)
-          // Fallback to localStorage (legacy) - may not have full blob data
-          try {
-            localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-            localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-            localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
-            localDeletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
-            console.warn('⚠️ Using localStorage fallback - blob data may be incomplete')
-          } catch (e) {
-            console.warn('🔄 Failed to read from localStorage:', e)
-          }
+          console.error('❌ Failed to read from Dexie:', dexieErr)
+          // PHASE 3: No localStorage fallback - Dexie is the only local storage
+          // Tombstones are still loaded from localStorage above
         }
 
         console.log('🔄 Local data:', {
@@ -2435,32 +2115,11 @@ export function AppProvider({ children }) {
             })
           } catch (dexieError) {
             console.error('❌ Dexie save failed:', dexieError)
-            // Continue to save to other storages as backup
+            throw new Error(`Dexie save failed: ${dexieError.message}`)
           }
 
-          // ============================================
-          // LOCALFORAGE: SECONDARY BACKUP
-          // ============================================
-          console.log('🔄 Saving to localforage (secondary)...')
-          const syncStorage = await getSyncStorage()
-          await syncStorage.setItem('meetings', strippedMeetings)
-          await syncStorage.setItem('stakeholders', stakeholdersMerge.merged)
-          await syncStorage.setItem('categories', categoriesMerge.merged)
-
-          // ============================================
-          // LOCALSTORAGE: TERTIARY BACKUP (may fail on iOS)
-          // ============================================
-          console.log('🔄 Saving to localStorage (tertiary)...')
-          try {
-            localStorage.setItem('meetingflow_meetings', meetingsJson)
-            localStorage.setItem('meetingflow_stakeholders', stakeholdersJson)
-            localStorage.setItem('meetingflow_stakeholder_categories', categoriesJson)
-            console.log('✅ Saved to localStorage!')
-          } catch (lsError) {
-            console.warn('⚠️ localStorage save failed (quota), but Dexie has the data:', lsError.message)
-          }
-
-          console.log('✅ All data saved to all storage layers!')
+          // PHASE 3: localforage and localStorage removed - Dexie is the only local storage
+          console.log('✅ All data saved to Dexie!')
         } catch (storageError) {
           console.error('🔄 Storage error:', storageError)
           throw new Error(`Failed to save data: ${storageError.message}`)

@@ -12,7 +12,8 @@ import {
   bulkSaveStakeholders,
   bulkSaveCategories,
   getFullMeeting,
-  saveMeeting as saveMeetingToDexie
+  saveMeeting as saveMeetingToDexie,
+  deleteMeeting as deleteMeetingFromDexie
 } from '../db/dexieService'
 
 // Lazy-loaded IndexedDB instance - only created when needed to avoid iOS crashes
@@ -1857,6 +1858,15 @@ export function AppProvider({ children }) {
       logDeletion('DELETE_ACTION', 'Starting deletion', { meetingId })
 
       dispatch({ type: 'DELETE_MEETING', payload: meetingId })
+
+      // Delete from Dexie (primary local storage)
+      try {
+        logDeletion('DELETE_ACTION', 'Deleting from Dexie', { meetingId })
+        await deleteMeetingFromDexie(meetingId, { queueSync: false }) // Don't queue sync, we handle Firestore directly
+        logDeletion('DELETE_ACTION', 'Dexie delete completed', { meetingId })
+      } catch (dexieErr) {
+        logDeletion('DELETE_ACTION', '⚠️ Dexie delete FAILED', { meetingId, error: dexieErr.message })
+      }
 
       // Verify tombstone was created by reducer
       setTimeout(() => {

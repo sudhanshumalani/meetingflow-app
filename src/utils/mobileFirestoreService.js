@@ -196,6 +196,7 @@ export async function getMobileRecordings() {
 
   try {
     // Use runQuery to filter by source='mobile-recording'
+    // Note: No orderBy to avoid requiring a composite index
     const queryUrl = `${FIRESTORE_REST_BASE}:runQuery?key=${FIREBASE_API_KEY}`
 
     const queryBody = {
@@ -208,12 +209,6 @@ export async function getMobileRecordings() {
             value: { stringValue: 'mobile-recording' }
           }
         },
-        orderBy: [
-          {
-            field: { fieldPath: 'createdAt' },
-            direction: 'DESCENDING'
-          }
-        ],
         limit: 100
       }
     }
@@ -244,6 +239,13 @@ export async function getMobileRecordings() {
         recordings.push(data)
       }
     }
+
+    // Sort by createdAt descending (newest first) - done client-side to avoid index requirement
+    recordings.sort((a, b) => {
+      const dateA = new Date(a.createdAt || a.recordedAt || 0)
+      const dateB = new Date(b.createdAt || b.recordedAt || 0)
+      return dateB - dateA
+    })
 
     debugLog(`Fetched ${recordings.length} mobile recordings`)
     return recordings

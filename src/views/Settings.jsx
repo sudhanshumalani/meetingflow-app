@@ -1320,6 +1320,93 @@ function StorageDiagnostic() {
                 {(diagnosticData.dexie.blobs?.length || 0) > 0 ? ' (WITH blob data ✓)' : ' (no blob data)'}</li>
             </ul>
           </div>
+
+          {/* Meeting List Export */}
+          <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <h5 className="font-medium text-blue-900 mb-2">Export Meeting List (Metadata Only)</h5>
+            <p className="text-sm text-blue-800 mb-3">
+              Download a list of all meetings with title, date, and stakeholder info for your records.
+            </p>
+            <button
+              onClick={() => {
+                // Combine meetings from all sources, dedupe by ID
+                const allMeetings = new Map()
+                const sources = [
+                  diagnosticData.localStorage.meetings,
+                  diagnosticData.localforage.meetings,
+                  diagnosticData.dexie.meetings
+                ]
+                sources.forEach(meetings => {
+                  (meetings || []).forEach(m => {
+                    if (m?.id && !allMeetings.has(m.id)) {
+                      allMeetings.set(m.id, m)
+                    }
+                  })
+                })
+
+                // Sort by date descending
+                const sorted = Array.from(allMeetings.values())
+                  .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+
+                // Create readable list
+                const lines = ['MEETINGFLOW - MEETING LIST', '=' .repeat(50), '']
+                sorted.forEach((m, i) => {
+                  lines.push(`${i + 1}. ${m.title || 'Untitled'}`)
+                  lines.push(`   Date: ${m.date || 'Unknown'}`)
+                  lines.push(`   ID: ${m.id}`)
+                  lines.push(`   Stakeholder IDs: ${(m.stakeholderIds || []).join(', ') || 'None'}`)
+                  lines.push(`   Has AI Result: ${m.aiResult ? 'Yes' : 'No'}`)
+                  lines.push(`   Has Notes: ${m.digitalNotes || m.notes ? 'Yes' : 'No'}`)
+                  lines.push(`   Has Transcript: ${m.audioTranscript || m.transcript ? 'Yes' : 'No'}`)
+                  lines.push('')
+                })
+                lines.push('=' .repeat(50))
+                lines.push(`Total: ${sorted.length} meetings`)
+                lines.push(`Exported: ${new Date().toISOString()}`)
+
+                // Also create JSON version
+                const jsonData = sorted.map(m => ({
+                  id: m.id,
+                  title: m.title,
+                  date: m.date,
+                  stakeholderIds: m.stakeholderIds,
+                  hasAiResult: !!m.aiResult,
+                  hasNotes: !!(m.digitalNotes || m.notes),
+                  hasTranscript: !!(m.audioTranscript || m.transcript),
+                  createdAt: m.createdAt,
+                  updatedAt: m.updatedAt
+                }))
+
+                // Download text file
+                const textBlob = new Blob([lines.join('\n')], { type: 'text/plain' })
+                const textUrl = URL.createObjectURL(textBlob)
+                const textA = document.createElement('a')
+                textA.href = textUrl
+                textA.download = `meetingflow-meeting-list-${Date.now()}.txt`
+                document.body.appendChild(textA)
+                textA.click()
+                document.body.removeChild(textA)
+                URL.revokeObjectURL(textUrl)
+
+                // Also download JSON
+                const jsonBlob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' })
+                const jsonUrl = URL.createObjectURL(jsonBlob)
+                const jsonA = document.createElement('a')
+                jsonA.href = jsonUrl
+                jsonA.download = `meetingflow-meeting-list-${Date.now()}.json`
+                document.body.appendChild(jsonA)
+                jsonA.click()
+                document.body.removeChild(jsonA)
+                URL.revokeObjectURL(jsonUrl)
+
+                alert(`Downloaded ${sorted.length} meetings!\n\nTwo files created:\n1. .txt - Human readable list\n2. .json - Machine readable data`)
+              }}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+            >
+              <Download className="w-4 h-4" />
+              Download Meeting List
+            </button>
+          </div>
         </div>
       )}
 
@@ -1378,6 +1465,169 @@ function StorageDiagnostic() {
             )}
           </div>
         )}
+      </div>
+
+      {/* Restore from Backup */}
+      <div className="mt-6 pt-6 border-t">
+        <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+          <Upload className="w-5 h-5" />
+          Restore from Backup File
+        </h4>
+        <p className="text-sm text-gray-600 mb-3">
+          Upload an Emergency Data Export file (.json) to restore your meeting data including AI analysis, notes, and transcripts.
+        </p>
+
+        <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
+          <p className="text-sm text-yellow-800">
+            <strong>Warning:</strong> This will overwrite your current local data with the backup. Make sure to download your current meeting list first.
+          </p>
+        </div>
+
+        <input
+          type="file"
+          accept=".json"
+          id="backup-file-input"
+          className="hidden"
+          onChange={async (e) => {
+            const file = e.target.files?.[0]
+            if (!file) return
+
+            try {
+              const text = await file.text()
+              const backup = JSON.parse(text)
+
+              // Validate backup structure
+              if (!backup.meetings || !Array.isArray(backup.meetings)) {
+                alert('Invalid backup file: No meetings array found')
+                return
+              }
+
+              const meetingsWithBlobs = backup.meetings.filter(m => m.aiResult || m.digitalNotes || m.audioTranscript)
+
+              const confirmMsg = `Found in backup:\n` +
+                `- ${backup.meetings.length} meetings\n` +
+                `- ${meetingsWithBlobs.length} with blob data (AI/notes/transcript)\n` +
+                `- ${backup.stakeholders?.length || 0} stakeholders\n` +
+                `- ${backup.categories?.length || 0} categories\n\n` +
+                `Backup date: ${backup.exportedAt || 'Unknown'}\n\n` +
+                `Do you want to restore this data?\n` +
+                `(This will overwrite localStorage, localforage, and Dexie)`
+
+              if (!confirm(confirmMsg)) return
+
+              // Restore to localStorage
+              localStorage.setItem('meetingflow_meetings', JSON.stringify(backup.meetings))
+              if (backup.stakeholders) {
+                localStorage.setItem('meetingflow_stakeholders', JSON.stringify(backup.stakeholders))
+              }
+              if (backup.categories) {
+                localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(backup.categories))
+              }
+
+              // Restore to localforage
+              const syncStorage = localforage.createInstance({
+                name: 'MeetingFlowSync',
+                storeName: 'sync_data'
+              })
+              await syncStorage.setItem('meetings', backup.meetings)
+              if (backup.stakeholders) {
+                await syncStorage.setItem('stakeholders', backup.stakeholders)
+              }
+              if (backup.categories) {
+                await syncStorage.setItem('categories', backup.categories)
+              }
+
+              // Restore to Dexie
+              try {
+                await db.open()
+
+                // Clear existing data
+                await db.meetings.clear()
+                await db.meetingBlobs.clear()
+                await db.stakeholders.clear()
+                await db.stakeholderCategories.clear()
+
+                // Import meetings with blobs
+                for (const meeting of backup.meetings) {
+                  if (!meeting.id) continue
+
+                  // Save metadata
+                  const metadata = {
+                    id: meeting.id,
+                    title: meeting.title,
+                    date: meeting.date,
+                    stakeholderIds: meeting.stakeholderIds,
+                    priority: meeting.priority,
+                    createdAt: meeting.createdAt,
+                    updatedAt: meeting.updatedAt,
+                    version: 1,
+                    deleted: false
+                  }
+                  await db.meetings.put(metadata)
+
+                  // Save blobs
+                  if (meeting.aiResult) {
+                    await db.meetingBlobs.put({
+                      meetingId: meeting.id,
+                      type: 'analysis',
+                      data: meeting.aiResult,
+                      version: 1
+                    })
+                  }
+                  if (meeting.digitalNotes) {
+                    await db.meetingBlobs.put({
+                      meetingId: meeting.id,
+                      type: 'notes',
+                      data: meeting.digitalNotes,
+                      version: 1
+                    })
+                  }
+                  if (meeting.audioTranscript || meeting.transcript) {
+                    await db.meetingBlobs.put({
+                      meetingId: meeting.id,
+                      type: 'transcript',
+                      data: meeting.audioTranscript || meeting.transcript,
+                      version: 1
+                    })
+                  }
+                }
+
+                // Import stakeholders
+                if (backup.stakeholders) {
+                  for (const s of backup.stakeholders) {
+                    if (s.id) await db.stakeholders.put(s)
+                  }
+                }
+
+                // Import categories
+                if (backup.categories) {
+                  for (const c of backup.categories) {
+                    if (c.id) await db.stakeholderCategories.put(c)
+                  }
+                }
+              } catch (dexieErr) {
+                console.error('Dexie restore error:', dexieErr)
+              }
+
+              alert(`✅ RESTORE COMPLETE!\n\nRestored ${backup.meetings.length} meetings (${meetingsWithBlobs.length} with full data).\n\nPlease refresh the page to see your restored data.`)
+
+              // Clear file input
+              e.target.value = ''
+
+            } catch (err) {
+              console.error('Restore error:', err)
+              alert('Error restoring backup: ' + err.message)
+            }
+          }}
+        />
+
+        <button
+          onClick={() => document.getElementById('backup-file-input')?.click()}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
+        >
+          <Upload className="w-5 h-5" />
+          Upload Backup File to Restore
+        </button>
       </div>
     </div>
   )

@@ -14,8 +14,9 @@
 import { v4 as uuidv4 } from 'uuid'
 import { IS_IOS } from '../config/firebase'
 
-// Collection name for mobile recordings
-const COLLECTION = 'mobile_recordings'
+// Use the existing 'meetings' collection with a flag to identify mobile recordings
+// This avoids needing to configure new Firestore security rules
+const COLLECTION = 'meetings'
 
 // Firestore REST API endpoint (same config as firestoreRestService.js)
 const FIRESTORE_PROJECT = 'meetingflow-app-bcb76'
@@ -121,6 +122,7 @@ export async function saveMobileRecording(recordingData) {
   const document = {
     id,
     ...recordingData,
+    source: 'mobile-recording', // Flag to identify mobile recordings
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     version: 1
@@ -185,6 +187,7 @@ export async function saveMobileRecording(recordingData) {
 /**
  * Get all mobile recordings from Firestore
  * Used by desktop app to list recordings made on mobile
+ * Uses a structured query to filter by source='mobile-recording'
  *
  * @returns {Promise<Array>}
  */
@@ -192,37 +195,55 @@ export async function getMobileRecordings() {
   debugLog('Fetching mobile recordings from Firestore')
 
   try {
-    const response = await fetch(
-      `${FIRESTORE_REST_BASE}/${COLLECTION}?key=${FIREBASE_API_KEY}`,
-      {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      }
-    )
+    // Use runQuery to filter by source='mobile-recording'
+    const queryUrl = `${FIRESTORE_REST_BASE}:runQuery?key=${FIREBASE_API_KEY}`
 
-    if (!response.ok) {
-      throw new Error(`Firestore fetch failed: ${response.status}`)
+    const queryBody = {
+      structuredQuery: {
+        from: [{ collectionId: COLLECTION }],
+        where: {
+          fieldFilter: {
+            field: { fieldPath: 'source' },
+            op: 'EQUAL',
+            value: { stringValue: 'mobile-recording' }
+          }
+        },
+        orderBy: [
+          {
+            field: { fieldPath: 'createdAt' },
+            direction: 'DESCENDING'
+          }
+        ],
+        limit: 100
+      }
     }
 
-    const result = await response.json()
+    const response = await fetch(queryUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(queryBody)
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Firestore query failed: ${response.status} - ${errorText}`)
+    }
+
+    const results = await response.json()
 
     // Convert Firestore format to JS objects
-    const recordings = (result.documents || []).map(doc => {
-      const data = {}
-      for (const [key, value] of Object.entries(doc.fields || {})) {
-        data[key] = fromFirestoreValue(value)
+    const recordings = []
+    for (const result of results) {
+      if (result.document && result.document.fields) {
+        const data = {}
+        for (const [key, value] of Object.entries(result.document.fields)) {
+          data[key] = fromFirestoreValue(value)
+        }
+        recordings.push(data)
       }
-      return data
-    })
-
-    // Sort by recordedAt descending (newest first)
-    recordings.sort((a, b) => {
-      const dateA = new Date(a.recordedAt || a.createdAt)
-      const dateB = new Date(b.recordedAt || b.createdAt)
-      return dateB - dateA
-    })
+    }
 
     debugLog(`Fetched ${recordings.length} mobile recordings`)
     return recordings

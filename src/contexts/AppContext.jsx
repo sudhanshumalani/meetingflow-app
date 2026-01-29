@@ -19,87 +19,6 @@ import {
 } from '../db/dexieService'
 
 // ============================================
-// DELETION DEBUG LOGGING
-// ============================================
-const DELETION_DEBUG = true // Set to false in production to reduce console noise
-
-function logDeletion(context, message, data = {}) {
-  if (!DELETION_DEBUG) return
-  const timestamp = new Date().toISOString().slice(11, 23) // HH:mm:ss.mmm
-  const tombstones = (() => {
-    try {
-      return JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
-    } catch { return [] }
-  })()
-  console.log(`🗑️ [${timestamp}] [${context}] ${message}`, {
-    ...data,
-    _tombstoneCount: tombstones.length,
-    _tombstoneIds: tombstones.map(t => t.id?.slice(0,8) + '...' || 'no-id'),
-    _syncLocked: isSyncLocked
-  })
-}
-
-// ============================================
-// TOMBSTONE RETENTION - Prevents race conditions with Firestore subscriptions
-// ============================================
-// Tombstones should be kept for a minimum period to ensure:
-// 1. Firestore subscription callbacks don't reintroduce deleted items from cache
-// 2. Cross-device sync has time to propagate deletions
-// 3. Eventual consistency issues are handled gracefully
-const TOMBSTONE_RETENTION_MS = 5 * 60 * 1000 // 5 minutes minimum retention
-
-/**
- * Clean up old tombstones that have been retained long enough
- * Only removes tombstones older than TOMBSTONE_RETENTION_MS
- * Returns the remaining tombstones (those still within retention period)
- */
-function cleanupOldTombstones(tombstones, syncedDeletionIds = new Set()) {
-  const now = Date.now()
-  const remaining = []
-  const removed = []
-
-  for (const tombstone of tombstones) {
-    const deletedAt = new Date(tombstone.deletedAt).getTime()
-    const age = now - deletedAt
-    const wasSynced = syncedDeletionIds.has(tombstone.id)
-
-    // Only remove if BOTH conditions are met:
-    // 1. Tombstone is older than retention period
-    // 2. Tombstone was successfully synced to cloud (or we're doing a cleanup without sync info)
-    if (age > TOMBSTONE_RETENTION_MS && (wasSynced || syncedDeletionIds.size === 0)) {
-      removed.push(tombstone)
-      logDeletion('TOMBSTONE_CLEANUP', 'Removing old tombstone', {
-        id: tombstone.id?.slice(0, 8) + '...',
-        type: tombstone.type,
-        ageMinutes: Math.round(age / 60000),
-        wasSynced
-      })
-    } else {
-      remaining.push(tombstone)
-      if (age <= TOMBSTONE_RETENTION_MS) {
-        logDeletion('TOMBSTONE_CLEANUP', 'Keeping young tombstone', {
-          id: tombstone.id?.slice(0, 8) + '...',
-          type: tombstone.type,
-          ageMinutes: Math.round(age / 60000),
-          retentionMinutes: Math.round(TOMBSTONE_RETENTION_MS / 60000)
-        })
-      } else {
-        logDeletion('TOMBSTONE_CLEANUP', 'Keeping unsynced tombstone for retry', {
-          id: tombstone.id?.slice(0, 8) + '...',
-          type: tombstone.type
-        })
-      }
-    }
-  }
-
-  if (removed.length > 0) {
-    logDeletion('TOMBSTONE_CLEANUP', `Cleaned up ${removed.length} old tombstones, ${remaining.length} remaining`, {})
-  }
-
-  return remaining
-}
-
-// ============================================
 // SYNC LOCK - Prevents race conditions
 // ============================================
 let isSyncLocked = false
@@ -128,7 +47,6 @@ function releaseSyncLock() {
   isSyncLocked = false
   syncLockTimestamp = 0
   console.log('🔄 Sync lock released')
-  logDeletion('SYNC_LOCK', '🔓 Lock RELEASED - subscriptions can now fire', {})
 }
 
 // Export for checking sync status from other components
@@ -998,27 +916,7 @@ export function AppProvider({ children }) {
         }
       })
 
-      // Load tombstones from localStorage (these are small, localStorage is fine)
-      let deletedItems = []
-      try {
-        deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
-
-        // Cleanup old tombstones (> 24 hours)
-        const TOMBSTONE_MAX_AGE_MS = 24 * 60 * 60 * 1000
-        const now = Date.now()
-        const freshTombstones = deletedItems.filter(t => {
-          const age = now - new Date(t.deletedAt).getTime()
-          return age <= TOMBSTONE_MAX_AGE_MS
-        })
-        if (freshTombstones.length < deletedItems.length) {
-          deletedItems = freshTombstones
-          localStorage.setItem('meetingflow_deleted_items', JSON.stringify(deletedItems))
-        }
-      } catch (e) {
-        console.warn('📂 LOAD: Failed to load tombstones:', e)
-      }
-
-      const tombstonedIds = new Set(deletedItems.map(d => d.id))
+      // PHASE 4: No tombstones - soft delete uses deleted field in Dexie
 
       // ============================================
       // DEXIE-FIRST LOADING STRATEGY
@@ -1044,10 +942,10 @@ export function AppProvider({ children }) {
         })
 
         if (dexieMeetings.length > 0) {
-          // Filter out tombstoned items
-          finalMeetings = dexieMeetings.filter(m => !m.deleted && !tombstonedIds.has(m.id))
-          finalStakeholders = dexieStakeholders.filter(s => !tombstonedIds.has(s.id))
-          finalCategories = dexieCategories.filter(c => !tombstonedIds.has(c.id))
+          // PHASE 4: Filter by deleted field (soft delete)
+          finalMeetings = dexieMeetings.filter(m => !m.deleted)
+          finalStakeholders = dexieStakeholders.filter(s => !s.deleted)
+          finalCategories = dexieCategories.filter(c => !c.deleted)
           dataSource = 'dexie'
           console.log('✅ LOAD: Using Dexie as primary source -', finalMeetings.length, 'meetings')
         }
@@ -1084,8 +982,7 @@ export function AppProvider({ children }) {
       console.log('🔍 DISPATCH: Loading data from', dataSource, ':', {
         meetings: deduplicatedMeetings.length,
         stakeholders: finalStakeholders.length,
-        categories: finalCategories.length,
-        tombstones: deletedItems.length
+        categories: finalCategories.length
       })
 
       dispatch({
@@ -1093,8 +990,7 @@ export function AppProvider({ children }) {
         payload: {
           meetings: deduplicatedMeetings,
           stakeholders: finalStakeholders,
-          stakeholderCategories: finalCategories,
-          deletedItems: deletedItems
+          stakeholderCategories: finalCategories
         }
       })
 
@@ -1502,7 +1398,6 @@ export function AppProvider({ children }) {
       // Track save status
       let dexieSaveSuccess = false
       let firestoreSaveSuccess = false
-      let localStorageSaveSuccess = false
       let errors = []
 
       // 1. First dispatch to update React state (immediate UI update)
@@ -1558,7 +1453,6 @@ export function AppProvider({ children }) {
       // Track save status
       let dexieSaveSuccess = false
       let firestoreSaveSuccess = false
-      let localStorageSaveSuccess = false
       let errors = []
 
       // 1. Dispatch to update React state (immediate UI update)
@@ -1888,7 +1782,6 @@ export function AppProvider({ children }) {
         let localMeetings = []
         let localStakeholders = []
         let localCategories = []
-        let localDeletedItems = []
 
         try {
           // Import dynamically to avoid circular deps
@@ -1917,109 +1810,39 @@ export function AppProvider({ children }) {
           localStakeholders = await getAllStakeholders() || []
           localCategories = await getAllCategories() || []
 
-          // Tombstones still in localStorage (they're small and need quick access)
-          localDeletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
-
         } catch (dexieErr) {
           console.error('❌ Failed to read from Dexie:', dexieErr)
-          // PHASE 3: No localStorage fallback - Dexie is the only local storage
-          // Tombstones are still loaded from localStorage above
         }
 
         console.log('🔄 Local data:', {
           meetings: localMeetings.length,
           stakeholders: localStakeholders.length,
-          categories: localCategories.length,
-          deletedItems: localDeletedItems.length
+          categories: localCategories.length
         })
 
-        // Sync deletions to Firestore
-        const syncedDeletions = []
-        const failedDeletions = []
+        // PHASE 4: Soft delete - filter by deleted field, not tombstones
+        // Items with deleted=true are filtered out for UI, but still synced
+        const filteredLocalMeetings = localMeetings.filter(m => !m.deleted)
+        const filteredLocalStakeholders = localStakeholders.filter(s => !s.deleted)
+        const filteredLocalCategories = localCategories.filter(c => !c.deleted)
 
-        if (localDeletedItems.length > 0) {
-          console.log('🔄 Syncing', localDeletedItems.length, 'deletions to Firestore...')
-          for (const deletion of localDeletedItems) {
-            try {
-              let result = { success: false }
-              if (deletion.type === 'meeting' && deletion.id) {
-                result = await firestoreService.deleteMeeting(deletion.id)
-                if (result.success) {
-                  console.log('🔄 Synced deletion of meeting:', deletion.id)
-                  syncedDeletions.push(deletion)
-                } else {
-                  throw new Error(result.reason || 'Unknown error')
-                }
-              } else if (deletion.type === 'stakeholder' && deletion.id) {
-                result = await firestoreService.deleteStakeholder(deletion.id)
-                if (result.success) {
-                  console.log('🔄 Synced deletion of stakeholder:', deletion.id)
-                  syncedDeletions.push(deletion)
-                } else {
-                  throw new Error(result.reason || 'Unknown error')
-                }
-              } else if (deletion.type === 'stakeholderCategory' && deletion.id) {
-                result = await firestoreService.deleteStakeholderCategory(deletion.id)
-                if (result.success) {
-                  console.log('🔄 Synced deletion of category:', deletion.id)
-                  syncedDeletions.push(deletion)
-                } else {
-                  throw new Error(result.reason || 'Unknown error')
-                }
-              } else {
-                // Invalid deletion record, mark as synced to remove it
-                syncedDeletions.push(deletion)
-              }
-            } catch (e) {
-              console.warn('🔄 Failed to sync deletion:', deletion, e.message)
-              failedDeletions.push(deletion)
-            }
-          }
+        // Also filter cloud data by deleted field
+        const filteredCloudMeetings = cloudMeetings.filter(m => !m.deleted)
+        const filteredCloudStakeholders = cloudStakeholders.filter(s => !s.deleted)
+        const filteredCloudCategories = cloudCategories.filter(c => !c.deleted)
 
-          // NOTE: Don't clear deletedItems here - wait until after all data is saved
-          // to prevent race condition with real-time subscriptions
-          console.log('🔄 Deletion sync to cloud complete:', syncedDeletions.length, 'synced,', failedDeletions.length, 'failed')
-        }
-
-        // Fetch deleted IDs from Firestore to remove from local data
-        console.log('🔄 Fetching deleted item IDs from Firestore...')
-        let deletedMeetingIds = []
-        let deletedStakeholderIds = []
-        let deletedCategoryIds = []
-
-        try {
-          deletedMeetingIds = await firestoreService.getDeletedIds('meetings')
-          deletedStakeholderIds = await firestoreService.getDeletedIds('stakeholders')
-          deletedCategoryIds = await firestoreService.getDeletedIds('stakeholderCategories')
-          console.log('🔄 Deleted IDs from Firestore:', {
-            meetings: deletedMeetingIds.length,
-            stakeholders: deletedStakeholderIds.length,
-            categories: deletedCategoryIds.length
-          })
-        } catch (e) {
-          console.warn('🔄 Failed to fetch deleted IDs:', e.message)
-        }
-
-        // Filter out items that were deleted on other devices
-        const deletedMeetingSet = new Set(deletedMeetingIds)
-        const deletedStakeholderSet = new Set(deletedStakeholderIds)
-        const deletedCategorySet = new Set(deletedCategoryIds)
-
-        const filteredLocalMeetings = localMeetings.filter(m => !deletedMeetingSet.has(m.id))
-        const filteredLocalStakeholders = localStakeholders.filter(s => !deletedStakeholderSet.has(s.id))
-        const filteredLocalCategories = localCategories.filter(c => !deletedCategorySet.has(c.id))
-
-        console.log('🔄 After filtering deleted items:', {
-          meetings: `${localMeetings.length} -> ${filteredLocalMeetings.length}`,
-          stakeholders: `${localStakeholders.length} -> ${filteredLocalStakeholders.length}`,
-          categories: `${localCategories.length} -> ${filteredLocalCategories.length}`
+        console.log('🔄 After filtering soft-deleted items:', {
+          localMeetings: `${localMeetings.length} -> ${filteredLocalMeetings.length}`,
+          cloudMeetings: `${cloudMeetings.length} -> ${filteredCloudMeetings.length}`,
+          localStakeholders: `${localStakeholders.length} -> ${filteredLocalStakeholders.length}`,
+          localCategories: `${localCategories.length} -> ${filteredLocalCategories.length}`
         })
 
         // Merge with timestamp-based conflict resolution
         console.log('🔄 Merging data with timestamp comparison...')
-        const meetingsMerge = mergeByIdWithTracking(filteredLocalMeetings, cloudMeetings)
-        const stakeholdersMerge = mergeByIdWithTracking(filteredLocalStakeholders, cloudStakeholders)
-        const categoriesMerge = mergeByIdWithTracking(filteredLocalCategories, cloudCategories)
+        const meetingsMerge = mergeByIdWithTracking(filteredLocalMeetings, filteredCloudMeetings)
+        const stakeholdersMerge = mergeByIdWithTracking(filteredLocalStakeholders, filteredCloudStakeholders)
+        const categoriesMerge = mergeByIdWithTracking(filteredLocalCategories, filteredCloudCategories)
 
         console.log('🔄 Merge results:', {
           meetings: { total: meetingsMerge.merged.length, toUpload: meetingsMerge.toUpload.length, toDownload: meetingsMerge.toDownload.length },
@@ -2028,13 +1851,13 @@ export function AppProvider({ children }) {
         })
 
         // Safety checks
-        if (meetingsMerge.merged.length < filteredLocalMeetings.length && meetingsMerge.merged.length < cloudMeetings.length) {
+        if (meetingsMerge.merged.length < filteredLocalMeetings.length && meetingsMerge.merged.length < filteredCloudMeetings.length) {
           console.error('🚨 MERGE ERROR: Would lose meetings data!')
         }
-        if (stakeholdersMerge.merged.length < filteredLocalStakeholders.length && stakeholdersMerge.merged.length < cloudStakeholders.length) {
+        if (stakeholdersMerge.merged.length < filteredLocalStakeholders.length && stakeholdersMerge.merged.length < filteredCloudStakeholders.length) {
           console.error('🚨 MERGE ERROR: Would lose stakeholders data!')
         }
-        if (categoriesMerge.merged.length < filteredLocalCategories.length && categoriesMerge.merged.length < cloudCategories.length) {
+        if (categoriesMerge.merged.length < filteredLocalCategories.length && categoriesMerge.merged.length < filteredCloudCategories.length) {
           console.error('🚨 MERGE ERROR: Would lose categories data!')
         }
 
@@ -2129,74 +1952,7 @@ export function AppProvider({ children }) {
         console.log('🔄 Reloading data into React state...')
         loadData()
 
-        // TOMBSTONE RETENTION FIX:
-        // Instead of clearing all tombstones immediately, we use a retention-based approach:
-        // 1. Failed deletions are always kept for retry
-        // 2. Successfully synced deletions are kept for TOMBSTONE_RETENTION_MS (5 min)
-        // 3. Only tombstones older than retention period AND successfully synced are removed
-        // This prevents the race condition where Firestore subscriptions fire with
-        // cached/stale data after tombstones are cleared
-
-        const currentTombstones = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
-        logDeletion('SYNC_COMPLETE', 'Processing tombstones with retention policy', {
-          totalCount: currentTombstones.length,
-          failedCount: failedDeletions.length,
-          syncedCount: syncedDeletions.length,
-          retentionMinutes: TOMBSTONE_RETENTION_MS / 60000
-        })
-
-        // Build set of successfully synced deletion IDs
-        const syncedDeletionIds = new Set(syncedDeletions.map(d => d.id))
-
-        // Start with failed deletions (always kept for retry)
-        let tombstonesToKeep = [...failedDeletions]
-
-        // Add tombstones that are still within retention period
-        // (even if synced, keep them to prevent race conditions)
-        for (const tombstone of currentTombstones) {
-          // Skip if already in failed deletions
-          if (failedDeletions.some(f => f.id === tombstone.id)) continue
-
-          const deletedAt = new Date(tombstone.deletedAt).getTime()
-          const age = Date.now() - deletedAt
-
-          if (age <= TOMBSTONE_RETENTION_MS) {
-            // Still within retention period - KEEP IT
-            tombstonesToKeep.push(tombstone)
-            logDeletion('SYNC_COMPLETE', '🛡️ Keeping tombstone (within retention period)', {
-              id: tombstone.id?.slice(0, 8) + '...',
-              type: tombstone.type,
-              ageSeconds: Math.round(age / 1000),
-              retentionSeconds: TOMBSTONE_RETENTION_MS / 1000
-            })
-          } else if (syncedDeletionIds.has(tombstone.id)) {
-            // Old AND synced - safe to remove
-            logDeletion('SYNC_COMPLETE', '🧹 Removing old synced tombstone', {
-              id: tombstone.id?.slice(0, 8) + '...',
-              type: tombstone.type,
-              ageMinutes: Math.round(age / 60000)
-            })
-          } else {
-            // Old but NOT synced - keep for retry
-            tombstonesToKeep.push(tombstone)
-            logDeletion('SYNC_COMPLETE', '⚠️ Keeping old unsynced tombstone for retry', {
-              id: tombstone.id?.slice(0, 8) + '...',
-              type: tombstone.type
-            })
-          }
-        }
-
-        // Deduplicate tombstones by ID
-        const uniqueTombstones = Array.from(
-          new Map(tombstonesToKeep.map(t => [t.id, t])).values()
-        )
-
-        logDeletion('SYNC_COMPLETE', 'Final tombstone state after sync', {
-          keptCount: uniqueTombstones.length,
-          removedCount: currentTombstones.length - uniqueTombstones.length
-        })
-
-        localStorage.setItem('meetingflow_deleted_items', JSON.stringify(uniqueTombstones))
+        // PHASE 4: No tombstone management needed - soft delete uses deleted field in Dexie/Firestore
 
         // Build result message
         const downloaded = meetingsMerge.toDownload.length + stakeholdersMerge.toDownload.length + categoriesMerge.toDownload.length

@@ -1063,11 +1063,11 @@ function StorageDiagnostic() {
         firestoreService = module.default
       }
 
-      // Fetch all data from Firestore
+      // Fetch all data from Firestore (correct method names)
       const [meetings, stakeholders, categories] = await Promise.all([
-        firestoreService.getAllMeetings(),
-        firestoreService.getAllStakeholders(),
-        firestoreService.getAllCategories()
+        firestoreService.getMeetings(),
+        firestoreService.getStakeholders(),
+        firestoreService.getStakeholderCategories()
       ])
 
       setFirestoreData({

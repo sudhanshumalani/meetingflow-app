@@ -352,14 +352,18 @@ class FirestoreRestService {
       for (const result of results) {
         if (result.document) {
           const doc = fromFirestoreDocument(result.document)
-          // Filter out deleted documents in JS (avoids needing composite index)
-          if (doc && doc.deleted !== true) {
+          // SYNC FIX: Include ALL documents (including deleted=true)
+          // Tombstones must propagate to Dexie so delete-wins logic works
+          // UI layer filters by !deleted, not the query
+          if (doc) {
             documents.push(doc)
           }
         }
       }
 
-      debugLog(`Query ${collection}: Found ${documents.length} documents (after filtering deleted)`)
+      // Log deleted count for debugging
+      const deletedCount = documents.filter(d => d.deleted).length
+      debugLog(`Query ${collection}: Found ${documents.length} documents (${deletedCount} deleted, ${documents.length - deletedCount} active)`)
       return documents
     } catch (error) {
       debugLog(`Query ${collection} failed: ${error.message}`, 'error')

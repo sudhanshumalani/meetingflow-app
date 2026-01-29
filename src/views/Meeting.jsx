@@ -224,16 +224,33 @@ export default function Meeting() {
 
     console.log('🔄 Loading meeting data for ID:', id)
 
-    // Use Dexie data if available, fallback to AppContext
+    // SYNC FIX: Dexie is THE source of truth for meeting content
+    // Only fall back to AppContext if Dexie returns null (meeting doesn't exist)
+    // NEVER use aiResult as a proxy for "data completeness" - that was a bug
     let meetingData = dexieMeeting
-    if (!meetingData || !meetingData.aiResult) {
-      // Dexie doesn't have full data, try AppContext
-      console.log('📝 Dexie data incomplete, checking AppContext...')
+
+    if (!meetingData) {
+      // Dexie returned null - meeting not in local DB, try AppContext as last resort
+      console.log('📝 Meeting not in Dexie, checking AppContext as fallback...')
       meetingData = (currentMeeting && currentMeeting.id === id)
         ? currentMeeting
-        : appContextMeetings?.find(m => m.id === id) || dexieMeeting || null
+        : appContextMeetings?.find(m => m.id === id) || null
+
+      if (meetingData) {
+        console.warn('⚠️ FALLBACK: Using AppContext data - Dexie should be primary source')
+      }
+    } else {
+      // Dexie has the meeting - trust it even if aiResult is missing
+      console.log('✅ Using Dexie as source of truth (aiResult present:', !!meetingData.aiResult, ', digitalNotes present:', !!meetingData.digitalNotes, ')')
     }
-    console.log('📝 Found meeting:', meetingData ? { id: meetingData.id, title: meetingData.title, hasAiResult: !!meetingData.aiResult } : 'NOT FOUND')
+
+    console.log('📝 Found meeting:', meetingData ? {
+      id: meetingData.id,
+      title: meetingData.title,
+      hasAiResult: !!meetingData.aiResult,
+      hasDigitalNotes: !!meetingData.digitalNotes,
+      hasTranscript: !!meetingData.audioTranscript
+    } : 'NOT FOUND')
 
     if (meetingData) {
       // Mark this meeting as loaded to prevent re-initialization

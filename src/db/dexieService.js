@@ -192,7 +192,34 @@ export async function saveMeeting(meeting, options = {}) {
     }
   })
 
-  console.log(`💾 Saved meeting ${meeting.id.slice(0, 8)}... (v${metadata.version}, ${blobs.length} blobs, deleted=${metadata.deleted || false})`)
+  // POST-SAVE VALIDATION: Read back and verify critical fields
+  // This catches silent IndexedDB failures on iOS
+  try {
+    const verification = await db.meetings.get(meeting.id)
+    const savedBlobs = await db.meetingBlobs.where('meetingId').equals(meeting.id).toArray()
+
+    if (!verification) {
+      console.error(`❌ POST-SAVE VALIDATION FAILED: Meeting ${meeting.id.slice(0, 8)} not found after save!`)
+      throw new Error('Save verification failed: meeting not found after save')
+    }
+
+    if (verification.version !== metadata.version) {
+      console.error(`❌ POST-SAVE VALIDATION FAILED: Version mismatch (expected ${metadata.version}, got ${verification.version})`)
+      throw new Error('Save verification failed: version mismatch')
+    }
+
+    if (blobs.length > 0 && savedBlobs.length !== blobs.length) {
+      console.warn(`⚠️ POST-SAVE WARNING: Blob count mismatch (expected ${blobs.length}, got ${savedBlobs.length})`)
+    }
+
+    console.log(`💾 Saved meeting ${meeting.id.slice(0, 8)}... (v${metadata.version}, ${savedBlobs.length} blobs, deleted=${metadata.deleted || false}) ✓ verified`)
+  } catch (verifyErr) {
+    if (verifyErr.message.includes('verification failed')) {
+      throw verifyErr // Re-throw validation errors
+    }
+    console.error(`❌ POST-SAVE VALIDATION ERROR: ${verifyErr.message}`)
+    // Don't throw for read errors - the write may have succeeded
+  }
 
   // Queue for sync
   if (queueSync) {

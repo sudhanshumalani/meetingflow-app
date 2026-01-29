@@ -154,7 +154,7 @@ export function isSyncInProgress() {
 // SYNC HELPER FUNCTIONS
 // ============================================
 
-// Helper to strip large fields from meetings to save storage space
+// Helper to strip large fields from meetings to save storage space (for localStorage)
 function stripLargeFields(meeting) {
   if (!meeting || typeof meeting !== 'object') return meeting
 
@@ -171,6 +171,62 @@ function stripLargeFields(meeting) {
       return typeof img !== 'string' || !img.startsWith('data:') || img.length <= 10000
     })
   }
+  return stripped
+}
+
+// Configuration for Firestore blob handling
+const MAX_FIRESTORE_IMAGE_SIZE = 100 * 1024 // 100KB
+
+/**
+ * Strip ONLY binary data before sending to Firestore.
+ * Preserves ALL text content (transcript, AI analysis, notes).
+ *
+ * IMPORTANT: Only use this on the Firestore upload path!
+ * Never use when writing to Dexie or passing to UI.
+ *
+ * Trade-off documented:
+ * - Firestore receives: metadata + all text blobs (transcript, aiResult, notes, etc.)
+ * - Firestore does NOT receive: audio blobs, large images (>100KB)
+ * - This enables cross-device sync for all text content
+ */
+function stripBinaryOnly(meeting) {
+  if (!meeting || typeof meeting !== 'object') return meeting
+
+  const stripped = { ...meeting }
+
+  // Remove ONLY binary audio data (never sync to Firestore)
+  delete stripped.audioBlob
+  delete stripped.audioData
+  delete stripped.audioUrl
+  delete stripped.recordingBlob
+
+  // Filter large images (keep small ones for thumbnails)
+  if (stripped.images && Array.isArray(stripped.images)) {
+    stripped.images = stripped.images.filter(img =>
+      typeof img !== 'string' ||
+      !img.startsWith('data:') ||
+      img.length <= MAX_FIRESTORE_IMAGE_SIZE
+    )
+  }
+
+  // Trim speakerData words array (too large for Firestore, can be 5MB+)
+  if (stripped.speakerData?.utterances) {
+    stripped.speakerData = {
+      ...stripped.speakerData,
+      utterances: stripped.speakerData.utterances.map(u => ({
+        ...u,
+        words: undefined // Strip words array
+      }))
+    }
+  }
+
+  // PRESERVE all text content:
+  // - audioTranscript (text, 10-500KB)
+  // - aiResult (text/JSON, 10-100KB)
+  // - digitalNotes (text, 5-50KB)
+  // - notes (text, 1-20KB)
+  // - originalInputs (text)
+
   return stripped
 }
 
@@ -1439,6 +1495,13 @@ export function AppProvider({ children }) {
   }, []) // Empty deps - only run once on mount
 
   // Helper: Merge meetings, keeping newer versions and avoiding duplicates
+  // FIXED: When cloud is newer, trust ALL cloud values for text fields,
+  // but preserve local binary data (audio, large images) since Firestore never stores it.
+  //
+  // Trade-off documented:
+  // - When Firestore has newer timestamp, we trust ALL Firestore values including text fields
+  // - If Firestore clears a field (sets to null/undefined), the local value is also cleared
+  // - Binary data (audio, large images) is always preserved from local since Firestore never stores it
   function mergeMeetingsData(localMeetings, cloudMeetings) {
     const merged = new Map()
 
@@ -1449,20 +1512,32 @@ export function AppProvider({ children }) {
       }
     })
 
-    // Merge cloud meetings, keeping newer version
+    // Merge cloud meetings
     cloudMeetings.forEach(cloudMeeting => {
       if (!cloudMeeting.id) return
 
       const existing = merged.get(cloudMeeting.id)
       if (!existing) {
+        // New from cloud - add it
         merged.set(cloudMeeting.id, cloudMeeting)
       } else {
-        // Keep the one with newer updatedAt
+        // Exists in both - compare timestamps
         const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime()
         const cloudTime = new Date(cloudMeeting.updatedAt || cloudMeeting.createdAt || 0).getTime()
+
         if (cloudTime > existingTime) {
-          merged.set(cloudMeeting.id, cloudMeeting)
+          // Cloud is newer - trust ALL cloud values for text fields
+          // Only preserve local binary data (Firestore never stores these)
+          merged.set(cloudMeeting.id, {
+            ...cloudMeeting,
+            // Binary data is local-only, always preserve from local
+            audioBlob: existing.audioBlob,
+            audioData: existing.audioData,
+            audioUrl: existing.audioUrl,
+            recordingBlob: existing.recordingBlob,
+          })
         }
+        // If local is newer or equal, keep local (already in map)
       }
     })
 
@@ -1605,80 +1680,66 @@ export function AppProvider({ children }) {
       console.log('📝 AppContext: Adding meeting with ID:', meetingWithId.id)
       console.log('📝 AppContext: Current meetings count before add:', state.meetings.length)
 
-      // Track if localStorage save succeeded
+      // Track save status
+      let dexieSaveSuccess = false
+      let firestoreSaveSuccess = false
       let localStorageSaveSuccess = false
-      let localStorageError = null
+      let errors = []
 
-      // 1. First dispatch to update React state
+      // 1. First dispatch to update React state (immediate UI update)
       dispatch({ type: 'ADD_MEETING', payload: meetingWithId })
 
-      // 2. Immediately save to localStorage (sync, guaranteed)
+      // 2. DEXIE FIRST - Primary local storage (has full blob data)
       try {
-        const currentMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-        // Add to front, avoid duplicates
-        const updatedMeetings = [meetingWithId, ...currentMeetings.filter(m => m.id !== meetingWithId.id)]
-
-        // Check size before saving
-        const dataSize = JSON.stringify(updatedMeetings).length
-        console.log('📝 AppContext: Meeting data size:', Math.round(dataSize / 1024), 'KB')
-
-        localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
-        console.log('✅ AppContext: Meeting saved to localStorage:', meetingWithId.id)
-        localStorageSaveSuccess = true
-
-        // Also save to Dexie (for useMeetings() hook reactivity)
-        try {
-          await saveMeetingToDexie(meetingWithId, { queueSync: false })
-          console.log('✅ AppContext: Meeting saved to Dexie:', meetingWithId.id)
-        } catch (dexieErr) {
-          console.warn('⚠️ AppContext: Failed to save to Dexie (non-fatal):', dexieErr.message)
-        }
-      } catch (localErr) {
-        console.error('❌ AppContext: Failed to save to localStorage:', localErr.name, localErr.message)
-        localStorageError = localErr
-
-        // Check if it's a quota error
-        if (localErr.name === 'QuotaExceededError' || localErr.message?.includes('quota')) {
-          console.error('❌ AppContext: localStorage QUOTA EXCEEDED - meeting may not persist!')
-          // Dispatch error event for UI
-          window.dispatchEvent(new CustomEvent('meetingflow-storage-error', {
-            detail: {
-              type: 'quota_exceeded',
-              message: 'Storage is full. Please delete old meetings to save new ones.',
-              meetingId: meetingWithId.id
-            }
-          }))
-          // Return failure so UI can show error
-          return {
-            success: false,
-            error: 'Storage quota exceeded. Please delete old meetings to free up space.',
-            meeting: meetingWithId
-          }
-        }
+        await saveMeetingToDexie(meetingWithId, { queueSync: false })
+        console.log('✅ AppContext: Meeting saved to Dexie (PRIMARY):', meetingWithId.id)
+        dexieSaveSuccess = true
+      } catch (dexieErr) {
+        console.error('❌ AppContext: Failed to save to Dexie:', dexieErr.message)
+        errors.push(`Dexie: ${dexieErr.message}`)
       }
 
-      // 3. Save to Firestore for cloud sync (await to ensure it completes)
+      // 3. Firestore - Cloud sync (with text blobs, no binary)
       if (ENABLE_FIRESTORE) {
         try {
           const firestoreService = await getFirestoreService()
           if (firestoreService) {
-            await firestoreService.saveMeeting(meetingWithId)
-            console.log('✅ AppContext: Meeting saved to Firestore:', meetingWithId.id)
+            // Use stripBinaryOnly to preserve text blobs but remove audio data
+            await firestoreService.saveMeeting(stripBinaryOnly(meetingWithId))
+            console.log('✅ AppContext: Meeting saved to Firestore (with text blobs):', meetingWithId.id)
+            firestoreSaveSuccess = true
           }
-          return { success: true, meeting: meetingWithId, localStorageSaved: localStorageSaveSuccess }
         } catch (err) {
           console.error('❌ AppContext: Failed to save to Firestore:', meetingWithId.id, err.message)
-          // Return success only if localStorage worked
-          return {
-            success: localStorageSaveSuccess,
-            meeting: meetingWithId,
-            firestoreError: err.message,
-            localStorageError: localStorageError?.message
-          }
+          errors.push(`Firestore: ${err.message}`)
         }
       }
 
-      return { success: localStorageSaveSuccess, meeting: meetingWithId, localStorageError: localStorageError?.message }
+      // 4. localStorage - Legacy/fallback (stripped data for compatibility)
+      try {
+        const currentMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        const updatedMeetings = [stripLargeFields(meetingWithId), ...currentMeetings.filter(m => m.id !== meetingWithId.id)]
+        const dataSize = JSON.stringify(updatedMeetings).length
+        console.log('📝 AppContext: localStorage data size:', Math.round(dataSize / 1024), 'KB')
+        localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
+        console.log('✅ AppContext: Meeting saved to localStorage (legacy):', meetingWithId.id)
+        localStorageSaveSuccess = true
+      } catch (localErr) {
+        console.warn('⚠️ AppContext: Failed to save to localStorage (non-critical):', localErr.message)
+        errors.push(`localStorage: ${localErr.message}`)
+        // Don't fail the whole operation for localStorage errors - Dexie is primary
+      }
+
+      // Success if Dexie worked (primary storage)
+      const success = dexieSaveSuccess
+      return {
+        success,
+        meeting: meetingWithId,
+        dexieSaved: dexieSaveSuccess,
+        firestoreSaved: firestoreSaveSuccess,
+        localStorageSaved: localStorageSaveSuccess,
+        errors: errors.length > 0 ? errors : undefined
+      }
     },
 
     updateMeeting: async (meeting) => {
@@ -1689,78 +1750,68 @@ export function AppProvider({ children }) {
         updatedAt: new Date().toISOString()
       }
 
-      // Track if localStorage save succeeded
+      // Track save status
+      let dexieSaveSuccess = false
+      let firestoreSaveSuccess = false
       let localStorageSaveSuccess = false
-      let localStorageError = null
+      let errors = []
 
-      // 1. Dispatch to update React state
+      // 1. Dispatch to update React state (immediate UI update)
       dispatch({ type: 'UPDATE_MEETING', payload: updatedMeeting })
 
-      // 2. Immediately save to localStorage
+      // 2. DEXIE FIRST - Primary local storage (has full blob data)
       try {
-        const currentMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-        const updatedMeetings = currentMeetings.map(m =>
-          m.id === updatedMeeting.id ? updatedMeeting : m
-        )
-
-        // Check size before saving
-        const dataSize = JSON.stringify(updatedMeetings).length
-        console.log('📝 AppContext: Updated meeting data size:', Math.round(dataSize / 1024), 'KB')
-
-        localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
-        console.log('✅ AppContext: Meeting updated in localStorage:', updatedMeeting.id)
-        localStorageSaveSuccess = true
-
-        // Also save to Dexie (for useMeetings() hook reactivity)
-        try {
-          await saveMeetingToDexie(updatedMeeting, { queueSync: false })
-          console.log('✅ AppContext: Meeting updated in Dexie:', updatedMeeting.id)
-        } catch (dexieErr) {
-          console.warn('⚠️ AppContext: Failed to update Dexie (non-fatal):', dexieErr.message)
-        }
-      } catch (localErr) {
-        console.error('❌ AppContext: Failed to update localStorage:', localErr.name, localErr.message)
-        localStorageError = localErr
-
-        // Check if it's a quota error
-        if (localErr.name === 'QuotaExceededError' || localErr.message?.includes('quota')) {
-          console.error('❌ AppContext: localStorage QUOTA EXCEEDED on update!')
-          window.dispatchEvent(new CustomEvent('meetingflow-storage-error', {
-            detail: {
-              type: 'quota_exceeded',
-              message: 'Storage is full. Please delete old meetings to save changes.',
-              meetingId: updatedMeeting.id
-            }
-          }))
-          return {
-            success: false,
-            error: 'Storage quota exceeded. Please delete old meetings to free up space.',
-            meeting: updatedMeeting
-          }
-        }
+        await saveMeetingToDexie(updatedMeeting, { queueSync: false })
+        console.log('✅ AppContext: Meeting updated in Dexie (PRIMARY):', updatedMeeting.id)
+        dexieSaveSuccess = true
+      } catch (dexieErr) {
+        console.error('❌ AppContext: Failed to update Dexie:', dexieErr.message)
+        errors.push(`Dexie: ${dexieErr.message}`)
       }
 
-      // 3. Save to Firestore for cloud sync
+      // 3. Firestore - Cloud sync (with text blobs, no binary)
       if (ENABLE_FIRESTORE) {
         try {
           const firestoreService = await getFirestoreService()
           if (firestoreService) {
-            await firestoreService.saveMeeting(updatedMeeting)
-            console.log('✅ AppContext: Meeting updated in Firestore:', updatedMeeting.id)
+            // Use stripBinaryOnly to preserve text blobs but remove audio data
+            await firestoreService.saveMeeting(stripBinaryOnly(updatedMeeting))
+            console.log('✅ AppContext: Meeting updated in Firestore (with text blobs):', updatedMeeting.id)
+            firestoreSaveSuccess = true
           }
-          return { success: true, meeting: updatedMeeting, localStorageSaved: localStorageSaveSuccess }
         } catch (err) {
           console.error('❌ AppContext: Failed to update Firestore:', updatedMeeting.id, err.message)
-          return {
-            success: localStorageSaveSuccess,
-            meeting: updatedMeeting,
-            firestoreError: err.message,
-            localStorageError: localStorageError?.message
-          }
+          errors.push(`Firestore: ${err.message}`)
         }
       }
 
-      return { success: localStorageSaveSuccess, meeting: updatedMeeting, localStorageError: localStorageError?.message }
+      // 4. localStorage - Legacy/fallback (stripped data for compatibility)
+      try {
+        const currentMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+        const updatedMeetings = currentMeetings.map(m =>
+          m.id === updatedMeeting.id ? stripLargeFields(updatedMeeting) : m
+        )
+        const dataSize = JSON.stringify(updatedMeetings).length
+        console.log('📝 AppContext: localStorage data size:', Math.round(dataSize / 1024), 'KB')
+        localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
+        console.log('✅ AppContext: Meeting updated in localStorage (legacy):', updatedMeeting.id)
+        localStorageSaveSuccess = true
+      } catch (localErr) {
+        console.warn('⚠️ AppContext: Failed to update localStorage (non-critical):', localErr.message)
+        errors.push(`localStorage: ${localErr.message}`)
+        // Don't fail the whole operation for localStorage errors - Dexie is primary
+      }
+
+      // Success if Dexie worked (primary storage)
+      const success = dexieSaveSuccess
+      return {
+        success,
+        meeting: updatedMeeting,
+        dexieSaved: dexieSaveSuccess,
+        firestoreSaved: firestoreSaveSuccess,
+        localStorageSaved: localStorageSaveSuccess,
+        errors: errors.length > 0 ? errors : undefined
+      }
     },
     deleteMeeting: async (meetingId) => {
       logDeletion('DELETE_ACTION', 'Starting deletion', { meetingId })
@@ -1980,20 +2031,55 @@ export function AppProvider({ children }) {
         console.log('🔄 Stripping large fields from cloud data...')
         cloudMeetings = cloudMeetings.map(m => stripLargeFields(m))
 
-        // Read local data
-        console.log('🔄 Reading local data...')
+        // Read local data - DEXIE FIRST (has full blob data)
+        console.log('🔄 Reading local data from Dexie (primary source)...')
         let localMeetings = []
         let localStakeholders = []
         let localCategories = []
         let localDeletedItems = []
 
         try {
-          localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-          localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-          localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+          // Import dynamically to avoid circular deps
+          const dexieService = await import('../db/dexieService')
+          const { getAllMeetingMetadata, getFullMeeting, getAllStakeholders, getAllCategories } = dexieService
+
+          // Get meeting metadata first
+          const meetingMetadata = await getAllMeetingMetadata()
+          console.log(`🔄 Found ${meetingMetadata.length} meetings in Dexie metadata`)
+
+          // Load full meetings with blobs (parallel for speed)
+          localMeetings = await Promise.all(
+            meetingMetadata.map(async (meta) => {
+              try {
+                const full = await getFullMeeting(meta.id)
+                return full || meta // Fall back to metadata if blob load fails
+              } catch (e) {
+                console.warn(`⚠️ Failed to load full meeting ${meta.id}, using metadata:`, e.message)
+                return meta
+              }
+            })
+          )
+          console.log(`🔄 Loaded ${localMeetings.length} full meetings from Dexie`)
+
+          // Load stakeholders and categories from Dexie
+          localStakeholders = await getAllStakeholders() || []
+          localCategories = await getAllCategories() || []
+
+          // Tombstones still in localStorage (they're small and need quick access)
           localDeletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
-        } catch (e) {
-          console.warn('🔄 Failed to read from localStorage:', e)
+
+        } catch (dexieErr) {
+          console.error('❌ Failed to read from Dexie, falling back to localStorage:', dexieErr)
+          // Fallback to localStorage (legacy) - may not have full blob data
+          try {
+            localMeetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+            localStakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+            localCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+            localDeletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
+            console.warn('⚠️ Using localStorage fallback - blob data may be incomplete')
+          } catch (e) {
+            console.warn('🔄 Failed to read from localStorage:', e)
+          }
         }
 
         console.log('🔄 Local data:', {
@@ -2112,10 +2198,11 @@ export function AppProvider({ children }) {
         let uploadedCount = 0
         const uploadErrors = []
 
-        console.log('🔄 Uploading newer local meetings...')
+        console.log('🔄 Uploading newer local meetings (with text blobs, no binary)...')
         for (const meeting of meetingsMerge.toUpload) {
           try {
-            const result = await firestoreService.saveMeeting(meeting)
+            // Use stripBinaryOnly to preserve text blobs but remove audio data
+            const result = await firestoreService.saveMeeting(stripBinaryOnly(meeting))
             if (result.success) uploadedCount++
             else uploadErrors.push(`Meeting ${meeting.id}: ${result.reason}`)
           } catch (e) {

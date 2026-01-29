@@ -1404,6 +1404,20 @@ export function AppProvider({ children }) {
               })
               dispatch({ type: 'SET_MEETINGS', payload: mergedMeetings })
               localStorage.setItem('meetingflow_meetings', JSON.stringify(mergedMeetings))
+
+              // CRITICAL: Also save to Dexie so useMeetings() hook picks up new data
+              // This is essential for Home.jsx which uses useMeetings() from Dexie
+              try {
+                bulkSaveMeetings(mergedMeetings, { queueSync: false })
+                  .then(result => {
+                    console.log('🔥 Firestore: Subscription - saved', result.saved, 'meetings to Dexie')
+                  })
+                  .catch(err => {
+                    console.warn('🔥 Firestore: Subscription - failed to save to Dexie:', err.message)
+                  })
+              } catch (dexieErr) {
+                console.warn('🔥 Firestore: Subscription - Dexie save error:', dexieErr.message)
+              }
             }
           } catch (callbackErr) {
             console.error('🔥 Firestore: Error processing meetings callback:', callbackErr)
@@ -1435,6 +1449,19 @@ export function AppProvider({ children }) {
             if (mergedStakeholders.length > 0 || filteredLocalStakeholders.length === 0) {
               dispatch({ type: 'SET_STAKEHOLDERS', payload: mergedStakeholders })
               localStorage.setItem('meetingflow_stakeholders', JSON.stringify(mergedStakeholders))
+
+              // Also save to Dexie for hook reactivity
+              try {
+                bulkSaveStakeholders(mergedStakeholders, { queueSync: false })
+                  .then(result => {
+                    console.log('🔥 Firestore: Subscription - saved', result.saved, 'stakeholders to Dexie')
+                  })
+                  .catch(err => {
+                    console.warn('🔥 Firestore: Subscription - failed to save stakeholders to Dexie:', err.message)
+                  })
+              } catch (dexieErr) {
+                console.warn('🔥 Firestore: Subscription - Dexie stakeholders save error:', dexieErr.message)
+              }
             }
           } catch (callbackErr) {
             console.error('🔥 Firestore: Error processing stakeholders callback:', callbackErr)
@@ -1466,6 +1493,19 @@ export function AppProvider({ children }) {
             if (mergedCategories.length > 0 || filteredLocalCategories.length === 0) {
               dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: mergedCategories })
               localStorage.setItem('meetingflow_stakeholder_categories', JSON.stringify(mergedCategories))
+
+              // Also save to Dexie for hook reactivity
+              try {
+                bulkSaveCategories(mergedCategories, { queueSync: false })
+                  .then(result => {
+                    console.log('🔥 Firestore: Subscription - saved', result.saved, 'categories to Dexie')
+                  })
+                  .catch(err => {
+                    console.warn('🔥 Firestore: Subscription - failed to save categories to Dexie:', err.message)
+                  })
+              } catch (dexieErr) {
+                console.warn('🔥 Firestore: Subscription - Dexie categories save error:', dexieErr.message)
+              }
             }
           } catch (callbackErr) {
             console.error('🔥 Firestore: Error processing categories callback:', callbackErr)

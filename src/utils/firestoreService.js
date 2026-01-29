@@ -365,7 +365,17 @@ class FirestoreService {
                   lastModified: data.lastModified?.toDate?.() || data.lastModified
                 })
               })
-              debugLog(`onSnapshot: Received ${meetings.length} meetings`)
+
+              // DEBUG: Log deleted status breakdown
+              const deletedMeetings = meetings.filter(m => m.deleted)
+              const activeMeetings = meetings.filter(m => !m.deleted)
+              debugLog(`onSnapshot: Received ${meetings.length} meetings (${deletedMeetings.length} deleted, ${activeMeetings.length} active)`)
+
+              // DEBUG: Log details of deleted meetings
+              if (deletedMeetings.length > 0) {
+                debugLog(`onSnapshot DELETED meetings: ${deletedMeetings.map(m => m.id?.slice(0,20) + '(deleted=' + m.deleted + ')').join(', ')}`)
+              }
+
               callback(meetings)
             } catch (callbackErr) {
               debugLog(`onSnapshot callback error: ${callbackErr.message}`, 'error')

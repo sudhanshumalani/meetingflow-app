@@ -1085,7 +1085,20 @@ export function AppProvider({ children }) {
         // SYNC FIX: NEVER skip subscription callbacks - we must always capture tombstones
         const unsubMeetings = firestoreService.subscribeMeetings((firestoreMeetings) => {
           try {
-            console.log('🔥 Subscription: Received', firestoreMeetings.length, 'meetings from cloud')
+            // DEBUG: Log deleted status of all meetings
+            const deletedFromCloud = firestoreMeetings.filter(m => m.deleted)
+            const activeFromCloud = firestoreMeetings.filter(m => !m.deleted)
+            console.log(`🔥 Subscription: Received ${firestoreMeetings.length} meetings (${deletedFromCloud.length} deleted, ${activeFromCloud.length} active)`)
+
+            // DEBUG: Log specific details for recently modified meetings
+            if (deletedFromCloud.length > 0) {
+              console.log('🔥 DEBUG: Deleted meetings from Firestore:', deletedFromCloud.map(m => ({
+                id: m.id?.slice(0, 20),
+                deleted: m.deleted,
+                deletedAt: m.deletedAt,
+                updatedAt: m.updatedAt
+              })))
+            }
 
             // SYNC FIX: Always save ALL data to Dexie FIRST (including deleted=true tombstones)
             // This ensures delete propagation even during locks
@@ -1573,18 +1586,29 @@ export function AppProvider({ children }) {
       // PHASE 4: Soft delete - set deleted=true instead of removing
       // The deleted field syncs to Firestore like any other field
       acquireInteractionLock('deleteMeeting')
-      console.log('🗑️ [SOFT DELETE] Starting soft delete for:', meetingId)
+      console.log('🗑️ [DELETE] ========== SOFT DELETE STARTING ==========')
+      console.log('🗑️ [DELETE] Meeting ID:', meetingId)
+      console.log('🗑️ [DELETE] Timestamp:', new Date().toISOString())
 
       try {
         // 1. Update React state to hide the meeting
         dispatch({ type: 'DELETE_MEETING', payload: meetingId })
+        console.log('🗑️ [DELETE] Step 1: React state updated (meeting hidden from UI)')
 
         // 2. Soft delete in Dexie (sets deleted=true, updatedAt=now)
         try {
           await softDeleteMeetingInDexie(meetingId, { queueSync: false })
-          console.log('🗑️ [SOFT DELETE] Dexie soft delete completed:', meetingId)
+          console.log('🗑️ [DELETE] Step 2: Dexie soft delete completed')
+
+          // DEBUG: Verify Dexie has deleted=true
+          const dexieCheck = await getFullMeeting(meetingId)
+          console.log('🗑️ [DELETE] Step 2 VERIFY: Dexie meeting after soft delete:', {
+            id: dexieCheck?.id?.slice(0, 20),
+            deleted: dexieCheck?.deleted,
+            deletedAt: dexieCheck?.deletedAt
+          })
         } catch (dexieErr) {
-          console.error('🗑️ [SOFT DELETE] Dexie soft delete FAILED:', dexieErr.message)
+          console.error('🗑️ [DELETE] Step 2 FAILED:', dexieErr.message)
         }
 
         // 3. Sync deleted=true to Firestore (not a delete, just an update)
@@ -1595,23 +1619,34 @@ export function AppProvider({ children }) {
               // Get the meeting from Dexie to sync with deleted=true
               const deletedMeeting = await getFullMeeting(meetingId)
               if (deletedMeeting) {
-                // Save the meeting with deleted=true to Firestore
-                await firestoreService.saveMeeting(stripBinaryOnly({
+                const dataToSync = stripBinaryOnly({
                   ...deletedMeeting,
                   deleted: true,
+                  deletedAt: deletedMeeting.deletedAt || new Date().toISOString(),
                   updatedAt: new Date().toISOString()
-                }))
-                console.log('🗑️ [SOFT DELETE] Firestore sync completed (deleted=true):', meetingId)
+                })
+                console.log('🗑️ [DELETE] Step 3: Syncing to Firestore:', {
+                  id: dataToSync.id?.slice(0, 20),
+                  deleted: dataToSync.deleted,
+                  deletedAt: dataToSync.deletedAt
+                })
+                // Save the meeting with deleted=true to Firestore
+                await firestoreService.saveMeeting(dataToSync)
+                console.log('🗑️ [DELETE] Step 3: Firestore sync COMPLETED')
+              } else {
+                console.error('🗑️ [DELETE] Step 3 FAILED: Could not retrieve meeting from Dexie')
               }
             }
           } catch (err) {
-            console.error('🗑️ [SOFT DELETE] Firestore sync FAILED:', err.message)
+            console.error('🗑️ [DELETE] Step 3 FAILED:', err.message)
             // The outbox will retry this later
           }
         }
+        console.log('🗑️ [DELETE] ========== SOFT DELETE COMPLETE ==========')
       } finally {
         // Release lock after a short delay to ensure state has settled
         setTimeout(() => {
+          console.log('🗑️ [DELETE] Releasing interaction lock')
           releaseInteractionLock()
         }, 1000) // 1 second grace period
       }

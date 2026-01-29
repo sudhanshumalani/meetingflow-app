@@ -131,6 +131,8 @@ export async function hasMeetingBlobs(meetingId) {
 /**
  * Save a meeting (creates or updates)
  * Automatically splits into metadata and blobs
+ *
+ * SYNC FIX: Implements delete-wins logic to prevent resurrection of deleted meetings
  */
 export async function saveMeeting(meeting, options = {}) {
   const {
@@ -146,12 +148,31 @@ export async function saveMeeting(meeting, options = {}) {
   const metadata = extractMeetingMetadata(meeting)
   const blobs = extractMeetingBlobs(meeting)
 
-  // Update version
+  // Check existing meeting for delete-wins logic
   const existingMeta = await db.meetings.get(meeting.id)
+
+  // SYNC FIX: DELETE-WINS LOGIC
+  // If existing meeting is deleted, don't overwrite with non-deleted version
+  if (existingMeta?.deleted && !meeting.deleted) {
+    console.log(`🛡️ DELETE-WINS: Rejecting non-deleted save for deleted meeting ${meeting.id.slice(0, 8)}...`)
+    console.log(`   Existing: deleted=${existingMeta.deleted}, deletedAt=${existingMeta.deletedAt}`)
+    console.log(`   Incoming: deleted=${meeting.deleted}, updatedAt=${meeting.updatedAt}`)
+    // Skip saving - keep the deleted state
+    return existingMeta
+  }
+
+  // If incoming is deleted, always accept it (delete wins)
+  if (meeting.deleted) {
+    metadata.deleted = true
+    metadata.deletedAt = meeting.deletedAt || new Date().toISOString()
+    console.log(`🗑️ SAVE: Accepting deleted meeting ${meeting.id.slice(0, 8)}... (delete-wins)`)
+  }
+
+  // Update version
   metadata.version = (existingMeta?.version || 0) + 1
   metadata.localState = 'hot'
   metadata.lastAccessedAt = new Date().toISOString()
-  metadata.updatedAt = new Date().toISOString()
+  metadata.updatedAt = meeting.updatedAt || new Date().toISOString()
 
   // Save in transaction
   await db.transaction('rw', [db.meetings, db.meetingBlobs, db.analysisIndex], async () => {
@@ -171,7 +192,7 @@ export async function saveMeeting(meeting, options = {}) {
     }
   })
 
-  console.log(`💾 Saved meeting ${meeting.id.slice(0, 8)}... (v${metadata.version}, ${blobs.length} blobs)`)
+  console.log(`💾 Saved meeting ${meeting.id.slice(0, 8)}... (v${metadata.version}, ${blobs.length} blobs, deleted=${metadata.deleted || false})`)
 
   // Queue for sync
   if (queueSync) {
@@ -282,6 +303,7 @@ export async function getStakeholder(stakeholderId) {
 
 /**
  * Save a stakeholder
+ * SYNC FIX: Implements delete-wins logic
  */
 export async function saveStakeholder(stakeholder, options = {}) {
   const { queueSync = true, operation = 'UPDATE' } = options
@@ -291,14 +313,24 @@ export async function saveStakeholder(stakeholder, options = {}) {
   }
 
   const existing = await db.stakeholders.get(stakeholder.id)
+
+  // SYNC FIX: DELETE-WINS LOGIC
+  if (existing?.deleted && !stakeholder.deleted) {
+    console.log(`🛡️ DELETE-WINS: Rejecting non-deleted save for deleted stakeholder ${stakeholder.id.slice(0, 8)}...`)
+    return existing
+  }
+
   const updatedStakeholder = {
     ...stakeholder,
     version: (existing?.version || 0) + 1,
-    updatedAt: new Date().toISOString()
+    updatedAt: stakeholder.updatedAt || new Date().toISOString(),
+    // Preserve deleted state if incoming is deleted
+    deleted: stakeholder.deleted || false,
+    deletedAt: stakeholder.deleted ? (stakeholder.deletedAt || new Date().toISOString()) : undefined
   }
 
   await db.stakeholders.put(updatedStakeholder)
-  console.log(`💾 Saved stakeholder ${stakeholder.id.slice(0, 8)}...`)
+  console.log(`💾 Saved stakeholder ${stakeholder.id.slice(0, 8)}... (deleted=${updatedStakeholder.deleted})`)
 
   if (queueSync) {
     await queueStakeholderChange(updatedStakeholder, operation)
@@ -364,6 +396,7 @@ export async function getAllCategories() {
 
 /**
  * Save a category
+ * SYNC FIX: Implements delete-wins logic
  */
 export async function saveCategory(category, options = {}) {
   const { queueSync = true, operation = 'UPDATE' } = options
@@ -373,14 +406,24 @@ export async function saveCategory(category, options = {}) {
     throw new Error('Category must have an id or key')
   }
 
+  const existing = await db.stakeholderCategories.get(id)
+
+  // SYNC FIX: DELETE-WINS LOGIC
+  if (existing?.deleted && !category.deleted) {
+    console.log(`🛡️ DELETE-WINS: Rejecting non-deleted save for deleted category ${id}`)
+    return existing
+  }
+
   const categoryWithId = {
     ...category,
     id,
-    updatedAt: new Date().toISOString()
+    updatedAt: category.updatedAt || new Date().toISOString(),
+    deleted: category.deleted || false,
+    deletedAt: category.deleted ? (category.deletedAt || new Date().toISOString()) : undefined
   }
 
   await db.stakeholderCategories.put(categoryWithId)
-  console.log(`💾 Saved category ${id}`)
+  console.log(`💾 Saved category ${id} (deleted=${categoryWithId.deleted})`)
 
   if (queueSync) {
     await queueCategoryChange(categoryWithId, operation)

@@ -22,9 +22,10 @@ import SyncConflictResolver from '../components/sync/SyncConflictResolver'
 // IMPORTANT: Firestore service is loaded based on platform
 // - iOS: Uses REST API service (works on iOS Safari)
 // - Desktop: Uses Firebase SDK service
-import { Database, Upload, CheckCircle, Bug } from 'lucide-react'
+import { Database, Upload, CheckCircle, Bug, Download, HardDrive, AlertTriangle } from 'lucide-react'
 import FirebaseDebugPanel from '../components/FirebaseDebugPanel'
 import localforage from 'localforage'
+import db from '../db/meetingFlowDB'
 
 // Lazy-loaded IndexedDB instance - only created when needed to avoid iOS crashes
 let syncStorageInstance = null
@@ -1022,10 +1023,262 @@ export default function Settings() {
 
             {/* Firebase Debug Panel */}
             <FirebaseDebugPanel />
+
+            {/* Storage Diagnostic Tool - For Data Recovery */}
+            <StorageDiagnostic />
           </div>
         )}
 
       </div>
+    </div>
+  )
+}
+
+// Storage Diagnostic Component - Shows data in all storage locations
+function StorageDiagnostic() {
+  const [diagnosticData, setDiagnosticData] = useState(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [expandedStorage, setExpandedStorage] = useState(null)
+
+  const runDiagnostic = async () => {
+    setIsLoading(true)
+    const results = {
+      localStorage: { meetings: [], stakeholders: [], categories: [], error: null },
+      localforage: { meetings: [], stakeholders: [], categories: [], error: null },
+      dexie: { meetings: [], blobs: [], stakeholders: [], categories: [], error: null }
+    }
+
+    // Check localStorage
+    try {
+      results.localStorage.meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+      results.localStorage.stakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+      results.localStorage.categories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+    } catch (e) {
+      results.localStorage.error = e.message
+    }
+
+    // Check localforage (MeetingFlowSync)
+    try {
+      const syncStorage = localforage.createInstance({
+        name: 'MeetingFlowSync',
+        storeName: 'sync_data'
+      })
+      results.localforage.meetings = await syncStorage.getItem('meetings') || []
+      results.localforage.stakeholders = await syncStorage.getItem('stakeholders') || []
+      results.localforage.categories = await syncStorage.getItem('categories') || []
+    } catch (e) {
+      results.localforage.error = e.message
+    }
+
+    // Check Dexie (MeetingFlowDB)
+    try {
+      await db.open()
+      results.dexie.meetings = await db.meetings.toArray()
+      results.dexie.blobs = await db.meetingBlobs.toArray()
+      results.dexie.stakeholders = await db.stakeholders.toArray()
+      results.dexie.categories = await db.stakeholderCategories.toArray()
+    } catch (e) {
+      results.dexie.error = e.message
+    }
+
+    setDiagnosticData(results)
+    setIsLoading(false)
+  }
+
+  const downloadStorageData = (storageName, data) => {
+    const backup = {
+      source: storageName,
+      exportedAt: new Date().toISOString(),
+      ...data
+    }
+    const jsonString = JSON.stringify(backup, null, 2)
+    const blob = new Blob([jsonString], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `meetingflow-${storageName}-backup-${Date.now()}.json`
+    document.body.appendChild(a)
+    a.click()
+    setTimeout(() => {
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }, 100)
+  }
+
+  const checkHasBlobData = (meetings) => {
+    if (!meetings || meetings.length === 0) return { hasBlobs: false, count: 0 }
+    const withBlobs = meetings.filter(m => m.aiResult || m.digitalNotes || m.audioTranscript || m.transcript)
+    return { hasBlobs: withBlobs.length > 0, count: withBlobs.length }
+  }
+
+  const renderStorageCard = (name, displayName, data, icon) => {
+    if (!data) return null
+    const meetingCount = data.meetings?.length || 0
+    const blobInfo = name === 'dexie'
+      ? { hasBlobs: (data.blobs?.length || 0) > 0, count: data.blobs?.length || 0 }
+      : checkHasBlobData(data.meetings)
+    const isExpanded = expandedStorage === name
+
+    return (
+      <div className="border rounded-lg overflow-hidden">
+        <div
+          className={`p-4 cursor-pointer ${meetingCount > 0 ? 'bg-green-50' : 'bg-gray-50'}`}
+          onClick={() => setExpandedStorage(isExpanded ? null : name)}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {icon}
+              <div>
+                <h4 className="font-medium text-gray-900">{displayName}</h4>
+                <p className="text-sm text-gray-600">
+                  {meetingCount} meetings, {data.stakeholders?.length || 0} stakeholders
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {blobInfo.hasBlobs ? (
+                <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
+                  ✓ Has blob data ({blobInfo.count})
+                </span>
+              ) : meetingCount > 0 ? (
+                <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">
+                  ⚠ No blob data
+                </span>
+              ) : null}
+              <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
+            </div>
+          </div>
+          {data.error && (
+            <p className="mt-2 text-sm text-red-600">Error: {data.error}</p>
+          )}
+        </div>
+
+        {isExpanded && (
+          <div className="p-4 border-t bg-white">
+            <div className="mb-4">
+              <button
+                onClick={() => downloadStorageData(name, data)}
+                className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+              >
+                <Download className="w-4 h-4" />
+                Download {displayName} Data
+              </button>
+            </div>
+
+            {meetingCount > 0 && (
+              <div>
+                <h5 className="font-medium text-gray-700 mb-2">Sample Meeting Data:</h5>
+                <div className="bg-gray-100 p-3 rounded text-xs font-mono overflow-auto max-h-60">
+                  {data.meetings.slice(0, 2).map((m, i) => (
+                    <div key={i} className="mb-4 pb-4 border-b border-gray-300 last:border-0">
+                      <div><strong>Title:</strong> {m.title}</div>
+                      <div><strong>ID:</strong> {m.id}</div>
+                      <div><strong>Date:</strong> {m.date}</div>
+                      <div><strong>Has aiResult:</strong> {m.aiResult ? `✅ Yes (${typeof m.aiResult === 'string' ? m.aiResult.length : JSON.stringify(m.aiResult).length} chars)` : '❌ No'}</div>
+                      <div><strong>Has digitalNotes:</strong> {m.digitalNotes ? '✅ Yes' : '❌ No'}</div>
+                      <div><strong>Has transcript:</strong> {(m.audioTranscript || m.transcript) ? '✅ Yes' : '❌ No'}</div>
+                      <div><strong>Has notes:</strong> {m.notes ? '✅ Yes' : '❌ No'}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {name === 'dexie' && data.blobs?.length > 0 && (
+              <div className="mt-4">
+                <h5 className="font-medium text-gray-700 mb-2">Dexie Blobs ({data.blobs.length} total):</h5>
+                <div className="bg-gray-100 p-3 rounded text-xs font-mono overflow-auto max-h-40">
+                  {data.blobs.slice(0, 5).map((b, i) => (
+                    <div key={i} className="mb-2">
+                      <span className="text-blue-600">{b.type}</span> for meeting {b.meetingId?.slice(0,8)}...
+                      ({b.sizeBytes ? `${Math.round(b.sizeBytes/1024)}KB` : 'unknown size'})
+                    </div>
+                  ))}
+                  {data.blobs.length > 5 && <div>...and {data.blobs.length - 5} more</div>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border p-6 mt-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <HardDrive className="w-5 h-5" />
+            Storage Diagnostic Tool
+          </h3>
+          <p className="text-sm text-gray-600">Check all storage locations for your meeting data</p>
+        </div>
+      </div>
+
+      <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-yellow-800">
+            <strong>Data Recovery:</strong> Click "Run Diagnostic" to see where your data is stored.
+            Look for the storage with "Has blob data" - that contains your complete meeting data (AI analysis, notes, transcripts).
+            Download the data from that storage to recover it.
+          </p>
+        </div>
+      </div>
+
+      <button
+        onClick={runDiagnostic}
+        disabled={isLoading}
+        className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-colors mb-4 ${
+          isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700 text-white'
+        }`}
+      >
+        {isLoading ? (
+          <>
+            <RefreshCw className="w-5 h-5 animate-spin" />
+            Scanning Storage...
+          </>
+        ) : (
+          <>
+            <Database className="w-5 h-5" />
+            Run Diagnostic
+          </>
+        )}
+      </button>
+
+      {diagnosticData && (
+        <div className="space-y-3">
+          {renderStorageCard('localStorage', 'localStorage (Browser)', diagnosticData.localStorage,
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <span className="text-blue-600 text-lg">LS</span>
+            </div>
+          )}
+          {renderStorageCard('localforage', 'localforage (IndexedDB - MeetingFlowSync)', diagnosticData.localforage,
+            <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
+              <span className="text-orange-600 text-lg">LF</span>
+            </div>
+          )}
+          {renderStorageCard('dexie', 'Dexie (IndexedDB - MeetingFlowDB)', diagnosticData.dexie,
+            <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+              <span className="text-green-600 text-lg">DX</span>
+            </div>
+          )}
+
+          {/* Summary */}
+          <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+            <h5 className="font-medium text-gray-900 mb-2">Summary:</h5>
+            <ul className="text-sm text-gray-700 space-y-1">
+              <li>• <strong>localStorage:</strong> {diagnosticData.localStorage.meetings?.length || 0} meetings
+                {checkHasBlobData(diagnosticData.localStorage.meetings).hasBlobs ? ' (WITH blob data ✓)' : ' (no blob data)'}</li>
+              <li>• <strong>localforage:</strong> {diagnosticData.localforage.meetings?.length || 0} meetings
+                {checkHasBlobData(diagnosticData.localforage.meetings).hasBlobs ? ' (WITH blob data ✓)' : ' (no blob data)'}</li>
+              <li>• <strong>Dexie:</strong> {diagnosticData.dexie.meetings?.length || 0} meetings, {diagnosticData.dexie.blobs?.length || 0} blobs
+                {(diagnosticData.dexie.blobs?.length || 0) > 0 ? ' (WITH blob data ✓)' : ' (no blob data)'}</li>
+            </ul>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

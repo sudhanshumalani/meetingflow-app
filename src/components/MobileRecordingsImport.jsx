@@ -13,7 +13,9 @@ import {
   Timer,
   ChevronDown,
   ChevronUp,
-  ExternalLink
+  ExternalLink,
+  Cloud,
+  Database
 } from 'lucide-react'
 import { getMobileRecordings, updateMobileRecording } from '../utils/mobileFirestoreService'
 import assemblyAISpeakerService from '../services/assemblyAISpeakerService'
@@ -24,15 +26,19 @@ import { v4 as uuidv4 } from 'uuid'
  * MOBILE RECORDINGS IMPORT (Desktop Component)
  *
  * This component allows desktop users to:
- * 1. View recordings made on mobile devices
- * 2. Check transcript processing status
+ * 1. View recordings made on mobile devices (from Firestore)
+ * 2. Browse all transcripts from AssemblyAI directly
  * 3. Import completed transcripts as meetings
  */
 const MobileRecordingsImport = ({ onClose }) => {
   const navigate = useNavigate()
   const { addMeeting } = useApp()
 
+  // Tab state: 'firestore' or 'assemblyai'
+  const [activeTab, setActiveTab] = useState('assemblyai')
+
   const [recordings, setRecordings] = useState([])
+  const [assemblyTranscripts, setAssemblyTranscripts] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -40,10 +46,14 @@ const MobileRecordingsImport = ({ onClose }) => {
   const [importingId, setImportingId] = useState(null)
   const [transcriptCache, setTranscriptCache] = useState({})
 
-  // Load recordings on mount
+  // Load data on mount
   useEffect(() => {
-    loadRecordings()
-  }, [])
+    if (activeTab === 'firestore') {
+      loadRecordings()
+    } else {
+      loadAssemblyTranscripts()
+    }
+  }, [activeTab])
 
   // Load mobile recordings from Firestore
   const loadRecordings = async () => {
@@ -68,8 +78,35 @@ const MobileRecordingsImport = ({ onClose }) => {
   // Refresh recordings
   const handleRefresh = async () => {
     setRefreshing(true)
-    await loadRecordings()
+    if (activeTab === 'firestore') {
+      await loadRecordings()
+    } else {
+      await loadAssemblyTranscripts()
+    }
     setRefreshing(false)
+  }
+
+  // Load transcripts directly from AssemblyAI
+  const loadAssemblyTranscripts = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      console.log('📥 Fetching transcripts from AssemblyAI...')
+      const transcripts = await assemblyAISpeakerService.listTranscripts(50)
+
+      // Filter to only completed transcripts
+      const completed = transcripts.filter(t => t.status === 'completed')
+      console.log(`📥 Found ${completed.length} completed transcripts`)
+
+      setAssemblyTranscripts(completed)
+
+    } catch (err) {
+      console.error('Failed to load AssemblyAI transcripts:', err)
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
   }
 
   // Check transcript status for all recordings
@@ -200,6 +237,70 @@ const MobileRecordingsImport = ({ onClose }) => {
     }
   }
 
+  // Import directly from AssemblyAI transcript
+  const handleImportFromAssemblyAI = async (transcriptSummary) => {
+    try {
+      setImportingId(transcriptSummary.id)
+
+      // Fetch full transcript
+      console.log(`📥 Fetching full transcript ${transcriptSummary.id}...`)
+      const transcript = await assemblyAISpeakerService.fetchTranscriptById(transcriptSummary.id)
+
+      if (!transcript || transcript.status !== 'completed') {
+        throw new Error('Transcript not ready yet')
+      }
+
+      // Create meeting object
+      const meetingId = uuidv4()
+      const newMeeting = {
+        id: meetingId,
+        title: `Recording ${new Date(transcriptSummary.created).toLocaleDateString()}`,
+        date: transcriptSummary.created?.split('T')[0] || new Date().toISOString().split('T')[0],
+        time: transcriptSummary.created?.split('T')[1]?.slice(0, 5) || '00:00',
+        participants: [],
+        stakeholderId: null,
+        transcript: transcript.text || '',
+        notes: '',
+        digitalNotes: '',
+        aiResult: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        version: 1,
+        source: 'assemblyai-import',
+        assemblyAITranscriptId: transcriptSummary.id,
+        speakerData: transcript.utterances?.length > 0 ? {
+          utterances: transcript.utterances,
+          speakers_detected: transcript.speakers_detected
+        } : null,
+        metadata: {
+          audioDuration: transcriptSummary.audio_duration || transcript.audio_duration,
+          importedAt: new Date().toISOString()
+        }
+      }
+
+      // Add meeting to app
+      await addMeeting(newMeeting)
+
+      console.log('✅ Meeting imported from AssemblyAI:', meetingId)
+
+      // Mark as imported in local state
+      setAssemblyTranscripts(prev => prev.map(t =>
+        t.id === transcriptSummary.id
+          ? { ...t, imported: true, importedMeetingId: meetingId }
+          : t
+      ))
+
+      // Navigate to the new meeting
+      navigate(`/meeting/${meetingId}`)
+
+    } catch (err) {
+      console.error('Failed to import from AssemblyAI:', err)
+      setError(err.message)
+    } finally {
+      setImportingId(null)
+    }
+  }
+
   // Get status icon and color
   const getStatusDisplay = (recording) => {
     const transcriptStatus = transcriptCache[recording.assemblyAITranscriptId]?.status
@@ -290,9 +391,9 @@ const MobileRecordingsImport = ({ onClose }) => {
           <div className="flex items-center gap-3">
             <Smartphone className="w-6 h-6 text-white" />
             <div>
-              <h2 className="text-lg font-semibold text-white">Mobile Recordings</h2>
+              <h2 className="text-lg font-semibold text-white">Import Recordings</h2>
               <p className="text-sm text-indigo-200">
-                Import recordings made on your mobile device
+                Import transcripts from AssemblyAI
               </p>
             </div>
           </div>
@@ -306,6 +407,32 @@ const MobileRecordingsImport = ({ onClose }) => {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex border-b border-gray-200">
+        <button
+          onClick={() => setActiveTab('assemblyai')}
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
+            activeTab === 'assemblyai'
+              ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50'
+              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          <Cloud className="w-4 h-4" />
+          AssemblyAI Transcripts
+        </button>
+        <button
+          onClick={() => setActiveTab('firestore')}
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
+            activeTab === 'firestore'
+              ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50'
+              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          <Database className="w-4 h-4" />
+          Synced Recordings
+        </button>
+      </div>
+
       {/* Error */}
       {error && (
         <div className="m-4 p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -316,16 +443,96 @@ const MobileRecordingsImport = ({ onClose }) => {
         </div>
       )}
 
-      {/* Recordings List */}
-      <div className="max-h-[60vh] overflow-y-auto">
-        {recordings.length === 0 ? (
-          <div className="p-12 text-center">
-            <Smartphone className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Mobile Recordings</h3>
-            <p className="text-gray-500">
-              Recordings made on your mobile device will appear here.
-            </p>
-          </div>
+      {/* AssemblyAI Transcripts Tab */}
+      {activeTab === 'assemblyai' && (
+        <div className="max-h-[60vh] overflow-y-auto">
+          {assemblyTranscripts.length === 0 ? (
+            <div className="p-12 text-center">
+              <Cloud className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No Transcripts Found</h3>
+              <p className="text-gray-500">
+                No completed transcripts found in AssemblyAI.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {assemblyTranscripts.map((transcript) => (
+                <div key={transcript.id} className="p-4 hover:bg-gray-50">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-medium text-gray-900">
+                          Recording {formatDate(transcript.created)}
+                        </h4>
+                        {transcript.imported ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-600">
+                            <CheckCircle className="w-3 h-3" />
+                            Imported
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-600">
+                            <FileText className="w-3 h-3" />
+                            Ready
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
+                        <span className="flex items-center gap-1">
+                          <Timer className="w-3 h-3" />
+                          {formatDuration(transcript.audio_duration)}
+                        </span>
+                        <span className="font-mono text-xs">
+                          ID: {transcript.id.slice(0, 12)}...
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {transcript.imported ? (
+                        <button
+                          onClick={() => navigate(`/meeting/${transcript.importedMeetingId}`)}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          View
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleImportFromAssemblyAI(transcript)}
+                          disabled={importingId === transcript.id}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {importingId === transcript.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Download className="w-4 h-4" />
+                          )}
+                          Import
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Firestore Recordings Tab */}
+      {activeTab === 'firestore' && (
+        <div className="max-h-[60vh] overflow-y-auto">
+          {recordings.length === 0 ? (
+            <div className="p-12 text-center">
+              <Database className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No Synced Recordings</h3>
+              <p className="text-gray-500">
+                Recordings synced from mobile will appear here.
+              </p>
+              <p className="text-sm text-gray-400 mt-2">
+                Try the "AssemblyAI Transcripts" tab to import directly.
+              </p>
+            </div>
         ) : (
           <div className="divide-y divide-gray-100">
             {recordings.map((recording) => {
@@ -453,13 +660,17 @@ const MobileRecordingsImport = ({ onClose }) => {
             })}
           </div>
         )}
-      </div>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="px-6 py-4 bg-gray-50 border-t border-gray-200">
         <div className="flex items-center justify-between">
           <p className="text-sm text-gray-500">
-            {recordings.length} recording{recordings.length !== 1 ? 's' : ''} found
+            {activeTab === 'assemblyai'
+              ? `${assemblyTranscripts.length} transcript${assemblyTranscripts.length !== 1 ? 's' : ''} found`
+              : `${recordings.length} recording${recordings.length !== 1 ? 's' : ''} found`
+            }
           </p>
           {onClose && (
             <button

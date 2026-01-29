@@ -536,7 +536,7 @@ export default function Meeting() {
 
         // AUTO-SAVE: Save the meeting with AI results to Firestore
         // This ensures AI analysis done on desktop syncs back to mobile
-        if (!isCreatingNew && id) {
+        if (id && id !== 'new') {
           console.log('💾 Auto-saving meeting with AI results...')
           try {
             // Build meeting data with the new AI result

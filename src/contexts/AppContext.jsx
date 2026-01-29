@@ -11,7 +11,8 @@ import {
   bulkSaveMeetings,
   bulkSaveStakeholders,
   bulkSaveCategories,
-  getFullMeeting
+  getFullMeeting,
+  saveMeeting as saveMeetingToDexie
 } from '../db/dexieService'
 
 // Lazy-loaded IndexedDB instance - only created when needed to avoid iOS crashes
@@ -1624,6 +1625,14 @@ export function AppProvider({ children }) {
         localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
         console.log('✅ AppContext: Meeting saved to localStorage:', meetingWithId.id)
         localStorageSaveSuccess = true
+
+        // Also save to Dexie (for useMeetings() hook reactivity)
+        try {
+          await saveMeetingToDexie(meetingWithId, { queueSync: false })
+          console.log('✅ AppContext: Meeting saved to Dexie:', meetingWithId.id)
+        } catch (dexieErr) {
+          console.warn('⚠️ AppContext: Failed to save to Dexie (non-fatal):', dexieErr.message)
+        }
       } catch (localErr) {
         console.error('❌ AppContext: Failed to save to localStorage:', localErr.name, localErr.message)
         localStorageError = localErr
@@ -1701,6 +1710,14 @@ export function AppProvider({ children }) {
         localStorage.setItem('meetingflow_meetings', JSON.stringify(updatedMeetings))
         console.log('✅ AppContext: Meeting updated in localStorage:', updatedMeeting.id)
         localStorageSaveSuccess = true
+
+        // Also save to Dexie (for useMeetings() hook reactivity)
+        try {
+          await saveMeetingToDexie(updatedMeeting, { queueSync: false })
+          console.log('✅ AppContext: Meeting updated in Dexie:', updatedMeeting.id)
+        } catch (dexieErr) {
+          console.warn('⚠️ AppContext: Failed to update Dexie (non-fatal):', dexieErr.message)
+        }
       } catch (localErr) {
         console.error('❌ AppContext: Failed to update localStorage:', localErr.name, localErr.message)
         localStorageError = localErr

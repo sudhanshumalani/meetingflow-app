@@ -137,6 +137,30 @@ async function ensureFirestoreLoaded() {
   return initPromise
 }
 
+/**
+ * Sanitize document ID for Firestore
+ * Firestore document IDs cannot contain forward slashes as they're path separators
+ * This encodes problematic characters so IDs like "team/-board" work correctly
+ */
+function sanitizeDocId(id) {
+  if (!id) return id
+  // Encode forward slashes which are interpreted as path separators
+  // Also encode other problematic characters
+  return id
+    .replace(/\//g, '__SLASH__')
+    .replace(/\./g, '__DOT__')
+}
+
+/**
+ * Decode sanitized document ID back to original
+ */
+function desanitizeDocId(id) {
+  if (!id) return id
+  return id
+    .replace(/__SLASH__/g, '/')
+    .replace(/__DOT__/g, '.')
+}
+
 class FirestoreService {
   constructor() {
     this.isAvailable = true // Will be updated after first load attempt
@@ -524,10 +548,15 @@ class FirestoreService {
       // Clean data - remove undefined values (Firestore rejects them)
       const cleanedCategory = removeUndefined(category)
 
+      // Sanitize document ID to handle slashes and other problematic characters
+      const safeDocId = sanitizeDocId(category.id)
+
       const { doc, setDoc, serverTimestamp } = firestoreModule
-      const ref = doc(db, 'stakeholderCategories', category.id)
+      const ref = doc(db, 'stakeholderCategories', safeDocId)
       await setDoc(ref, {
         ...cleanedCategory,
+        // Store original ID in the document for reference
+        originalId: category.id,
         userId: this.userId,
         // Preserve updatedAt from the data, use serverTimestamp for lastModified
         updatedAt: category.updatedAt || new Date().toISOString(),
@@ -536,7 +565,7 @@ class FirestoreService {
         // This was causing deleted categories to resurrect on sync
         deleted: category.deleted ?? false
       }, { merge: true })
-      debugLog(`Category saved: ${category.id} (deleted: ${category.deleted ?? false})`)
+      debugLog(`Category saved: ${category.id} -> ${safeDocId} (deleted: ${category.deleted ?? false})`)
       return { success: true }
     } catch (error) {
       debugLog(`saveStakeholderCategory error: ${error.message}`, 'error')
@@ -549,14 +578,17 @@ class FirestoreService {
     if (!ready) return { success: false, reason: 'firestore_unavailable' }
 
     try {
+      // Sanitize document ID to handle slashes and other problematic characters
+      const safeDocId = sanitizeDocId(categoryId)
+
       const { doc, setDoc, serverTimestamp } = firestoreModule
-      const ref = doc(db, 'stakeholderCategories', categoryId)
+      const ref = doc(db, 'stakeholderCategories', safeDocId)
       await setDoc(ref, {
         deleted: true,
         deletedAt: serverTimestamp(),
         lastModified: serverTimestamp()
       }, { merge: true })
-      debugLog(`Category deleted: ${categoryId}`)
+      debugLog(`Category deleted: ${categoryId} -> ${safeDocId}`)
       return { success: true }
     } catch (error) {
       debugLog(`deleteStakeholderCategory error: ${error.message}`, 'error')
@@ -691,6 +723,184 @@ class FirestoreService {
       debugLog(`Connection check failed: ${error.message}`, 'error')
       return { connected: false, error: error.message }
     }
+  }
+
+  // ==================== CLEANUP UTILITIES ====================
+
+  /**
+   * Get ALL items from a collection (including deleted ones)
+   * Used for cleanup and debugging
+   */
+  async getAllFromCollection(collection) {
+    const ready = await ensureFirestoreLoaded()
+    if (!ready) return []
+
+    try {
+      const { collection: col, query, where, getDocs } = firestoreModule
+      const q = query(col(db, collection), where('userId', '==', this.userId))
+      const snapshot = await getDocs(q)
+
+      const items = []
+      snapshot.forEach(doc => {
+        items.push({ id: doc.id, ...doc.data() })
+      })
+
+      debugLog(`getAllFromCollection(${collection}): Found ${items.length} items`)
+      return items
+    } catch (error) {
+      debugLog(`getAllFromCollection error: ${error.message}`, 'error')
+      return []
+    }
+  }
+
+  /**
+   * HARD DELETE an item from Firestore (permanently remove, not soft-delete)
+   */
+  async hardDeleteDocument(collection, docId) {
+    const ready = await ensureFirestoreLoaded()
+    if (!ready) return { success: false, reason: 'firestore_unavailable' }
+
+    try {
+      // Sanitize document ID to handle slashes and other problematic characters
+      const safeDocId = sanitizeDocId(docId)
+
+      const { doc, deleteDoc } = firestoreModule
+      await deleteDoc(doc(db, collection, safeDocId))
+      debugLog(`HARD DELETED ${collection}/${docId} -> ${safeDocId}`)
+      return { success: true }
+    } catch (error) {
+      debugLog(`hardDeleteDocument error: ${error.message}`, 'error')
+      return { success: false, reason: error.message }
+    }
+  }
+
+  /**
+   * Get cleanup report - shows all items and their deleted status
+   */
+  async getCleanupReport() {
+    const ready = await ensureFirestoreLoaded()
+    if (!ready) return { error: 'Firestore unavailable' }
+
+    try {
+      const stakeholders = await this.getAllFromCollection('stakeholders')
+      const categories = await this.getAllFromCollection('stakeholderCategories')
+      const meetings = await this.getAllFromCollection('meetings')
+
+      const report = {
+        stakeholders: {
+          total: stakeholders.length,
+          active: stakeholders.filter(s => !s.deleted).length,
+          deleted: stakeholders.filter(s => s.deleted).length,
+          items: stakeholders.map(s => ({
+            id: s.id,
+            name: s.name || s.company || 'Unknown',
+            deleted: !!s.deleted,
+            deletedAt: s.deletedAt,
+            updatedAt: s.updatedAt
+          }))
+        },
+        categories: {
+          total: categories.length,
+          active: categories.filter(c => !c.deleted).length,
+          deleted: categories.filter(c => c.deleted).length,
+          items: categories.map(c => ({
+            id: c.id,
+            label: c.label || c.key || 'Unknown',
+            deleted: !!c.deleted,
+            deletedAt: c.deletedAt,
+            updatedAt: c.updatedAt
+          }))
+        },
+        meetings: {
+          total: meetings.length,
+          active: meetings.filter(m => !m.deleted).length,
+          deleted: meetings.filter(m => m.deleted).length
+        }
+      }
+
+      debugLog(`Cleanup report: ${report.stakeholders.deleted} deleted stakeholders, ${report.categories.deleted} deleted categories`)
+      return report
+    } catch (error) {
+      debugLog(`getCleanupReport error: ${error.message}`, 'error')
+      return { error: error.message }
+    }
+  }
+
+  /**
+   * Purge all soft-deleted items from Firestore (hard delete them)
+   */
+  async purgeDeletedItems() {
+    const ready = await ensureFirestoreLoaded()
+    if (!ready) return { success: false, reason: 'firestore_unavailable' }
+
+    const results = {
+      stakeholders: { purged: 0, failed: 0 },
+      categories: { purged: 0, failed: 0 },
+      meetings: { purged: 0, failed: 0 }
+    }
+
+    try {
+      // Purge deleted stakeholders
+      const stakeholders = await this.getAllFromCollection('stakeholders')
+      for (const s of stakeholders.filter(s => s.deleted)) {
+        const result = await this.hardDeleteDocument('stakeholders', s.id)
+        if (result.success) results.stakeholders.purged++
+        else results.stakeholders.failed++
+      }
+
+      // Purge deleted categories
+      const categories = await this.getAllFromCollection('stakeholderCategories')
+      for (const c of categories.filter(c => c.deleted)) {
+        const result = await this.hardDeleteDocument('stakeholderCategories', c.id)
+        if (result.success) results.categories.purged++
+        else results.categories.failed++
+      }
+
+      // Purge deleted meetings
+      const meetings = await this.getAllFromCollection('meetings')
+      for (const m of meetings.filter(m => m.deleted)) {
+        const result = await this.hardDeleteDocument('meetings', m.id)
+        if (result.success) results.meetings.purged++
+        else results.meetings.failed++
+      }
+
+      debugLog(`Purge complete: ${results.stakeholders.purged} stakeholders, ${results.categories.purged} categories, ${results.meetings.purged} meetings`)
+      return { success: true, results }
+    } catch (error) {
+      debugLog(`purgeDeletedItems error: ${error.message}`, 'error')
+      return { success: false, reason: error.message, results }
+    }
+  }
+
+  /**
+   * Hard delete specific items by ID
+   */
+  async hardDeleteItems(itemsToDelete) {
+    const results = {
+      stakeholders: { deleted: 0, failed: 0 },
+      categories: { deleted: 0, failed: 0 },
+      meetings: { deleted: 0, failed: 0 }
+    }
+
+    for (const id of (itemsToDelete.stakeholders || [])) {
+      const result = await this.hardDeleteDocument('stakeholders', id)
+      if (result.success) results.stakeholders.deleted++
+      else results.stakeholders.failed++
+    }
+
+    for (const id of (itemsToDelete.categories || [])) {
+      const result = await this.hardDeleteDocument('stakeholderCategories', id)
+      if (result.success) results.categories.deleted++
+      else results.categories.failed++
+    }
+
+    for (const id of (itemsToDelete.meetings || [])) {
+      const result = await this.hardDeleteDocument('meetings', id)
+      if (result.success) results.meetings.deleted++
+      else results.meetings.failed++
+    }
+
+    return { success: true, results }
   }
 }
 

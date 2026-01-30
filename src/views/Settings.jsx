@@ -24,6 +24,7 @@ import SyncConflictResolver from '../components/sync/SyncConflictResolver'
 // - Desktop: Uses Firebase SDK service
 import { Database, Upload, CheckCircle, Bug, Download, HardDrive, AlertTriangle } from 'lucide-react'
 import FirebaseDebugPanel from '../components/FirebaseDebugPanel'
+import FirestoreCleanup from '../components/FirestoreCleanup'
 import localforage from 'localforage'
 import db from '../db/meetingFlowDB'
 
@@ -1023,6 +1024,9 @@ export default function Settings() {
 
             {/* Firebase Debug Panel */}
             <FirebaseDebugPanel />
+
+            {/* Firestore Cleanup Tool - For removing unwanted items */}
+            <FirestoreCleanup />
 
             {/* Storage Diagnostic Tool - For Data Recovery */}
             <StorageDiagnostic />

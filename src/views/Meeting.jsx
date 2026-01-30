@@ -401,6 +401,13 @@ export default function Meeting() {
           setSpeakerData(meetingData.speakerData)
         }
 
+        // Auto-switch to audio mode for imported meetings with transcript/speaker data
+        // This ensures the SpeakerTranscriptView is visible for imported transcripts
+        if (meetingData.speakerData || meetingData.audioTranscript) {
+          console.log('🎯 AUTO-SWITCHING to audio mode for imported meeting with transcript/speaker data')
+          setActiveMode('audio')
+        }
+
         setUploadedFiles([])
         setUploadedImageUrls([])
       }
@@ -563,6 +570,7 @@ export default function Meeting() {
           console.log('💾 Auto-saving meeting with AI results...')
           try {
             // Build meeting data with the new AI result
+            // IMPORTANT: Include originalInputs to preserve the raw notes that were analyzed
             const meetingDataForSave = {
               id,
               ...formData,
@@ -570,6 +578,12 @@ export default function Meeting() {
               audioTranscript,
               speakerData,
               aiResult: result, // Use the result directly since state may not have updated yet
+              // Preserve original inputs so raw notes are saved alongside AI analysis
+              originalInputs: {
+                manualText: manualText || null,
+                extractedText: extractedText || null,
+                ocrResults: ocrResult || null
+              },
               updatedAt: new Date().toISOString(),
               lastSaved: new Date().toISOString()
             }

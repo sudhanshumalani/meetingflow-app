@@ -223,10 +223,11 @@ class FirestoreService {
         // This ensures timestamp comparison works correctly across devices
         updatedAt: meeting.updatedAt || new Date().toISOString(),
         lastModified: serverTimestamp(),
-        deleted: false
+        // BUGFIX: Respect deleted flag from incoming data instead of hardcoding false
+        deleted: meeting.deleted ?? false
       }, { merge: true })
 
-      debugLog(`Meeting saved: ${meeting.id}`)
+      debugLog(`Meeting saved: ${meeting.id} (deleted: ${meeting.deleted ?? false})`)
       return { success: true }
     } catch (error) {
       debugLog(`saveMeeting error: ${error.message}`, 'error')
@@ -418,10 +419,12 @@ class FirestoreService {
         // Preserve updatedAt from the data, use serverTimestamp for lastModified
         updatedAt: stakeholder.updatedAt || new Date().toISOString(),
         lastModified: serverTimestamp(),
-        deleted: false
+        // BUGFIX: Respect deleted flag from incoming data instead of hardcoding false
+        // This was causing deleted stakeholders to resurrect on sync
+        deleted: stakeholder.deleted ?? false
       }, { merge: true })
 
-      debugLog(`Stakeholder saved: ${stakeholder.id}`)
+      debugLog(`Stakeholder saved: ${stakeholder.id} (deleted: ${stakeholder.deleted ?? false})`)
       return { success: true }
     } catch (error) {
       debugLog(`saveStakeholder error: ${error.message}`, 'error')
@@ -529,9 +532,11 @@ class FirestoreService {
         // Preserve updatedAt from the data, use serverTimestamp for lastModified
         updatedAt: category.updatedAt || new Date().toISOString(),
         lastModified: serverTimestamp(),
-        deleted: false
+        // BUGFIX: Respect deleted flag from incoming data instead of hardcoding false
+        // This was causing deleted categories to resurrect on sync
+        deleted: category.deleted ?? false
       }, { merge: true })
-      debugLog(`Category saved: ${category.id}`)
+      debugLog(`Category saved: ${category.id} (deleted: ${category.deleted ?? false})`)
       return { success: true }
     } catch (error) {
       debugLog(`saveStakeholderCategory error: ${error.message}`, 'error')
@@ -633,7 +638,7 @@ class FirestoreService {
       for (const meeting of meetings) {
         if (count >= 500 || !meeting.id) continue
         batch.set(doc(db, 'meetings', meeting.id), {
-          ...meeting, userId: this.userId, lastModified: serverTimestamp(), deleted: false
+          ...meeting, userId: this.userId, lastModified: serverTimestamp(), deleted: meeting.deleted ?? false
         })
         count++
       }
@@ -641,7 +646,7 @@ class FirestoreService {
       for (const stakeholder of stakeholders) {
         if (count >= 500 || !stakeholder.id) continue
         batch.set(doc(db, 'stakeholders', stakeholder.id), {
-          ...stakeholder, userId: this.userId, lastModified: serverTimestamp(), deleted: false
+          ...stakeholder, userId: this.userId, lastModified: serverTimestamp(), deleted: stakeholder.deleted ?? false
         })
         count++
       }
@@ -649,7 +654,7 @@ class FirestoreService {
       for (const category of categories) {
         if (count >= 500 || !category.id) continue
         batch.set(doc(db, 'stakeholderCategories', category.id), {
-          ...category, userId: this.userId, lastModified: serverTimestamp(), deleted: false
+          ...category, userId: this.userId, lastModified: serverTimestamp(), deleted: category.deleted ?? false
         })
         count++
       }

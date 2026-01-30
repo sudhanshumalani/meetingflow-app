@@ -1166,18 +1166,39 @@ export function AppProvider({ children }) {
               return
             }
 
-            // RACE CONDITION FIX: Read from Dexie (source of truth with correct deleted flags)
-            // instead of React ref which may be stale
+            // Create a set of Firestore IDs for quick lookup
+            const firestoreIds = new Set(firestoreStakeholders.map(s => s.id))
+
+            // Read from Dexie to get local stakeholders with deleted flags
             let localStakeholders = []
             try {
               localStakeholders = await getAllStakeholders() || []
-              console.log('🔥 Subscription: Read', localStakeholders.length, 'stakeholders from Dexie for merge')
+              console.log('🔥 Subscription: Read', localStakeholders.length, 'stakeholders from Dexie')
             } catch (e) {
               console.warn('🔥 Subscription: Failed to read Dexie, using React ref:', e.message)
               localStakeholders = currentStakeholdersRef.current || []
             }
 
-            const mergedStakeholders = mergeByIdKeepNewer(localStakeholders, firestoreStakeholders)
+            // ORPHAN CLEANUP: Mark local stakeholders that don't exist in Firestore as deleted
+            // These are orphaned items that should be removed
+            const cleanedLocalStakeholders = localStakeholders.map(localStk => {
+              if (!firestoreIds.has(localStk.id) && !localStk.deleted) {
+                console.log('🧹 Marking orphaned stakeholder as deleted:', localStk.id, localStk.name || localStk.company)
+                return { ...localStk, deleted: true, deletedAt: new Date().toISOString() }
+              }
+              return localStk
+            })
+
+            // Save the orphan deletions back to Dexie
+            const orphansToDelete = cleanedLocalStakeholders.filter(s =>
+              s.deleted && !localStakeholders.find(ls => ls.id === s.id)?.deleted
+            )
+            if (orphansToDelete.length > 0) {
+              console.log('🧹 Saving', orphansToDelete.length, 'orphan deletions to Dexie')
+              await bulkSaveStakeholders(orphansToDelete, { queueSync: false })
+            }
+
+            const mergedStakeholders = mergeByIdKeepNewer(cleanedLocalStakeholders, firestoreStakeholders)
 
             // Filter for UI - only show active stakeholders
             const activeStakeholders = mergedStakeholders.filter(s => !s.deleted)
@@ -1208,18 +1229,39 @@ export function AppProvider({ children }) {
               return
             }
 
-            // RACE CONDITION FIX: Read from Dexie (source of truth with correct deleted flags)
-            // instead of React ref which may be stale
+            // Create a set of Firestore IDs for quick lookup
+            const firestoreIds = new Set(firestoreCategories.map(c => c.id))
+
+            // Read from Dexie to get local categories with deleted flags
             let localCategories = []
             try {
               localCategories = await getAllCategories() || []
-              console.log('🔥 Subscription: Read', localCategories.length, 'categories from Dexie for merge')
+              console.log('🔥 Subscription: Read', localCategories.length, 'categories from Dexie')
             } catch (e) {
               console.warn('🔥 Subscription: Failed to read Dexie, using React ref:', e.message)
               localCategories = currentCategoriesRef.current || []
             }
 
-            const mergedCategories = mergeByIdKeepNewer(localCategories, firestoreCategories)
+            // ORPHAN CLEANUP: Mark local categories that don't exist in Firestore as deleted
+            // These are orphaned items that should be removed
+            const cleanedLocalCategories = localCategories.map(localCat => {
+              if (!firestoreIds.has(localCat.id) && !localCat.deleted) {
+                console.log('🧹 Marking orphaned category as deleted:', localCat.id, localCat.label || localCat.key)
+                return { ...localCat, deleted: true, deletedAt: new Date().toISOString() }
+              }
+              return localCat
+            })
+
+            // Save the orphan deletions back to Dexie
+            const orphansToDelete = cleanedLocalCategories.filter(c =>
+              c.deleted && !localCategories.find(lc => lc.id === c.id)?.deleted
+            )
+            if (orphansToDelete.length > 0) {
+              console.log('🧹 Saving', orphansToDelete.length, 'orphan deletions to Dexie')
+              await bulkSaveCategories(orphansToDelete, { queueSync: false })
+            }
+
+            const mergedCategories = mergeByIdKeepNewer(cleanedLocalCategories, firestoreCategories)
 
             // Filter for UI - only show active categories
             const activeCategories = mergedCategories.filter(c => !c.deleted)

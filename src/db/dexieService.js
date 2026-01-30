@@ -30,9 +30,10 @@ import {
   queueCategoryChange
 } from './outboxService'
 
-// Storage thresholds
-const STORAGE_WARNING_MB = 30
-const STORAGE_CRITICAL_MB = 50
+// Storage thresholds (raised for desktop use - these were too conservative)
+// 923 MB is only 0.32% of a typical 291 GB quota
+const STORAGE_WARNING_MB = 500   // Warning at 500 MB
+const STORAGE_CRITICAL_MB = 1000 // Critical at 1 GB
 
 // Tiering thresholds
 const HOT_THRESHOLD_DAYS = 7 // Meetings accessed in last 7 days

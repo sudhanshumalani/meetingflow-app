@@ -1931,7 +1931,7 @@ export default function Home() {
                             required
                           >
                             <option value="">Select Category</option>
-                            {stakeholderCategories.map(cat => (
+                            {[...stakeholderCategories].sort((a, b) => (a.label || '').localeCompare(b.label || '')).map(cat => (
                               <option key={cat.key} value={cat.key}>{cat.label}</option>
                             ))}
                           </select>
@@ -2098,7 +2098,7 @@ export default function Home() {
                         </div>
                       )}
                     </div>
-                    {stakeholders.map(stakeholder => {
+                    {[...stakeholders].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(stakeholder => {
                       const categoryInfo = stakeholderCategories.find(cat => cat.key === stakeholder.category)
                       return (
                         <div key={stakeholder.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
@@ -2122,7 +2122,7 @@ export default function Home() {
                                     onChange={(e) => setEditingStakeholder(prev => ({ ...prev, category: e.target.value }))}
                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                   >
-                                    {stakeholderCategories.map(cat => (
+                                    {[...stakeholderCategories].sort((a, b) => (a.label || '').localeCompare(b.label || '')).map(cat => (
                                       <option key={cat.key} value={cat.key}>{cat.label}</option>
                                     ))}
                                   </select>
@@ -2215,7 +2215,7 @@ export default function Home() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {stakeholderCategories.map(category => {
+                    {[...stakeholderCategories].sort((a, b) => (a.label || '').localeCompare(b.label || '')).map(category => {
                       const stakeholderCount = stakeholders.filter(s => s.category === category.key).length
                       return (
                         <div key={category.key} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
@@ -2459,7 +2459,7 @@ export default function Home() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   <option value="">Select a category</option>
-                  {stakeholderCategories.map(cat => (
+                  {[...stakeholderCategories].sort((a, b) => (a.label || '').localeCompare(b.label || '')).map(cat => (
                     <option key={cat.key} value={cat.key}>{cat.label}</option>
                   ))}
                 </select>

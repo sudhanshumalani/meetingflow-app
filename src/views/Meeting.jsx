@@ -395,6 +395,12 @@ export default function Meeting() {
           setAudioTranscript('')
         }
 
+        // Also restore speaker data if available (for imported meetings)
+        if (meetingData.speakerData) {
+          console.log('👥 RESTORING speaker data (no originalInputs):', meetingData.speakerData.speakers_detected, 'speakers')
+          setSpeakerData(meetingData.speakerData)
+        }
+
         setUploadedFiles([])
         setUploadedImageUrls([])
       }

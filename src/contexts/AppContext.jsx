@@ -1148,14 +1148,17 @@ export function AppProvider({ children }) {
 
         // Subscribe to stakeholders - PHASE 4: soft delete
         // SYNC FIX: NEVER skip - always save to Dexie for tombstone propagation
-        const unsubStakeholders = firestoreService.subscribeStakeholders((firestoreStakeholders) => {
+        const unsubStakeholders = firestoreService.subscribeStakeholders(async (firestoreStakeholders) => {
           try {
             console.log('🔥 Subscription: Received', firestoreStakeholders.length, 'stakeholders from cloud')
 
             // SYNC FIX: Always save ALL data to Dexie FIRST (including deleted=true)
-            bulkSaveStakeholders(firestoreStakeholders, { queueSync: false })
-              .then(result => console.log('🔥 Subscription: Saved', result.saved, 'stakeholders to Dexie'))
-              .catch(err => console.warn('🔥 Subscription: Dexie stakeholders error:', err.message))
+            try {
+              const result = await bulkSaveStakeholders(firestoreStakeholders, { queueSync: false })
+              console.log('🔥 Subscription: Saved', result.saved, 'stakeholders to Dexie')
+            } catch (err) {
+              console.warn('🔥 Subscription: Dexie stakeholders error:', err.message)
+            }
 
             // Skip UI updates during sync, but Dexie save ensures tombstones captured
             if (isSyncInProgress()) {
@@ -1163,12 +1166,22 @@ export function AppProvider({ children }) {
               return
             }
 
-            // SYNC FIX: Pass ALL to merge (including deleted), let merge handle it
-            const localStakeholders = currentStakeholdersRef.current || []
+            // RACE CONDITION FIX: Read from Dexie (source of truth with correct deleted flags)
+            // instead of React ref which may be stale
+            let localStakeholders = []
+            try {
+              localStakeholders = await getAllStakeholders() || []
+              console.log('🔥 Subscription: Read', localStakeholders.length, 'stakeholders from Dexie for merge')
+            } catch (e) {
+              console.warn('🔥 Subscription: Failed to read Dexie, using React ref:', e.message)
+              localStakeholders = currentStakeholdersRef.current || []
+            }
+
             const mergedStakeholders = mergeByIdKeepNewer(localStakeholders, firestoreStakeholders)
 
             // Filter for UI - only show active stakeholders
             const activeStakeholders = mergedStakeholders.filter(s => !s.deleted)
+            console.log('🔥 Subscription: Merged stakeholders:', mergedStakeholders.length, '-> Active:', activeStakeholders.length)
             dispatch({ type: 'SET_STAKEHOLDERS', payload: activeStakeholders })
           } catch (callbackErr) {
             console.error('🔥 Subscription: Error processing stakeholders:', callbackErr)
@@ -1177,14 +1190,17 @@ export function AppProvider({ children }) {
 
         // Subscribe to categories - PHASE 4: soft delete
         // SYNC FIX: NEVER skip - always save to Dexie for tombstone propagation
-        const unsubCategories = firestoreService.subscribeStakeholderCategories((firestoreCategories) => {
+        const unsubCategories = firestoreService.subscribeStakeholderCategories(async (firestoreCategories) => {
           try {
             console.log('🔥 Subscription: Received', firestoreCategories.length, 'categories from cloud')
 
             // SYNC FIX: Always save ALL data to Dexie FIRST (including deleted=true)
-            bulkSaveCategories(firestoreCategories, { queueSync: false })
-              .then(result => console.log('🔥 Subscription: Saved', result.saved, 'categories to Dexie'))
-              .catch(err => console.warn('🔥 Subscription: Dexie categories error:', err.message))
+            try {
+              const result = await bulkSaveCategories(firestoreCategories, { queueSync: false })
+              console.log('🔥 Subscription: Saved', result.saved, 'categories to Dexie')
+            } catch (err) {
+              console.warn('🔥 Subscription: Dexie categories error:', err.message)
+            }
 
             // Skip UI updates during sync, but Dexie save ensures tombstones captured
             if (isSyncInProgress()) {
@@ -1192,12 +1208,22 @@ export function AppProvider({ children }) {
               return
             }
 
-            // SYNC FIX: Pass ALL to merge (including deleted), let merge handle it
-            const localCategories = currentCategoriesRef.current || []
+            // RACE CONDITION FIX: Read from Dexie (source of truth with correct deleted flags)
+            // instead of React ref which may be stale
+            let localCategories = []
+            try {
+              localCategories = await getAllCategories() || []
+              console.log('🔥 Subscription: Read', localCategories.length, 'categories from Dexie for merge')
+            } catch (e) {
+              console.warn('🔥 Subscription: Failed to read Dexie, using React ref:', e.message)
+              localCategories = currentCategoriesRef.current || []
+            }
+
             const mergedCategories = mergeByIdKeepNewer(localCategories, firestoreCategories)
 
             // Filter for UI - only show active categories
             const activeCategories = mergedCategories.filter(c => !c.deleted)
+            console.log('🔥 Subscription: Merged categories:', mergedCategories.length, '-> Active:', activeCategories.length)
             dispatch({ type: 'SET_STAKEHOLDER_CATEGORIES', payload: activeCategories })
           } catch (callbackErr) {
             console.error('🔥 Subscription: Error processing categories:', callbackErr)

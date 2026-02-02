@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom'
 import { handleGoogleAuthCallback } from './utils/googleDriveAuth'
 import { AppProvider } from './contexts/AppContext'
@@ -17,6 +17,7 @@ import CrashRecoveryPrompt from './components/CrashRecoveryPrompt'
 import accessibility, { a11y } from './utils/accessibility'
 import storage from './utils/storage'
 import { isMigrationNeeded, migrateToDexie, initializeDexieService, requestPersistentStorage } from './db'
+import { IS_IOS } from './config/firebase'
 import './index.css'
 
 // Import debugging utilities (available in both dev and production for troubleshooting)
@@ -98,6 +99,16 @@ function AppContent() {
   const [error, setError] = useState(null)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [recoveredData, setRecoveredData] = useState(null)
+
+  // Mobile PWA detection - show recording-only interface on mobile
+  const isMobilePWA = useMemo(() => {
+    if (typeof window === 'undefined') return false
+    const isStandalone = window.navigator?.standalone === true ||
+      window.matchMedia('(display-mode: standalone)').matches
+    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+    const isMobileUA = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+    return IS_IOS || (isStandalone && isTouchDevice && isMobileUA)
+  }, [])
 
   useEffect(() => {
     // Load persisted data on app start
@@ -245,9 +256,9 @@ function AppContent() {
             <h1 className="text-2xl font-bold text-gray-900 mb-2">MeetingFlow</h1>
             <p className="text-gray-600">Your intelligent meeting companion</p>
           </div>
-          <LoadingSpinner 
-            size="large" 
-            text="Loading your data..." 
+          <LoadingSpinner
+            size="large"
+            text="Loading your data..."
             className="animate-bounce-subtle"
           />
           <div className="mt-8 space-y-2">
@@ -257,6 +268,15 @@ function AppContent() {
           </div>
         </div>
       </div>
+    )
+  }
+
+  // Mobile-only mode: Show only the recording interface
+  if (isMobilePWA) {
+    return (
+      <main id="main-content">
+        <MobileRecordView />
+      </main>
     )
   }
 

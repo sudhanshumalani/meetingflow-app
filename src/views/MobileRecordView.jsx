@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Cloud, Smartphone, CheckCircle, Info } from 'lucide-react'
+import { Cloud, Smartphone, CheckCircle } from 'lucide-react'
 import MobileRecorder from '../components/MobileRecorder'
 import { saveMobileRecording } from '../utils/mobileFirestoreService'
-import { IS_IOS } from '../config/firebase'
 
 /**
  * SIMPLIFIED MOBILE RECORDING VIEW
@@ -17,7 +15,6 @@ import { IS_IOS } from '../config/firebase'
  * The full transcript will be fetched by the desktop app.
  */
 const MobileRecordView = () => {
-  const navigate = useNavigate()
   const [recordingResult, setRecordingResult] = useState(null)
   const [saveStatus, setSaveStatus] = useState(null) // 'saving', 'saved', 'error'
   const [saveError, setSaveError] = useState(null)
@@ -108,21 +105,12 @@ const MobileRecordView = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="sticky top-0 z-10 bg-white border-b border-gray-200 shadow-sm">
-        <div className="max-w-lg mx-auto px-4 py-3">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => navigate('/')}
-              className="p-2 -ml-2 hover:bg-gray-100 rounded-full transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5 text-gray-600" />
-            </button>
-            <div className="flex items-center gap-2">
-              <Smartphone className="w-4 h-4 text-indigo-600" />
-              <span className="font-semibold text-gray-900">Mobile Recorder</span>
-            </div>
-            <div className="w-9" /> {/* Spacer for centering */}
+      {/* Simplified Header - No navigation */}
+      <div className="sticky top-0 z-10 bg-white border-b border-gray-200">
+        <div className="max-w-lg mx-auto px-4 py-4">
+          <div className="flex items-center justify-center">
+            <Smartphone className="w-5 h-5 text-indigo-600 mr-2" />
+            <span className="font-semibold text-gray-900">MeetingFlow</span>
           </div>
         </div>
       </div>
@@ -192,54 +180,22 @@ const MobileRecordView = () => {
           </div>
         )}
 
-        {/* Success State - Show next steps */}
+        {/* Success State - Record another option */}
         {recordingResult && saveStatus === 'saved' && (
-          <div className="space-y-4">
-            <div className="bg-indigo-50 rounded-lg border border-indigo-200 p-4">
-              <h3 className="font-medium text-indigo-900 mb-2">What happens next?</h3>
-              <ol className="text-sm text-indigo-800 space-y-2 list-decimal list-inside">
-                <li>AssemblyAI is processing your recording</li>
-                <li>This takes a few minutes depending on length</li>
-                <li>Open MeetingFlow on your desktop to see the transcript</li>
-              </ol>
-            </div>
-
-            <button
-              onClick={startNewRecording}
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors"
-            >
-              Record Another Meeting
-            </button>
-          </div>
-        )}
-
-        {/* Info for non-iOS devices */}
-        {!IS_IOS && (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <Info className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm text-amber-800 font-medium">Desktop Detected</p>
-                <p className="text-xs text-amber-700 mt-1">
-                  This simplified recorder is designed for mobile devices.
-                  On desktop, use the full meeting experience with real-time transcription.
-                </p>
-              </div>
-            </div>
-          </div>
+          <button
+            onClick={startNewRecording}
+            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors"
+          >
+            Record Another Meeting
+          </button>
         )}
 
         {/* Debug info */}
-        {import.meta.env.DEV && (
+        {import.meta.env.DEV && recordingResult && (
           <div className="text-xs text-gray-400 p-3 bg-gray-100 rounded-lg space-y-1">
-            <p>Platform: {IS_IOS ? 'iOS' : 'Other'}</p>
-            {recordingResult && (
-              <>
-                <p>Transcript ID: {recordingResult.transcriptId}</p>
-                <p>Audio Size: {(recordingResult.audioSize / 1024 / 1024).toFixed(2)} MB</p>
-                <p>Duration: {recordingResult.duration}s</p>
-              </>
-            )}
+            <p>Transcript ID: {recordingResult.transcriptId}</p>
+            <p>Audio Size: {(recordingResult.audioSize / 1024 / 1024).toFixed(2)} MB</p>
+            <p>Duration: {recordingResult.duration}s</p>
           </div>
         )}
       </div>

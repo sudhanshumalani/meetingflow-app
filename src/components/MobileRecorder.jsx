@@ -361,9 +361,8 @@ const MobileRecorder = ({
       setUploadProgress('Processing... (this may take a few minutes)')
       setIsUploading(false)
 
-      // Release wake lock - upload is done
-      wakeLockManager.release()
-      setWakeLockActive(false)
+      // Keep wake lock active - screen stays awake until user leaves page
+      // Wake lock will be released on component unmount (line 119)
 
       // Notify parent component
       if (onRecordingComplete) {
@@ -438,21 +437,18 @@ const MobileRecorder = ({
 
   return (
     <div className={`space-y-4 ${className}`}>
-      {/* Header */}
-      <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg border border-indigo-200 p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold text-gray-900">Mobile Recorder</h3>
-            <p className="text-xs text-gray-600">Record → Upload → Transcribe</p>
+      {/* Wake Lock Status - More prominent during upload */}
+      {wakeLockActive && (isUploading || transcriptId) && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span className="text-sm text-green-700 font-medium">Screen will stay awake</span>
           </div>
-          {wakeLockActive && (
-            <div className="flex items-center gap-1 px-2 py-1 bg-green-100 rounded-full">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              <span className="text-xs text-green-700">Screen awake</span>
-            </div>
-          )}
+          <p className="text-xs text-green-600 mt-1 ml-4">
+            {isUploading ? 'Keep this screen open until upload completes' : 'Processing your recording...'}
+          </p>
         </div>
-      </div>
+      )}
 
       {/* Recording Controls */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">

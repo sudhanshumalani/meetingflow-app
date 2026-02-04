@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Mic, MicOff, Square, Volume2, Users, Loader2, AlertCircle, ChevronDown, ChevronUp, Bug, Trash2 } from 'lucide-react'
+import { Mic, MicOff, Square, Volume2, Users, Loader2, AlertCircle, ChevronDown, ChevronUp, Bug, Trash2, Download, RefreshCw } from 'lucide-react'
 import assemblyAISpeakerService from '../services/assemblyAISpeakerService'
 import StreamingAudioBuffer from '../utils/StreamingAudioBuffer'
 
@@ -772,6 +772,124 @@ const AudioRecorderSimple = ({
     }
   }
 
+  // Download audio file to device
+  const downloadAudio = async () => {
+    try {
+      let blob = null
+
+      // Try in-memory chunks first
+      if (recordedChunksRef.current && recordedChunksRef.current.length > 0) {
+        const mimeType = getSupportedMimeType() || 'audio/webm'
+        blob = new Blob(recordedChunksRef.current, { type: mimeType })
+      }
+
+      // Fall back to IndexedDB
+      if (!blob && audioSessionIdRef.current) {
+        blob = await StreamingAudioBuffer.reconstructAudio(audioSessionIdRef.current)
+      }
+
+      if (!blob) {
+        setError('No audio data available to download')
+        return
+      }
+
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      const ext = blob.type && blob.type.includes('mp4') ? '.mp4' : '.webm'
+      a.href = url
+      a.download = `recording-${timestamp}${ext}`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      debugLog('success', `Audio downloaded: ${(blob.size / 1024 / 1024).toFixed(2)} MB`)
+    } catch (err) {
+      debugLog('error', 'Failed to download audio', { error: err.message })
+      setError('Failed to save audio: ' + err.message)
+    }
+  }
+
+  // Retry a failed upload using audio from IndexedDB
+  const retryFailedUpload = async () => {
+    if (!audioSessionIdRef.current) {
+      setError('No audio session available for retry')
+      return
+    }
+
+    try {
+      setError(null)
+      setIsProcessing(true)
+      setProcessingStatus('Recovering audio...')
+      setProcessingProgress(5)
+
+      const blob = await StreamingAudioBuffer.reconstructAudio(audioSessionIdRef.current)
+      if (!blob) {
+        throw new Error('Could not reconstruct audio from IndexedDB')
+      }
+
+      debugLog('info', `Recovered audio for retry: ${(blob.size / 1024 / 1024).toFixed(2)} MB`)
+      setProcessingStatus('Re-uploading audio...')
+      setProcessingProgress(10)
+
+      const speakerResult = await assemblyAISpeakerService.transcribeWithSpeakers(
+        blob,
+        {
+          speakers_expected: expectedSpeakers,
+          onProgress: (progress, status) => {
+            setProcessingProgress(10 + (progress * 0.9))
+            setProcessingStatus(status || 'Processing...')
+          }
+        }
+      )
+
+      // Mark session as completed
+      if (speakerResult.id) {
+        await StreamingAudioBuffer.markUploaded(audioSessionIdRef.current, speakerResult.id)
+      }
+
+      // Extract and set transcript
+      let newTranscript = ''
+      let newSpeakerData = null
+
+      if (speakerResult.utterances && speakerResult.utterances.length > 0) {
+        newTranscript = speakerResult.utterances.map(u => u.text).join(' ')
+        newSpeakerData = { ...speakerResult, text: newTranscript }
+      } else if (speakerResult.text) {
+        newTranscript = speakerResult.text
+        newSpeakerData = speakerResult
+      }
+
+      const combinedTranscript = transcript
+        ? `${transcript}\n\n--- Recovered Recording ---\n\n${newTranscript}`
+        : newTranscript
+
+      setTranscript(combinedTranscript)
+      setSpeakerData(newSpeakerData)
+      setProcessingProgress(100)
+      setProcessingStatus('Complete!')
+
+      if (onTranscriptUpdate) {
+        onTranscriptUpdate(combinedTranscript, newSpeakerData)
+      }
+      if (onAutoSave && combinedTranscript) {
+        onAutoSave(combinedTranscript, 'retry_upload_complete')
+      }
+
+      debugLog('success', 'Retry upload succeeded!')
+    } catch (err) {
+      debugLog('error', 'Retry upload failed', { error: err.message })
+      setError(`Retry failed: ${err.message}`)
+      setProcessingStatus('Failed')
+
+      if (audioSessionIdRef.current) {
+        await StreamingAudioBuffer.markUploadFailed(audioSessionIdRef.current, err.message)
+      }
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
   // Clear transcript and start fresh
   const clearTranscript = () => {
     setTranscript('')
@@ -889,14 +1007,34 @@ const AudioRecorderSimple = ({
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
             <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-            <div>
+            <div className="flex-1">
               <p className="text-sm text-red-700">{error}</p>
-              <button
-                onClick={() => setError(null)}
-                className="text-xs text-red-600 hover:text-red-800 mt-1"
-              >
-                Dismiss
-              </button>
+              <div className="flex items-center gap-2 mt-2">
+                <button
+                  onClick={() => setError(null)}
+                  className="text-xs text-red-600 hover:text-red-800"
+                >
+                  Dismiss
+                </button>
+                {audioSessionIdRef.current && !isProcessing && (
+                  <>
+                    <button
+                      onClick={retryFailedUpload}
+                      className="flex items-center gap-1 text-xs px-2 py-1 bg-red-100 hover:bg-red-200 rounded text-red-700 transition-colors"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Retry Upload
+                    </button>
+                    <button
+                      onClick={downloadAudio}
+                      className="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-gray-700 transition-colors"
+                    >
+                      <Download className="w-3 h-3" />
+                      Save Audio
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         )}

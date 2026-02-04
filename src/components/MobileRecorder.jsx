@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Mic, Square, CheckCircle, AlertCircle, Loader2, Upload, RefreshCw } from 'lucide-react'
+import { Mic, Square, CheckCircle, AlertCircle, Loader2, Upload, RefreshCw, Download } from 'lucide-react'
+import StreamingAudioBuffer from '../utils/StreamingAudioBuffer'
+import { uploadAndTranscribe, checkConnectivity } from '../utils/resilientUpload'
 
 /**
  * SIMPLIFIED MOBILE RECORDER
@@ -10,6 +12,9 @@ import { Mic, Square, CheckCircle, AlertCircle, Loader2, Upload, RefreshCw } fro
  * 3. Immediate upload after stop recording (before iOS suspends)
  * 4. Retry logic for network failures
  * 5. Save transcript ID to both localStorage AND callback for Firestore
+ * 6. Persist audio to IndexedDB BEFORE upload (crash recovery)
+ * 7. Upload with progress tracking and timeout (90s)
+ * 8. "Save to Device" download button as fallback
  *
  * AssemblyAI Requirements:
  * - Max file size: 2.2GB
@@ -25,7 +30,7 @@ const wakeLockManager = {
 
   async request() {
     if (!this.isSupported) {
-      console.log('🔆 Wake Lock: Not supported')
+      console.log('Wake Lock: Not supported')
       return false
     }
 
@@ -36,16 +41,16 @@ const wakeLockManager = {
       }
 
       this.wakeLock = await navigator.wakeLock.request('screen')
-      console.log('🔆 Wake Lock: ACQUIRED - screen will stay awake')
+      console.log('Wake Lock: ACQUIRED - screen will stay awake')
 
       this.wakeLock.addEventListener('release', () => {
-        console.log('🔆 Wake Lock: Released by system')
+        console.log('Wake Lock: Released by system')
         this.wakeLock = null
       })
 
       return true
     } catch (err) {
-      console.warn('🔆 Wake Lock: Failed to acquire -', err.message)
+      console.warn('Wake Lock: Failed to acquire -', err.message)
       return false
     }
   },
@@ -55,10 +60,10 @@ const wakeLockManager = {
       if (this.wakeLock) {
         await this.wakeLock.release()
         this.wakeLock = null
-        console.log('🔆 Wake Lock: Released manually')
+        console.log('Wake Lock: Released manually')
       }
     } catch (err) {
-      console.warn('🔆 Wake Lock: Release error -', err.message)
+      console.warn('Wake Lock: Release error -', err.message)
     }
   },
 
@@ -92,6 +97,7 @@ const MobileRecorder = ({
   const streamRef = useRef(null)
   const timerRef = useRef(null)
   const startTimeRef = useRef(null)
+  const audioSessionIdRef = useRef(null)
 
   // Get AssemblyAI API key
   const apiKey = import.meta.env.VITE_ASSEMBLYAI_API_KEY
@@ -100,7 +106,7 @@ const MobileRecorder = ({
   useEffect(() => {
     const handleVisibilityChange = async () => {
       if (document.visibilityState === 'visible' && isRecording) {
-        console.log('📱 App became visible while recording - re-acquiring wake lock')
+        console.log('App became visible while recording - re-acquiring wake lock')
         const success = await wakeLockManager.request()
         setWakeLockActive(success)
       }
@@ -130,6 +136,12 @@ const MobileRecorder = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
+  // Get file extension from MIME type
+  const getFileExtension = (mimeType) => {
+    if (mimeType && mimeType.includes('mp4')) return '.mp4'
+    return '.webm'
+  }
+
   // Start recording
   const startRecording = async () => {
     try {
@@ -138,18 +150,19 @@ const MobileRecorder = ({
       setAudioBlob(null)
       chunksRef.current = []
       setDuration(0)
+      audioSessionIdRef.current = null
 
       // Step 1: Acquire wake lock FIRST
-      console.log('📱 Step 1: Acquiring wake lock...')
+      console.log('Step 1: Acquiring wake lock...')
       const wakeLockSuccess = await wakeLockManager.request()
       setWakeLockActive(wakeLockSuccess)
 
       if (!wakeLockSuccess) {
-        console.warn('⚠️ Wake lock not available - screen may turn off during recording')
+        console.warn('Wake lock not available - screen may turn off during recording')
       }
 
       // Step 2: Get microphone access
-      console.log('📱 Step 2: Getting microphone access...')
+      console.log('Step 2: Getting microphone access...')
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -161,14 +174,14 @@ const MobileRecorder = ({
       streamRef.current = stream
 
       // Step 3: Create MediaRecorder
-      console.log('📱 Step 3: Creating MediaRecorder...')
+      console.log('Step 3: Creating MediaRecorder...')
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm')
           ? 'audio/webm'
           : 'audio/mp4' // Fallback for iOS Safari
 
-      console.log(`📱 Using MIME type: ${mimeType}`)
+      console.log(`Using MIME type: ${mimeType}`)
 
       const recorder = new MediaRecorder(stream, {
         mimeType,
@@ -181,23 +194,37 @@ const MobileRecorder = ({
         if (event.data.size > 0) {
           chunksRef.current.push(event.data)
           const totalSize = chunksRef.current.reduce((acc, chunk) => acc + chunk.size, 0)
-          console.log(`📦 Chunk: ${(event.data.size / 1024).toFixed(1)} KB (Total: ${(totalSize / 1024 / 1024).toFixed(2)} MB)`)
+          console.log(`Chunk: ${(event.data.size / 1024).toFixed(1)} KB (Total: ${(totalSize / 1024 / 1024).toFixed(2)} MB)`)
         }
       }
 
       // Handle recording stop
-      recorder.onstop = () => {
-        console.log('🛑 MediaRecorder stopped')
+      recorder.onstop = async () => {
+        console.log('MediaRecorder stopped')
         const blob = new Blob(chunksRef.current, { type: mimeType })
-        console.log(`📦 Final audio: ${(blob.size / 1024 / 1024).toFixed(2)} MB`)
+        console.log(`Final audio: ${(blob.size / 1024 / 1024).toFixed(2)} MB`)
         setAudioBlob(blob)
+
+        // PERSIST to IndexedDB BEFORE uploading (crash recovery)
+        try {
+          const sessionId = await StreamingAudioBuffer.startSession({
+            audioSource: 'mobile-microphone',
+            mimeType: mimeType,
+            sampleRate: 16000
+          })
+          audioSessionIdRef.current = sessionId
+          await StreamingAudioBuffer.saveCompleteBlob(sessionId, blob)
+          console.log('Audio persisted to IndexedDB:', sessionId)
+        } catch (err) {
+          console.warn('Failed to persist audio to IndexedDB (non-fatal):', err)
+        }
 
         // Immediately start upload (before iOS can suspend)
         uploadAudio(blob)
       }
 
       recorder.onerror = (event) => {
-        console.error('❌ MediaRecorder error:', event.error)
+        console.error('MediaRecorder error:', event.error)
         handleError('Recording error: ' + event.error?.message)
       }
 
@@ -211,10 +238,10 @@ const MobileRecorder = ({
         setDuration(prev => prev + 1)
       }, 1000)
 
-      console.log('✅ Recording started!')
+      console.log('Recording started!')
 
     } catch (error) {
-      console.error('❌ Failed to start recording:', error)
+      console.error('Failed to start recording:', error)
       handleError('Failed to start recording: ' + error.message)
       wakeLockManager.release()
       setWakeLockActive(false)
@@ -223,7 +250,7 @@ const MobileRecorder = ({
 
   // Stop recording
   const stopRecording = useCallback(() => {
-    console.log('🛑 Stopping recording...')
+    console.log('Stopping recording...')
 
     // Stop timer
     if (timerRef.current) {
@@ -246,7 +273,7 @@ const MobileRecorder = ({
     // Keep wake lock active during upload - release after upload completes
   }, [])
 
-  // Upload audio to AssemblyAI
+  // Upload audio to AssemblyAI with resilient upload
   const uploadAudio = async (blob, retryCount = 0) => {
     const MAX_RETRIES = 3
 
@@ -261,7 +288,7 @@ const MobileRecorder = ({
       return
     }
 
-    // Check minimum duration (160ms ≈ 500 bytes at minimum)
+    // Check minimum duration (160ms ~ 500 bytes at minimum)
     if (blob.size < 500) {
       handleError('Recording too short (minimum ~160ms required)')
       return
@@ -274,76 +301,36 @@ const MobileRecorder = ({
       return
     }
 
+    // Connectivity check
+    if (!checkConnectivity()) {
+      handleError('No internet connection. Please check your network and try again.')
+      return
+    }
+
     try {
       setIsUploading(true)
       setUploadError(null)
       setUploadProgress('Uploading audio...')
 
-      console.log(`📤 Uploading audio (attempt ${retryCount + 1}/${MAX_RETRIES + 1}):`, {
+      console.log(`Uploading audio (attempt ${retryCount + 1}/${MAX_RETRIES + 1}):`, {
         size: `${(blob.size / 1024 / 1024).toFixed(2)} MB`,
         type: blob.type
       })
 
-      // Step 1: Upload audio file
-      const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
-        method: 'POST',
-        headers: {
-          'authorization': apiKey,
-          'Content-Type': 'application/octet-stream'
+      // Use resilient upload with progress tracking and timeout
+      const { transcriptId: id } = await uploadAndTranscribe(blob, apiKey, {
+        uploadTimeoutMs: 90000,
+        transcriptTimeoutMs: 30000,
+        onUploadProgress: (progress) => {
+          const loadedMB = (progress.loaded / 1024 / 1024).toFixed(1)
+          const totalMB = (progress.total / 1024 / 1024).toFixed(1)
+          setUploadProgress(`Uploading: ${loadedMB} / ${totalMB} MB (${progress.percent}%)`)
         },
-        body: blob
+        speakerLabels: true,
+        speakersExpected: null
       })
 
-      if (!uploadResponse.ok) {
-        let errorMsg = `Upload failed: ${uploadResponse.status}`
-        try {
-          const errorBody = await uploadResponse.json()
-          if (errorBody.error) errorMsg = errorBody.error
-        } catch (e) {}
-        throw new Error(errorMsg)
-      }
-
-      const uploadResult = await uploadResponse.json()
-      const upload_url = uploadResult.upload_url
-
-      if (!upload_url) {
-        throw new Error('Upload succeeded but no URL returned')
-      }
-
-      console.log('✅ Audio uploaded:', upload_url)
-      setUploadProgress('Starting transcription...')
-
-      // Step 2: Request transcription with speaker labels
-      const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
-        method: 'POST',
-        headers: {
-          'authorization': apiKey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          audio_url: upload_url,
-          speaker_labels: true,
-          language_code: 'en'
-        })
-      })
-
-      if (!transcriptResponse.ok) {
-        let errorMsg = `Transcription request failed: ${transcriptResponse.status}`
-        try {
-          const errorBody = await transcriptResponse.json()
-          if (errorBody.error) errorMsg = errorBody.error
-        } catch (e) {}
-        throw new Error(errorMsg)
-      }
-
-      const transcriptResult = await transcriptResponse.json()
-      const id = transcriptResult.id
-
-      if (!id) {
-        throw new Error('Transcription request succeeded but no job ID returned')
-      }
-
-      console.log('✅ Transcription job created:', id)
+      console.log('Transcription job created:', id)
 
       // Save transcript ID to localStorage for recovery
       const recordData = {
@@ -355,14 +342,16 @@ const MobileRecorder = ({
       }
       localStorage.setItem('latest_assemblyai_transcript_id', id)
       localStorage.setItem(`assemblyai_transcript_${id}`, JSON.stringify(recordData))
-      console.log('💾 TRANSCRIPT ID SAVED:', id)
+      console.log('TRANSCRIPT ID SAVED:', id)
+
+      // Mark IndexedDB session as uploaded
+      if (audioSessionIdRef.current) {
+        await StreamingAudioBuffer.markUploaded(audioSessionIdRef.current, id)
+      }
 
       setTranscriptId(id)
       setUploadProgress('Processing... (this may take a few minutes)')
       setIsUploading(false)
-
-      // Keep wake lock active - screen stays awake until user leaves page
-      // Wake lock will be released on component unmount (line 119)
 
       // Notify parent component
       if (onRecordingComplete) {
@@ -374,13 +363,18 @@ const MobileRecorder = ({
       }
 
     } catch (error) {
-      console.error(`❌ Upload failed (attempt ${retryCount + 1}):`, error)
+      console.error(`Upload failed (attempt ${retryCount + 1}):`, error)
 
       if (retryCount < MAX_RETRIES) {
-        console.log(`🔄 Retrying upload in 2 seconds...`)
+        console.log(`Retrying upload in 2 seconds...`)
         setUploadProgress(`Upload failed, retrying (${retryCount + 1}/${MAX_RETRIES})...`)
         await new Promise(resolve => setTimeout(resolve, 2000))
         return uploadAudio(blob, retryCount + 1)
+      }
+
+      // Mark IndexedDB session as failed
+      if (audioSessionIdRef.current) {
+        await StreamingAudioBuffer.markUploadFailed(audioSessionIdRef.current, error.message)
       }
 
       setIsUploading(false)
@@ -396,7 +390,7 @@ const MobileRecorder = ({
 
   // Handle errors
   const handleError = (message) => {
-    console.error('❌ MobileRecorder error:', message)
+    console.error('MobileRecorder error:', message)
     setUploadError(message)
     setIsRecording(false)
     setIsUploading(false)
@@ -413,10 +407,48 @@ const MobileRecorder = ({
     }
   }
 
-  // Retry upload
-  const retryUpload = () => {
-    if (audioBlob) {
-      uploadAudio(audioBlob)
+  // Retry upload - recover from IndexedDB if audioBlob is null (page was refreshed)
+  const retryUpload = async () => {
+    let blob = audioBlob
+
+    if (!blob && audioSessionIdRef.current) {
+      try {
+        blob = await StreamingAudioBuffer.reconstructAudio(audioSessionIdRef.current)
+        if (blob) {
+          setAudioBlob(blob)
+          console.log('Recovered audio from IndexedDB for retry')
+        }
+      } catch (err) {
+        console.error('Failed to recover audio from IndexedDB:', err)
+      }
+    }
+
+    if (blob) {
+      uploadAudio(blob)
+    } else {
+      handleError('No audio data available for retry. The recording may have been lost.')
+    }
+  }
+
+  // Download audio to device
+  const downloadAudio = () => {
+    if (!audioBlob) return
+
+    try {
+      const url = URL.createObjectURL(audioBlob)
+      const a = document.createElement('a')
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      const ext = getFileExtension(audioBlob.type)
+      a.href = url
+      a.download = `recording-${timestamp}${ext}`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      console.log('Audio downloaded to device')
+    } catch (err) {
+      console.error('Failed to download audio:', err)
+      handleError('Failed to save audio to device: ' + err.message)
     }
   }
 
@@ -511,6 +543,19 @@ const MobileRecorder = ({
         </div>
       </div>
 
+      {/* Save to Device Button - visible when audio exists and not recording */}
+      {audioBlob && !isRecording && (
+        <div className="flex justify-center">
+          <button
+            onClick={downloadAudio}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-700 transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Save to Device ({(audioBlob.size / 1024 / 1024).toFixed(1)} MB)
+          </button>
+        </div>
+      )}
+
       {/* Error Display */}
       {uploadError && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -519,15 +564,24 @@ const MobileRecorder = ({
             <div className="flex-1">
               <p className="text-sm text-red-700 font-medium">Upload Failed</p>
               <p className="text-xs text-red-600 mt-1">{uploadError}</p>
-              {audioBlob && (
+              <div className="flex items-center gap-2 mt-2">
                 <button
                   onClick={retryUpload}
-                  className="flex items-center gap-1 mt-2 px-3 py-1 bg-red-100 hover:bg-red-200 rounded text-sm text-red-700 transition-colors"
+                  className="flex items-center gap-1 px-3 py-1 bg-red-100 hover:bg-red-200 rounded text-sm text-red-700 transition-colors"
                 >
                   <RefreshCw className="w-3 h-3" />
                   Retry Upload
                 </button>
-              )}
+                {audioBlob && (
+                  <button
+                    onClick={downloadAudio}
+                    className="flex items-center gap-1 px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded text-sm text-gray-700 transition-colors"
+                  >
+                    <Download className="w-3 h-3" />
+                    Save Audio
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -552,6 +606,7 @@ const MobileRecorder = ({
           <p>Wake Lock: {wakeLockManager.isSupported ? 'Supported' : 'Not supported'}</p>
           <p>Active: {wakeLockActive ? 'Yes' : 'No'}</p>
           {audioBlob && <p>Audio: {(audioBlob.size / 1024 / 1024).toFixed(2)} MB</p>}
+          {audioSessionIdRef.current && <p>Session: {audioSessionIdRef.current}</p>}
         </div>
       )}
     </div>

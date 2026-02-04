@@ -6,8 +6,9 @@
  */
 
 import React, { useState, useEffect } from 'react'
-import { AlertTriangle, Download, X, Trash2, CheckCircle } from 'lucide-react'
+import { AlertTriangle, Download, X, Trash2, CheckCircle, HardDrive } from 'lucide-react'
 import { findOrphanedSessions, recoverOrphanedSession, deleteOrphanedSession } from '../utils/transcriptRecovery'
+import StreamingAudioBuffer from '../utils/StreamingAudioBuffer'
 
 const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
   const [orphanedSessions, setOrphanedSessions] = useState([])
@@ -24,9 +25,40 @@ const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
   const checkForOrphanedSessions = async () => {
     try {
       setIsLoading(true)
-      const sessions = await findOrphanedSessions()
-      setOrphanedSessions(sessions)
-      console.log('🔍 Crash Recovery: Found', sessions.length, 'orphaned sessions')
+
+      // Find text-based orphaned sessions (existing behavior)
+      const textSessions = await findOrphanedSessions()
+
+      // Find failed audio upload sessions from IndexedDB
+      let audioSessions = []
+      try {
+        const failedUploads = await StreamingAudioBuffer.getFailedUploadSessions()
+        audioSessions = failedUploads.map(s => ({
+          sessionId: s.sessionId,
+          audioSource: s.audioSource || 'microphone',
+          hasAudio: true,
+          audioSizeMB: ((s.totalBytes || 0) / 1024 / 1024).toFixed(1),
+          totalBytes: s.totalBytes || 0,
+          uploadError: s.uploadError || 'Upload failed',
+          previewText: `Audio recording (${((s.totalBytes || 0) / 1024 / 1024).toFixed(1)} MB)`,
+          wordCount: 0,
+          ageMinutes: Math.round((Date.now() - (s.lastUploadAttempt || s.startTime)) / 60000),
+          startTime: s.startTime,
+          mimeType: s.mimeType || 'audio/webm'
+        }))
+      } catch (err) {
+        console.warn('Failed to check for failed audio uploads:', err)
+      }
+
+      // Merge both lists, avoiding duplicates by sessionId
+      const existingIds = new Set(textSessions.map(s => s.sessionId))
+      const merged = [
+        ...textSessions,
+        ...audioSessions.filter(s => !existingIds.has(s.sessionId))
+      ]
+
+      setOrphanedSessions(merged)
+      console.log('Crash Recovery: Found', textSessions.length, 'text sessions and', audioSessions.length, 'failed audio sessions')
     } catch (error) {
       console.error('Failed to check for orphaned sessions:', error)
     } finally {
@@ -97,11 +129,42 @@ const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
 
   const handleDeleteSession = async (session) => {
     try {
-      console.log('🗑️ Deleting orphaned session:', session.sessionId)
-      await deleteOrphanedSession(session.sessionId)
+      console.log('Deleting orphaned session:', session.sessionId)
+      if (session.hasAudio) {
+        // Delete audio session from StreamingAudioBuffer
+        await StreamingAudioBuffer.deleteSession(session.sessionId)
+      } else {
+        await deleteOrphanedSession(session.sessionId)
+      }
       setOrphanedSessions(prev => prev.filter(s => s.sessionId !== session.sessionId))
     } catch (error) {
       console.error('Failed to delete session:', error)
+    }
+  }
+
+  const handleDownloadAudio = async (session) => {
+    try {
+      console.log('Downloading audio for session:', session.sessionId)
+      const blob = await StreamingAudioBuffer.reconstructAudio(session.sessionId)
+      if (!blob) {
+        alert('Could not reconstruct audio from stored data.')
+        return
+      }
+
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const timestamp = new Date(session.startTime || Date.now()).toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      const ext = (session.mimeType || '').includes('mp4') ? '.mp4' : '.webm'
+      a.href = url
+      a.download = `recovered-recording-${timestamp}${ext}`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      console.log('Audio downloaded successfully')
+    } catch (error) {
+      console.error('Failed to download audio:', error)
+      alert(`Failed to download audio: ${error.message}`)
     }
   }
 
@@ -119,10 +182,14 @@ const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
     }
 
     try {
-      console.log('🗑️ Clearing all orphaned sessions...')
+      console.log('Clearing all orphaned sessions...')
       setIsRecovering(true)
       for (const session of orphanedSessions) {
-        await deleteOrphanedSession(session.sessionId)
+        if (session.hasAudio) {
+          await StreamingAudioBuffer.deleteSession(session.sessionId)
+        } else {
+          await deleteOrphanedSession(session.sessionId)
+        }
       }
       setOrphanedSessions([])
       setIsRecovering(false)
@@ -200,14 +267,30 @@ const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
                     </div>
 
                     <p className="text-xs text-gray-600 mb-1 truncate">
-                      {session.previewText}...
+                      {session.previewText}{session.hasAudio ? '' : '...'}
                     </p>
 
                     <div className="flex items-center gap-3 text-xs text-gray-500">
-                      <span>{session.wordCount} words</span>
-                      <span>•</span>
-                      <span>{session.ageMinutes} min ago</span>
+                      {session.hasAudio ? (
+                        <>
+                          <span>{session.audioSizeMB} MB audio</span>
+                          <span>•</span>
+                          <span>{session.ageMinutes} min ago</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>{session.wordCount} words</span>
+                          <span>•</span>
+                          <span>{session.ageMinutes} min ago</span>
+                        </>
+                      )}
                     </div>
+
+                    {session.hasAudio && session.uploadError && (
+                      <p className="text-xs text-red-500 mt-1 truncate">
+                        Error: {session.uploadError}
+                      </p>
+                    )}
 
                     {/* Status Messages */}
                     {status === 'success' && (
@@ -245,11 +328,21 @@ const CrashRecoveryPrompt = ({ onRecover, onDismiss }) => {
                       <CheckCircle className="w-5 h-5 text-green-600" />
                     ) : (
                       <>
+                        {session.hasAudio && (
+                          <button
+                            onClick={() => handleDownloadAudio(session)}
+                            disabled={isRecovering}
+                            className="p-1.5 text-green-600 hover:bg-green-50 rounded transition-colors disabled:opacity-50"
+                            title="Download audio file"
+                          >
+                            <HardDrive className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => handleRecoverSession(session)}
                           disabled={isRecovering}
                           className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50"
-                          title="Recover this recording"
+                          title={session.hasAudio ? 'Recover transcript' : 'Recover this recording'}
                         >
                           <Download className="w-4 h-4" />
                         </button>

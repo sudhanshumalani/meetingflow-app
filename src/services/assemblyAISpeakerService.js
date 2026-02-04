@@ -5,6 +5,7 @@
  */
 
 import assemblyAIService from './assemblyAIService'
+import { uploadWithProgress, fetchWithTimeout } from '../utils/resilientUpload'
 
 class AssemblyAISpeakerService {
   constructor() {
@@ -220,33 +221,21 @@ class AssemblyAISpeakerService {
         sizeKB: (audioBlob.size / 1024).toFixed(2) + ' KB'
       })
 
-      // Step 1: Upload audio file
-      // CRITICAL: Must include Content-Type: application/octet-stream
-      const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
-        method: 'POST',
-        headers: {
-          'authorization': apiKey,
-          'Content-Type': 'application/octet-stream'
-        },
-        body: audioBlob
-      })
-
-      // Parse error response body for better error messages
-      if (!uploadResponse.ok) {
-        let errorMessage = `Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`
-        try {
-          const errorBody = await uploadResponse.json()
-          if (errorBody.error) {
-            errorMessage = `Upload failed: ${errorBody.error}`
-          }
-        } catch (e) {
-          // Response wasn't JSON, use status text
+      // Step 1: Upload audio file with progress tracking (90s timeout)
+      const uploadResult = await uploadWithProgress(
+        'https://api.assemblyai.com/v2/upload',
+        audioBlob,
+        apiKey,
+        90000,
+        (progressData) => {
+          // Map upload progress (0-100%) to overall progress (0-20%)
+          const overallProgress = Math.round(progressData.percent * 0.2)
+          const loadedMB = (progressData.loaded / 1024 / 1024).toFixed(1)
+          const totalMB = (progressData.total / 1024 / 1024).toFixed(1)
+          reportProgress(overallProgress, `Uploading: ${loadedMB} / ${totalMB} MB (${progressData.percent}%)`)
         }
-        console.error('❌ Upload error:', errorMessage)
-        throw new Error(errorMessage)
-      }
+      )
 
-      const uploadResult = await uploadResponse.json()
       const upload_url = uploadResult.upload_url
 
       if (!upload_url) {
@@ -272,16 +261,19 @@ class AssemblyAISpeakerService {
         console.log(`💡 Hint: Expecting ${speakers_expected} speakers`)
       }
 
-      const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
-        method: 'POST',
-        headers: {
-          'authorization': apiKey,
-          'Content-Type': 'application/json'
+      const transcriptResponse = await fetchWithTimeout(
+        'https://api.assemblyai.com/v2/transcript',
+        {
+          method: 'POST',
+          headers: {
+            'authorization': apiKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(transcriptConfig)
         },
-        body: JSON.stringify(transcriptConfig)
-      })
+        30000 // 30s timeout for transcript request
+      )
 
-      // Parse error response body for better error messages
       if (!transcriptResponse.ok) {
         let errorMessage = `Transcription request failed: ${transcriptResponse.status} ${transcriptResponse.statusText}`
         try {
@@ -364,9 +356,11 @@ class AssemblyAISpeakerService {
       attempts++
 
       try {
-        const response = await fetch(`https://api.assemblyai.com/v2/transcript/${id}`, {
-          headers: { 'authorization': apiKey }
-        })
+        const response = await fetchWithTimeout(
+          `https://api.assemblyai.com/v2/transcript/${id}`,
+          { headers: { 'authorization': apiKey } },
+          15000 // 15s timeout per poll request
+        )
 
         if (!response.ok) {
           consecutiveErrors++
@@ -467,9 +461,11 @@ class AssemblyAISpeakerService {
     console.log(`📥 Fetching transcript: ${transcriptId}`)
 
     try {
-      const response = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
-        headers: { 'authorization': apiKey }
-      })
+      const response = await fetchWithTimeout(
+        `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
+        { headers: { 'authorization': apiKey } },
+        15000
+      )
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -533,9 +529,11 @@ class AssemblyAISpeakerService {
     console.log(`📋 Listing transcripts (limit: ${limit})`)
 
     try {
-      const response = await fetch(`https://api.assemblyai.com/v2/transcript?limit=${limit}`, {
-        headers: { 'authorization': apiKey }
-      })
+      const response = await fetchWithTimeout(
+        `https://api.assemblyai.com/v2/transcript?limit=${limit}`,
+        { headers: { 'authorization': apiKey } },
+        15000
+      )
 
       if (!response.ok) {
         throw new Error(`Failed to list transcripts: ${response.status} ${response.statusText}`)

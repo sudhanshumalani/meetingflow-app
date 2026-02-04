@@ -393,9 +393,77 @@ class StreamingAudioBuffer {
   }
 
   /**
-   * FIX #7: Cleanup orphaned sessions (still "active" but older than 1 hour)
-   * These are sessions that were never properly completed due to errors,
-   * app crashes, or iOS backgrounding issues.
+   * Save a complete audio blob as a single chunk.
+   * Used by MobileRecorder which doesn't chunk during recording.
+   * @param {string} sessionId
+   * @param {Blob} blob - Complete audio blob
+   */
+  async saveCompleteBlob(sessionId, blob) {
+    if (!sessionId || !blob) return
+
+    if (!this.initialized) {
+      console.warn('⚠️ StreamingAudioBuffer not initialized, cannot save blob')
+      return
+    }
+
+    try {
+      const chunk = {
+        sessionId,
+        chunkIndex: 0,
+        blob,
+        size: blob.size,
+        timestamp: Date.now(),
+        mimeType: blob.type
+      }
+
+      await this.db.setItem(`${sessionId}_chunk_0`, chunk)
+
+      // Update session metadata
+      const session = await this.sessionDb.getItem(sessionId)
+      if (session) {
+        session.chunkCount = 1
+        session.totalBytes = blob.size
+        session.lastUpdateTime = Date.now()
+        await this.sessionDb.setItem(sessionId, session)
+      }
+
+      console.log(`💾 Saved complete blob (${(blob.size / 1024 / 1024).toFixed(2)} MB) for session ${sessionId}`)
+    } catch (error) {
+      console.error('❌ Failed to save complete blob:', error)
+    }
+  }
+
+  /**
+   * Get all sessions with failed uploads that still have audio data.
+   * Used by CrashRecoveryPrompt to show audio recovery options.
+   * @returns {Array} Array of failed session metadata with totalBytes > 0
+   */
+  async getFailedUploadSessions() {
+    const isReady = await this.ensureInitialized()
+    if (!isReady) return []
+
+    const failedSessions = []
+
+    try {
+      await this.sessionDb.iterate((value) => {
+        if (value.uploadStatus === 'failed' && (value.totalBytes || 0) > 0) {
+          failedSessions.push(value)
+        }
+      })
+
+      failedSessions.sort((a, b) => (b.lastUploadAttempt || b.startTime) - (a.lastUploadAttempt || a.startTime))
+      console.log(`📤 Found ${failedSessions.length} failed upload sessions with audio data`)
+      return failedSessions
+    } catch (error) {
+      console.error('❌ Error getting failed upload sessions:', error)
+      return []
+    }
+  }
+
+  /**
+   * Cleanup orphaned sessions (still "active" but older than 24 hours AND empty)
+   * and very old failed uploads (older than 7 days).
+   * Relaxed from previous aggressive cleanup to preserve recoverable audio.
    */
   async cleanupOrphanedSessions() {
     // CRITICAL: Ensure database is initialized before iterating
@@ -405,22 +473,25 @@ class StreamingAudioBuffer {
       return { orphanedSessions: 0, failedSessions: 0 }
     }
 
-    const oneHourAgo = Date.now() - (60 * 60 * 1000)
+    const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000)
+    const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000)
     const orphanedSessions = []
     const failedSessions = []
 
     try {
       await this.sessionDb.iterate((value, key) => {
-        // Orphaned: marked active but not updated for over an hour
+        // Orphaned: marked active, not updated for 24+ hours, AND has no audio data
+        // Sessions with audio data are preserved for recovery
         const isOrphaned = value.isActive &&
           value.lastUpdateTime &&
-          value.lastUpdateTime < oneHourAgo
+          value.lastUpdateTime < twentyFourHoursAgo &&
+          (value.totalBytes || 0) === 0
 
-        // Old failed uploads: failed more than 24 hours ago with multiple retry attempts
+        // Old failed uploads: failed more than 7 days ago (regardless of retry count)
+        // This gives users a full week to recover their audio
         const isOldFailed = value.uploadStatus === 'failed' &&
           value.lastUploadAttempt &&
-          value.lastUploadAttempt < (Date.now() - 24 * 60 * 60 * 1000) &&
-          (value.uploadRetryCount || 0) >= 3
+          value.lastUploadAttempt < sevenDaysAgo
 
         if (isOrphaned) {
           orphanedSessions.push(value.sessionId)

@@ -248,11 +248,26 @@ function mergeByIdWithTracking(localItems, cloudItems) {
       merged.set(id, localItem)
       toUpload.push(localItem)
     } else {
-      // Exists in both - SYNC FIX: deleted=true ALWAYS wins
-      const isDeleted = cloudItem.deleted || localItem.deleted
+      // Exists in both - check deleted status WITH timestamp protection
+      const localTime = getTimestamp(localItem)
+      const cloudTime = getTimestamp(cloudItem)
 
-      if (isDeleted) {
-        // Either side is deleted - result is deleted
+      // SAFETY FIX: If local is NOT deleted but cloud IS deleted,
+      // check if local is significantly newer (restored data protection)
+      // If local is newer by more than 1 minute, local wins (it was likely restored)
+      const ONE_MINUTE = 60 * 1000
+
+      if (cloudItem.deleted && !localItem.deleted && localTime > cloudTime + ONE_MINUTE) {
+        // Local is newer and NOT deleted - protect restored data from cloud tombstones
+        console.log('🛡️ SAFETY: Protecting restored item from cloud tombstone:', id)
+        merged.set(id, localItem)
+        toUpload.push(localItem) // Upload to clear the tombstone in cloud
+      } else if (localItem.deleted && !cloudItem.deleted && cloudTime > localTime + ONE_MINUTE) {
+        // Cloud is newer and NOT deleted - cloud wins
+        merged.set(id, cloudItem)
+        toDownload.push(cloudItem)
+      } else if (cloudItem.deleted || localItem.deleted) {
+        // Both deleted, or one deleted and not significantly newer - deleted wins
         const deletedItem = {
           ...(cloudItem.deleted ? cloudItem : localItem),
           deleted: true,

@@ -313,7 +313,7 @@ export default function Meeting() {
           if (meetingData.originalInputs.manualText) {
             console.log('📝 RESTORING manual text:', meetingData.originalInputs.manualText.substring(0, 100) + '...')
             setManualText(meetingData.originalInputs.manualText)
-            setShowManualInput(true) // Show the manual input section
+            setShowManualInput(false) // Show read-only display, not the editable textarea
             hasManualText = true
             console.log('✅ Manual text restored and section shown')
           }
@@ -1579,7 +1579,6 @@ Example notes you might paste:
                       <div className="flex gap-2">
                         <button
                           onClick={() => {
-                            setManualText('')
                             setShowManualInput(false)
                           }}
                           className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
@@ -1696,14 +1695,27 @@ Example notes you might paste:
                   </div>
                 )}
 
-                {/* Original Input Text Display */}
-                {manualText && (
-                  <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                    <h3 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
-                      📝 Your Original Notes
-                    </h3>
-                    <div className="text-sm text-gray-700 whitespace-pre-wrap bg-white rounded p-3 border">
-                      {manualText}
+                {/* Original Input Text Display - shown when paste textarea is hidden */}
+                {manualText && !showManualInput && (
+                  <div className="mb-6 bg-white rounded-lg shadow-md border border-purple-200">
+                    <div className="flex items-center justify-between p-4 border-b border-purple-100">
+                      <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                        📝 Your Original Notes
+                        <span className="text-xs font-normal bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                          {manualText.split(/\s+/).filter(Boolean).length} words
+                        </span>
+                      </h3>
+                      <button
+                        onClick={() => setShowManualInput(true)}
+                        className="px-3 py-1 text-sm text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded transition-colors"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                    <div className="p-4 max-h-64 overflow-y-auto">
+                      <div className="text-sm text-gray-700 whitespace-pre-wrap">
+                        {manualText}
+                      </div>
                     </div>
                   </div>
                 )}

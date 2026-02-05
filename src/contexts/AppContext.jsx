@@ -879,24 +879,39 @@ export function AppProvider({ children }) {
   // No localStorage is used for deletion tracking anymore
 
   // Listen for n8n data updates
+  // SAFETY: This handler has guards to prevent overwriting existing data with empty arrays
   useEffect(() => {
     const handleN8nDataUpdate = (event) => {
       console.log('📊 AppContext received n8nDataUpdated event:', event.detail)
 
       if (event.detail && (event.detail.categories || event.detail.stakeholders)) {
-        const mergedStakeholders = event.detail.stakeholders || []
-        const mergedCategories = event.detail.categories || []
+        const n8nStakeholders = event.detail.stakeholders || []
+        const n8nCategories = event.detail.categories || []
+
+        // SAFETY GUARD: Don't overwrite existing data with empty arrays
+        // This prevents data loss when N8N fails or returns empty
+        const currentStakeholders = currentStakeholdersRef.current || []
+        const currentCategories = currentCategoriesRef.current || []
+
+        if (n8nStakeholders.length === 0 && currentStakeholders.length > 0) {
+          console.warn('⚠️ SAFETY: N8N returned 0 stakeholders but we have', currentStakeholders.length, '- NOT overwriting')
+          return
+        }
+        if (n8nCategories.length === 0 && currentCategories.length > 0) {
+          console.warn('⚠️ SAFETY: N8N returned 0 categories but we have', currentCategories.length, '- NOT overwriting')
+          return
+        }
 
         console.log('📊 Updating AppContext with n8n data:', {
-          stakeholders: mergedStakeholders.length,
-          categories: mergedCategories.length
+          stakeholders: n8nStakeholders.length,
+          categories: n8nCategories.length
         })
 
         dispatch({
           type: 'SYNC_N8N_DATA',
           payload: {
-            stakeholders: mergedStakeholders,
-            categories: mergedCategories,
+            stakeholders: n8nStakeholders,
+            categories: n8nCategories,
             syncResult: { success: true }
           }
         })
@@ -1180,22 +1195,37 @@ export function AppProvider({ children }) {
             }
 
             // ORPHAN CLEANUP: Mark local stakeholders that don't exist in Firestore as deleted
-            // These are orphaned items that should be removed
-            const cleanedLocalStakeholders = localStakeholders.map(localStk => {
-              if (!firestoreIds.has(localStk.id) && !localStk.deleted) {
-                console.log('🧹 Marking orphaned stakeholder as deleted:', localStk.id, localStk.name || localStk.company)
-                return { ...localStk, deleted: true, deletedAt: new Date().toISOString() }
-              }
-              return localStk
-            })
+            // SAFETY GUARD: Skip orphan cleanup if Firestore returned empty/suspicious data
+            // This prevents mass deletion when Firestore has connection issues
+            const activeLocalStakeholders = localStakeholders.filter(s => !s.deleted)
+            const potentialOrphans = activeLocalStakeholders.filter(s => !firestoreIds.has(s.id))
 
-            // Save the orphan deletions back to Dexie
-            const orphansToDelete = cleanedLocalStakeholders.filter(s =>
-              s.deleted && !localStakeholders.find(ls => ls.id === s.id)?.deleted
-            )
-            if (orphansToDelete.length > 0) {
-              console.log('🧹 Saving', orphansToDelete.length, 'orphan deletions to Dexie')
-              await bulkSaveStakeholders(orphansToDelete, { queueSync: false })
+            let cleanedLocalStakeholders = localStakeholders
+
+            if (firestoreStakeholders.length === 0 && activeLocalStakeholders.length > 0) {
+              // Firestore returned empty but we have local data - DON'T delete anything
+              console.warn('⚠️ SAFETY: Firestore returned 0 stakeholders but local has', activeLocalStakeholders.length, '- skipping orphan cleanup')
+            } else if (potentialOrphans.length > activeLocalStakeholders.length * 0.5 && potentialOrphans.length > 2) {
+              // Would delete more than 50% of local items - that's suspicious
+              console.warn('⚠️ SAFETY: Orphan cleanup would delete', potentialOrphans.length, 'of', activeLocalStakeholders.length, 'stakeholders (>50%) - skipping')
+            } else {
+              // Safe to run orphan cleanup
+              cleanedLocalStakeholders = localStakeholders.map(localStk => {
+                if (!firestoreIds.has(localStk.id) && !localStk.deleted) {
+                  console.log('🧹 Marking orphaned stakeholder as deleted:', localStk.id, localStk.name || localStk.company)
+                  return { ...localStk, deleted: true, deletedAt: new Date().toISOString() }
+                }
+                return localStk
+              })
+
+              // Save the orphan deletions back to Dexie
+              const orphansToDelete = cleanedLocalStakeholders.filter(s =>
+                s.deleted && !localStakeholders.find(ls => ls.id === s.id)?.deleted
+              )
+              if (orphansToDelete.length > 0) {
+                console.log('🧹 Saving', orphansToDelete.length, 'orphan deletions to Dexie')
+                await bulkSaveStakeholders(orphansToDelete, { queueSync: false })
+              }
             }
 
             const mergedStakeholders = mergeByIdKeepNewer(cleanedLocalStakeholders, firestoreStakeholders)
@@ -1243,22 +1273,37 @@ export function AppProvider({ children }) {
             }
 
             // ORPHAN CLEANUP: Mark local categories that don't exist in Firestore as deleted
-            // These are orphaned items that should be removed
-            const cleanedLocalCategories = localCategories.map(localCat => {
-              if (!firestoreIds.has(localCat.id) && !localCat.deleted) {
-                console.log('🧹 Marking orphaned category as deleted:', localCat.id, localCat.label || localCat.key)
-                return { ...localCat, deleted: true, deletedAt: new Date().toISOString() }
-              }
-              return localCat
-            })
+            // SAFETY GUARD: Skip orphan cleanup if Firestore returned empty/suspicious data
+            // This prevents mass deletion when Firestore has connection issues
+            const activeLocalCategories = localCategories.filter(c => !c.deleted)
+            const potentialOrphanCats = activeLocalCategories.filter(c => !firestoreIds.has(c.id))
 
-            // Save the orphan deletions back to Dexie
-            const orphansToDelete = cleanedLocalCategories.filter(c =>
-              c.deleted && !localCategories.find(lc => lc.id === c.id)?.deleted
-            )
-            if (orphansToDelete.length > 0) {
-              console.log('🧹 Saving', orphansToDelete.length, 'orphan deletions to Dexie')
-              await bulkSaveCategories(orphansToDelete, { queueSync: false })
+            let cleanedLocalCategories = localCategories
+
+            if (firestoreCategories.length === 0 && activeLocalCategories.length > 0) {
+              // Firestore returned empty but we have local data - DON'T delete anything
+              console.warn('⚠️ SAFETY: Firestore returned 0 categories but local has', activeLocalCategories.length, '- skipping orphan cleanup')
+            } else if (potentialOrphanCats.length > activeLocalCategories.length * 0.5 && potentialOrphanCats.length > 2) {
+              // Would delete more than 50% of local items - that's suspicious
+              console.warn('⚠️ SAFETY: Orphan cleanup would delete', potentialOrphanCats.length, 'of', activeLocalCategories.length, 'categories (>50%) - skipping')
+            } else {
+              // Safe to run orphan cleanup
+              cleanedLocalCategories = localCategories.map(localCat => {
+                if (!firestoreIds.has(localCat.id) && !localCat.deleted) {
+                  console.log('🧹 Marking orphaned category as deleted:', localCat.id, localCat.label || localCat.key)
+                  return { ...localCat, deleted: true, deletedAt: new Date().toISOString() }
+                }
+                return localCat
+              })
+
+              // Save the orphan deletions back to Dexie
+              const orphansToDelete = cleanedLocalCategories.filter(c =>
+                c.deleted && !localCategories.find(lc => lc.id === c.id)?.deleted
+              )
+              if (orphansToDelete.length > 0) {
+                console.log('🧹 Saving', orphansToDelete.length, 'orphan deletions to Dexie')
+                await bulkSaveCategories(orphansToDelete, { queueSync: false })
+              }
             }
 
             const mergedCategories = mergeByIdKeepNewer(cleanedLocalCategories, firestoreCategories)

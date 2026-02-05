@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
 import { useMeetings, useStakeholders, useStakeholderCategories } from '../hooks/useMeetings'
@@ -243,8 +243,18 @@ export default function Home() {
   }, [displayMeetings, displayStakeholders])
 
   // Auto-sync listener: When Dexie is empty but user is logged in, trigger sync
+  // Use a ref to prevent infinite loops - only attempt auto-sync once per session
+  const hasAttemptedAutoSync = useRef(false)
+
   useEffect(() => {
     const handleAutoSync = async () => {
+      // Prevent infinite loop - only auto-sync once per session
+      if (hasAttemptedAutoSync.current) {
+        console.log('🔄 AUTO-SYNC: Already attempted this session, skipping to prevent loop')
+        return
+      }
+      hasAttemptedAutoSync.current = true
+
       console.log('🔄 AUTO-SYNC: Received auto-sync request, triggering performFullSync...')
       setIsSyncing(true)
       setSyncResult(null)

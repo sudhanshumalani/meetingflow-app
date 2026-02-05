@@ -2,33 +2,27 @@
  * SyncProvider - Cross-device sync integration for AppContext
  * Wraps the app with sync capabilities and handles sync state management
  *
- * NOTE: When ENABLE_FIRESTORE is true, Google Drive sync is disabled
- * to prevent conflicts. Use the Firestore Sync tab in Settings instead.
+ * UPDATED: Google Drive sync now works alongside Firestore.
+ * Both serve as backup systems for data safety.
  */
 
-import { createContext, useContext, useEffect, useCallback } from 'react'
+import { createContext, useContext, useEffect, useCallback, useRef } from 'react'
 import { useApp } from './AppContext'
 import useSync from '../hooks/useSync'
-
-// Feature flag - when Firestore is enabled, disable Google Drive sync
-const ENABLE_FIRESTORE = true
 
 const SyncContext = createContext()
 
 export function SyncProvider({ children }) {
   const app = useApp()
   const sync = useSync()
+  const lastSyncRef = useRef(0)
 
   /**
-   * Sync app data to cloud when data changes
-   * PHASE 4: Google Drive sync disabled - using Firestore with soft delete instead
+   * Sync app data to Google Drive when data changes
+   * FIXED: Now loads FULL content from Dexie (not just metadata from app.meetings)
+   * Google Drive sync runs alongside Firestore for redundant backup
    */
   const handleDataChange = useCallback(async () => {
-    // Skip Google Drive sync when Firestore is enabled
-    if (ENABLE_FIRESTORE) {
-      return
-    }
-
     // Only sync if sync is configured and we have data
     if (!sync.isConfigured || !sync.canSync) {
       return
@@ -39,25 +33,39 @@ export function SyncProvider({ children }) {
       return
     }
 
+    // Debounce: Don't sync more than once per 5 seconds
+    const now = Date.now()
+    if (now - lastSyncRef.current < 5000) {
+      return
+    }
+    lastSyncRef.current = now
+
     try {
-      const appData = {
-        meetings: app.meetings,
-        stakeholders: app.stakeholders,
-        stakeholderCategories: app.stakeholderCategories
+      // FIXED: Use sync service's getLocalData() which reads FULL content from Dexie
+      // Previously used app.meetings which only had metadata (no transcripts, notes, etc.)
+      const syncService = (await import('../utils/syncService')).default
+      const localData = await syncService.getLocalData()
+
+      if (!localData || !localData.data) {
+        console.log('⏸️ Auto-sync skipped - no data available')
+        return
       }
 
+      const { meetings, stakeholders, stakeholderCategories } = localData.data
+
       // Only sync if we have actual data
-      if (appData.meetings.length > 0 || appData.stakeholders.length > 0 || appData.stakeholderCategories.length > 0) {
-        console.log('🔄 Auto-syncing app data to cloud...', {
-          meetings: appData.meetings.length,
-          stakeholders: appData.stakeholders.length,
-          categories: appData.stakeholderCategories.length
+      if (meetings.length > 0 || stakeholders.length > 0 || stakeholderCategories.length > 0) {
+        console.log('🔄 Auto-syncing FULL content to Google Drive...', {
+          meetings: meetings.length,
+          stakeholders: stakeholders.length,
+          categories: stakeholderCategories.length,
+          hasFullContent: meetings[0]?.audioTranscript ? 'YES' : 'NO'
         })
 
-        const result = await sync.syncToCloud(appData)
+        const result = await sync.syncToCloud(localData.data)
 
         if (result.success) {
-          console.log('✅ AUTO-SYNC COMPLETED SUCCESSFULLY')
+          console.log('✅ GOOGLE DRIVE AUTO-SYNC COMPLETED - Full content saved')
         } else if (result.queued) {
           console.log('📴 Sync queued - device is offline')
         }
@@ -67,19 +75,20 @@ export function SyncProvider({ children }) {
     } catch (error) {
       console.log('Auto-sync failed (will retry):', error.message)
     }
-  }, [app.meetings, app.stakeholders, app.stakeholderCategories, app.isLoading, sync.isConfigured, sync.canSync, sync.syncToCloud])
+  }, [app.isLoading, sync.isConfigured, sync.canSync, sync.syncToCloud])
 
   /**
    * Auto-sync data when app state changes (debounced)
+   * Triggers on any change to meetings, stakeholders, or categories
    */
   useEffect(() => {
     // Debounce sync operations to avoid excessive calls
     const timeoutId = setTimeout(() => {
       handleDataChange()
-    }, 500) // 500ms delay (reduced from 2000ms for faster sync)
+    }, 2000) // 2 second delay to batch rapid changes
 
     return () => clearTimeout(timeoutId)
-  }, [handleDataChange])
+  }, [handleDataChange, app.meetings?.length, app.stakeholders?.length, app.stakeholderCategories?.length])
 
   /**
    * PHASE 4: Deletion sync effect removed
@@ -220,21 +229,27 @@ export function SyncProvider({ children }) {
       stakeholderCategories: app.stakeholderCategories
     }),
 
-    // Manual sync trigger (Google Drive - disabled when Firestore enabled)
+    // Manual sync trigger (Google Drive) - loads FULL content from Dexie
     forceSyncToCloud: async () => {
-      const appData = {
-        meetings: app.meetings,
-        stakeholders: app.stakeholders,
-        stakeholderCategories: app.stakeholderCategories
+      // FIXED: Use sync service's getLocalData() which reads FULL content from Dexie
+      const syncService = (await import('../utils/syncService')).default
+      const localData = await syncService.getLocalData()
+
+      if (!localData || !localData.data) {
+        console.log('❌ FORCE SYNC failed - no data available')
+        return { success: false, error: 'No data available' }
       }
 
-      console.log('🔄 FORCE SYNC TO CLOUD triggered:', {
-        meetings: appData.meetings.length,
-        stakeholders: appData.stakeholders.length,
-        categories: appData.stakeholderCategories.length
+      const { meetings, stakeholders, stakeholderCategories } = localData.data
+
+      console.log('🔄 FORCE SYNC TO CLOUD triggered with FULL content:', {
+        meetings: meetings.length,
+        stakeholders: stakeholders.length,
+        categories: stakeholderCategories.length,
+        hasFullContent: meetings[0]?.audioTranscript ? 'YES' : 'NO'
       })
 
-      return await sync.syncToCloud(appData)
+      return await sync.syncToCloud(localData.data)
     },
 
     // Get sync statistics

@@ -220,8 +220,9 @@ function getTimestamp(item) {
   return 0
 }
 
-// Helper function to merge arrays by ID with timestamp-based conflict resolution
-// SYNC FIX: Now handles deleted=true properly - deletion ALWAYS wins
+// Helper function to merge arrays by ID with LAST-WRITE-WINS conflict resolution
+// ARCHITECTURE FIX: Delete is just another change - newer timestamp ALWAYS wins
+// No more "delete wins" logic that was causing data loss
 // Returns: { merged: [], toUpload: [], toDownload: [] }
 function mergeByIdWithTracking(localItems, cloudItems) {
   const merged = new Map()
@@ -248,69 +249,37 @@ function mergeByIdWithTracking(localItems, cloudItems) {
       merged.set(id, localItem)
       toUpload.push(localItem)
     } else {
-      // Exists in both - check deleted status WITH timestamp protection
+      // Exists in both - LAST-WRITE-WINS (timestamp comparison only)
       const localTime = getTimestamp(localItem)
       const cloudTime = getTimestamp(cloudItem)
 
-      // SAFETY FIX: If local is NOT deleted but cloud IS deleted,
-      // check if local is significantly newer (restored data protection)
-      // If local is newer by more than 1 minute, local wins (it was likely restored)
-      const ONE_MINUTE = 60 * 1000
-
-      if (cloudItem.deleted && !localItem.deleted && localTime > cloudTime + ONE_MINUTE) {
-        // Local is newer and NOT deleted - protect restored data from cloud tombstones
-        console.log('🛡️ SAFETY: Protecting restored item from cloud tombstone:', id)
+      if (localTime > cloudTime) {
+        // Local is newer - local wins (regardless of deleted status)
+        console.log(`⏱️ MERGE: Local wins for ${id.slice(0, 8)}... (local: ${new Date(localTime).toISOString()}, cloud: ${new Date(cloudTime).toISOString()})`)
         merged.set(id, localItem)
-        toUpload.push(localItem) // Upload to clear the tombstone in cloud
-      } else if (localItem.deleted && !cloudItem.deleted && cloudTime > localTime + ONE_MINUTE) {
-        // Cloud is newer and NOT deleted - cloud wins
-        merged.set(id, cloudItem)
-        toDownload.push(cloudItem)
-      } else if (cloudItem.deleted || localItem.deleted) {
-        // Both deleted, or one deleted and not significantly newer - deleted wins
-        const deletedItem = {
-          ...(cloudItem.deleted ? cloudItem : localItem),
-          deleted: true,
-          deletedAt: cloudItem.deletedAt || localItem.deletedAt || new Date().toISOString()
+        toUpload.push(localItem)
+      } else if (cloudTime > localTime) {
+        // Cloud is newer - use cloud metadata BUT preserve local blob data
+        // Cloud doesn't store large fields like aiResult, digitalNotes, transcript
+        // So we merge cloud metadata with local blobs
+        console.log(`⏱️ MERGE: Cloud wins for ${id.slice(0, 8)}... (local: ${new Date(localTime).toISOString()}, cloud: ${new Date(cloudTime).toISOString()})`)
+        const mergedItem = {
+          ...cloudItem,
+          // Preserve blob data from local if cloud doesn't have it
+          aiResult: cloudItem.aiResult || localItem.aiResult,
+          digitalNotes: cloudItem.digitalNotes || localItem.digitalNotes,
+          audioTranscript: cloudItem.audioTranscript || localItem.audioTranscript,
+          transcript: cloudItem.transcript || localItem.transcript,
+          notes: cloudItem.notes || localItem.notes,
+          originalInputs: cloudItem.originalInputs || localItem.originalInputs,
+          speakerData: cloudItem.speakerData || localItem.speakerData,
+          images: cloudItem.images || localItem.images,
         }
-        merged.set(id, deletedItem)
-        // Upload if local was the source of deletion, download otherwise
-        if (localItem.deleted && !cloudItem.deleted) {
-          toUpload.push(deletedItem)
-        } else if (cloudItem.deleted && !localItem.deleted) {
-          toDownload.push(deletedItem)
-        }
+        merged.set(id, mergedItem)
+        toDownload.push(mergedItem)
       } else {
-        // Neither is deleted - compare timestamps
-        const localTime = getTimestamp(localItem)
-        const cloudTime = getTimestamp(cloudItem)
-
-        if (localTime > cloudTime) {
-          // Local is newer - use local and upload it
-          merged.set(id, localItem)
-          toUpload.push(localItem)
-        } else if (cloudTime > localTime) {
-          // Cloud is newer - use cloud metadata BUT preserve local blob data
-          // Cloud doesn't store large fields like aiResult, digitalNotes, transcript
-          // So we merge cloud metadata with local blobs
-          const mergedItem = {
-            ...cloudItem,
-            // Preserve blob data from local if cloud doesn't have it
-            aiResult: cloudItem.aiResult || localItem.aiResult,
-            digitalNotes: cloudItem.digitalNotes || localItem.digitalNotes,
-            audioTranscript: cloudItem.audioTranscript || localItem.audioTranscript,
-            transcript: cloudItem.transcript || localItem.transcript,
-            notes: cloudItem.notes || localItem.notes,
-            originalInputs: cloudItem.originalInputs || localItem.originalInputs,
-            speakerData: cloudItem.speakerData || localItem.speakerData,
-            images: cloudItem.images || localItem.images,
-          }
-          merged.set(id, mergedItem)
-          toDownload.push(mergedItem)
-        } else {
-          // Same time - keep local (arbitrary choice)
-          merged.set(id, localItem)
-        }
+        // Same timestamp - keep local (arbitrary choice)
+        merged.set(id, localItem)
       }
     }
   }
@@ -318,7 +287,7 @@ function mergeByIdWithTracking(localItems, cloudItems) {
   // Process cloud items not in local
   for (const [id, cloudItem] of cloudMap) {
     if (!localMap.has(id)) {
-      // Only in cloud - needs to be downloaded (including deleted items)
+      // Only in cloud - needs to be downloaded
       merged.set(id, cloudItem)
       toDownload.push(cloudItem)
     }
@@ -1355,11 +1324,11 @@ export function AppProvider({ children }) {
   }, []) // Empty deps - only run once on mount
 
   // Helper: Merge meetings, keeping newer versions and avoiding duplicates
-  // SYNC FIX: Now handles deleted=true properly - deletion ALWAYS wins
+  // ARCHITECTURE FIX: Uses LAST-WRITE-WINS based on timestamp
+  // Delete is just another change - newer timestamp always wins
   //
   // Key principles:
-  // - If EITHER side has deleted=true, the merged result is deleted=true
-  // - Timestamp comparison only applies to non-delete fields
+  // - Newer timestamp ALWAYS wins (regardless of deleted status)
   // - Binary data (audio, large images) is always preserved from local since Firestore never stores it
   // - New local meetings (created < 5 min ago) are preserved to allow time to sync
   function mergeMeetingsData(localMeetings, cloudMeetings) {
@@ -1382,28 +1351,11 @@ export function AppProvider({ children }) {
 
       const localMeeting = localMeetingsMap.get(cloudMeeting.id)
       if (localMeeting) {
-        // Exists in both - merge with delete-wins logic
+        // Exists in both - LAST-WRITE-WINS based on timestamp
         const localTime = new Date(localMeeting.updatedAt || localMeeting.createdAt || 0).getTime()
         const cloudTime = new Date(cloudMeeting.updatedAt || cloudMeeting.createdAt || 0).getTime()
 
-        // SYNC FIX: deleted=true ALWAYS wins, regardless of timestamp
-        const isDeleted = cloudMeeting.deleted || localMeeting.deleted
-
-        if (isDeleted) {
-          // If either is deleted, result is deleted (use the deleted one's data)
-          const deletedSource = cloudMeeting.deleted ? cloudMeeting : localMeeting
-          merged.set(cloudMeeting.id, {
-            ...deletedSource,
-            deleted: true,
-            deletedAt: deletedSource.deletedAt || new Date().toISOString(),
-            // Preserve local binary data
-            audioBlob: localMeeting.audioBlob,
-            audioData: localMeeting.audioData,
-            audioUrl: localMeeting.audioUrl,
-            recordingBlob: localMeeting.recordingBlob,
-          })
-          console.log(`🗑️ Merge: Meeting ${cloudMeeting.id?.slice(0,8)} marked as deleted (delete-wins)`)
-        } else if (cloudTime >= localTime) {
+        if (cloudTime >= localTime) {
           // Cloud is newer or equal - use cloud values, preserve local binary data
           merged.set(cloudMeeting.id, {
             ...cloudMeeting,
@@ -1413,12 +1365,14 @@ export function AppProvider({ children }) {
             audioUrl: localMeeting.audioUrl,
             recordingBlob: localMeeting.recordingBlob,
           })
+          console.log(`⏱️ Merge: Cloud wins for meeting ${cloudMeeting.id?.slice(0,8)} (cloud: ${new Date(cloudTime).toISOString()})`)
         } else {
           // Local is newer - keep local (user made changes not yet synced)
           merged.set(cloudMeeting.id, localMeeting)
+          console.log(`⏱️ Merge: Local wins for meeting ${cloudMeeting.id?.slice(0,8)} (local: ${new Date(localTime).toISOString()})`)
         }
       } else {
-        // Only in cloud - add it (including if deleted)
+        // Only in cloud - add it
         merged.set(cloudMeeting.id, cloudMeeting)
       }
     })
@@ -1428,30 +1382,19 @@ export function AppProvider({ children }) {
       if (!localMeeting.id) return
       if (cloudIds.has(localMeeting.id)) return // Already handled above
 
-      // If locally deleted, still include for sync propagation
-      if (localMeeting.deleted) {
-        merged.set(localMeeting.id, localMeeting)
-        console.log(`🗑️ Keeping locally deleted meeting for sync:`, localMeeting.id?.slice(0,8))
-        return
-      }
-
       // Check if this is a recently created meeting (grace period)
       const createdAt = new Date(localMeeting.createdAt || 0).getTime()
       const age = now - createdAt
 
-      if (age < NEW_MEETING_GRACE_PERIOD) {
-        // New meeting, give it time to sync
-        console.log(`🔄 Keeping new local meeting (age: ${Math.round(age/1000)}s):`, localMeeting.id?.slice(0,8))
+      if (age < NEW_MEETING_GRACE_PERIOD || localMeeting.deleted) {
+        // New meeting or locally deleted - keep it
+        console.log(`🔄 Keeping local-only meeting (age: ${Math.round(age/1000)}s, deleted: ${localMeeting.deleted}):`, localMeeting.id?.slice(0,8))
         merged.set(localMeeting.id, localMeeting)
       } else {
-        // Old meeting not in cloud = was deleted from another device
-        // Mark it as deleted rather than removing (for consistency)
-        console.log(`🗑️ Old local meeting not in cloud, marking deleted:`, localMeeting.id?.slice(0,8))
-        merged.set(localMeeting.id, {
-          ...localMeeting,
-          deleted: true,
-          deletedAt: new Date().toISOString()
-        })
+        // Old meeting not in cloud - still keep it (don't auto-delete)
+        // User must explicitly delete
+        console.log(`🔄 Keeping old local meeting not in cloud:`, localMeeting.id?.slice(0,8))
+        merged.set(localMeeting.id, localMeeting)
       }
     })
 
@@ -1459,7 +1402,8 @@ export function AppProvider({ children }) {
   }
 
   // Helper: Generic merge by ID, keeping newer versions
-  // SYNC FIX: Now handles deleted=true properly - deletion ALWAYS wins
+  // ARCHITECTURE FIX: Uses LAST-WRITE-WINS based on timestamp
+  // Delete is just another change - newer timestamp always wins
   function mergeByIdKeepNewer(localItems, cloudItems) {
     const merged = new Map()
 
@@ -1473,25 +1417,15 @@ export function AppProvider({ children }) {
       if (!existing) {
         merged.set(cloudItem.id, cloudItem)
       } else {
-        // SYNC FIX: deleted=true ALWAYS wins, regardless of timestamp
-        const isDeleted = cloudItem.deleted || existing.deleted
+        // LAST-WRITE-WINS: Compare timestamps regardless of deleted status
+        const existingTime = new Date(existing.updatedAt || existing.createdAt || existing.lastModified || 0).getTime()
+        const cloudTime = new Date(cloudItem.updatedAt || cloudItem.createdAt || cloudItem.lastModified || 0).getTime()
 
-        if (isDeleted) {
-          // Either side is deleted - result is deleted
-          const deletedItem = {
-            ...(cloudItem.deleted ? cloudItem : existing),
-            deleted: true,
-            deletedAt: cloudItem.deletedAt || existing.deletedAt || new Date().toISOString()
-          }
-          merged.set(cloudItem.id, deletedItem)
-        } else {
-          // Neither is deleted - compare timestamps
-          const existingTime = new Date(existing.updatedAt || existing.createdAt || existing.lastModified || 0).getTime()
-          const cloudTime = new Date(cloudItem.updatedAt || cloudItem.createdAt || cloudItem.lastModified || 0).getTime()
-          if (cloudTime > existingTime) {
-            merged.set(cloudItem.id, cloudItem)
-          }
+        if (cloudTime > existingTime) {
+          // Cloud is newer - use cloud
+          merged.set(cloudItem.id, cloudItem)
         }
+        // Otherwise keep existing (local is newer or same)
       }
     })
 
@@ -2056,24 +1990,22 @@ export function AppProvider({ children }) {
           categories: localCategories.length
         })
 
-        // SYNC FIX: Do NOT filter deleted items before merge!
-        // The merge functions now handle deleted=true with "delete-wins" logic
-        // Filtering before merge would LOSE the tombstones and break delete sync
+        // Include deleted items in merge - they're just another state with a timestamp
         const localDeletedMeetings = localMeetings.filter(m => m.deleted).length
         const cloudDeletedMeetings = cloudMeetings.filter(m => m.deleted).length
         const localDeletedStakeholders = localStakeholders.filter(s => s.deleted).length
         const cloudDeletedStakeholders = cloudStakeholders.filter(s => s.deleted).length
 
-        console.log('🔄 Delete status (included in merge for proper sync):', {
+        console.log('🔄 Delete status (included in merge):', {
           localDeletedMeetings,
           cloudDeletedMeetings,
           localDeletedStakeholders,
           cloudDeletedStakeholders
         })
 
-        // Merge with timestamp-based conflict resolution AND delete-wins logic
-        // SYNC FIX: Pass ALL data (including deleted) to merge functions
-        console.log('🔄 Merging data with timestamp comparison and delete-wins logic...')
+        // Merge with LAST-WRITE-WINS conflict resolution
+        // Newer timestamp always wins, regardless of deleted status
+        console.log('🔄 Merging data with LAST-WRITE-WINS logic (newer timestamp wins)...')
         const meetingsMerge = mergeByIdWithTracking(localMeetings, cloudMeetings)
         const stakeholdersMerge = mergeByIdWithTracking(localStakeholders, cloudStakeholders)
         const categoriesMerge = mergeByIdWithTracking(localCategories, cloudCategories)

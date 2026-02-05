@@ -1393,34 +1393,113 @@ class SyncService {
   }
 
   /**
-   * Get local app data for sync
+   * Get local app data for sync - READS FROM DEXIE WITH FULL CONTENT
+   *
+   * FIXED: Previously read from localStorage which only had metadata.
+   * Now reads from Dexie to get full meeting content (transcripts, notes, AI analysis).
    */
   async getLocalData() {
     try {
-      // Try localStorage first (primary source used by AppContext), fallback to localforage
-      let meetings, stakeholders, stakeholderCategories, deletedItems
+      let meetings = []
+      let stakeholders = []
+      let stakeholderCategories = []
+      let deletedItems = []
 
       try {
-        meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
-        stakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
-        stakeholderCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
-        deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
-      } catch (error) {
-        console.warn('localStorage read failed, falling back to localforage:', error)
-        meetings = await localforage.getItem('meetingflow_meetings') || []
-        stakeholders = await localforage.getItem('meetingflow_stakeholders') || []
-        stakeholderCategories = await localforage.getItem('meetingflow_stakeholder_categories') || []
-        deletedItems = await localforage.getItem('meetingflow_deleted_items') || []
-      }
+        // Import Dexie service dynamically to avoid circular dependencies
+        const dexieService = await import('../db/dexieService')
+        const { getAllMeetingMetadata, getFullMeeting, getAllStakeholders, getAllCategories } = dexieService
 
-      console.log('🔍 DEBUG getLocalData:', {
-        meetingsCount: meetings.length,
-        stakeholdersCount: stakeholders.length,
-        categoriesCount: stakeholderCategories.length,
-        deletedItemsCount: deletedItems.length,
-        deletedItemsDetails: deletedItems.map(d => `${d.type}:${d.id} (deleted: ${d.deletedAt})`),
-        stakeholdersSample: stakeholders.slice(0, 2)
-      })
+        // Get all meeting metadata first
+        const meetingMetadata = await getAllMeetingMetadata()
+        console.log(`📂 SYNC: Found ${meetingMetadata.length} meetings in Dexie`)
+
+        // Load FULL meetings with blobs (parallel for speed)
+        const fullMeetings = await Promise.all(
+          meetingMetadata.map(async (meta) => {
+            try {
+              const full = await getFullMeeting(meta.id)
+              return full || meta
+            } catch (e) {
+              console.warn(`⚠️ SYNC: Failed to load full meeting ${meta.id}, using metadata:`, e.message)
+              return meta
+            }
+          })
+        )
+
+        // Strip binary data (audio) but KEEP text content (transcripts, notes, AI)
+        meetings = fullMeetings.map(meeting => {
+          const { audioBlob, audioData, audioUrl, recordingBlob, ...textContent } = meeting
+
+          // Also strip large images but keep small ones
+          if (textContent.images && Array.isArray(textContent.images)) {
+            textContent.images = textContent.images.filter(img => {
+              if (typeof img === 'string' && img.length > 100000) return false // >100KB base64
+              return true
+            })
+          }
+
+          // Strip word arrays from speaker data (can be 5MB+)
+          if (textContent.speakerData?.words) {
+            textContent.speakerData = { ...textContent.speakerData, words: undefined }
+          }
+
+          return textContent
+        })
+
+        // Get stakeholders and categories from Dexie
+        const allStakeholders = await getAllStakeholders()
+        const allCategories = await getAllCategories()
+
+        // Filter to non-deleted items for sync (deleted items sync separately)
+        stakeholders = allStakeholders.filter(s => !s.deleted)
+        stakeholderCategories = allCategories.filter(c => !c.deleted)
+
+        // Collect deleted items for tombstone sync
+        const deletedStakeholders = allStakeholders.filter(s => s.deleted).map(s => ({
+          type: 'stakeholder',
+          id: s.id,
+          deletedAt: s.deletedAt
+        }))
+        const deletedCategories = allCategories.filter(c => c.deleted).map(c => ({
+          type: 'category',
+          id: c.id,
+          deletedAt: c.deletedAt
+        }))
+        const deletedMeetings = meetings.filter(m => m.deleted).map(m => ({
+          type: 'meeting',
+          id: m.id,
+          deletedAt: m.deletedAt
+        }))
+        deletedItems = [...deletedStakeholders, ...deletedCategories, ...deletedMeetings]
+
+        console.log('📂 SYNC: Loaded from Dexie with FULL content:', {
+          meetingsCount: meetings.length,
+          stakeholdersCount: stakeholders.length,
+          categoriesCount: stakeholderCategories.length,
+          deletedItemsCount: deletedItems.length,
+          // Sample meeting to verify content is included
+          sampleMeetingHasTranscript: meetings[0]?.audioTranscript ? 'YES' : 'NO',
+          sampleMeetingHasAiResult: meetings[0]?.aiResult ? 'YES' : 'NO',
+          sampleMeetingHasNotes: meetings[0]?.notes ? 'YES' : 'NO'
+        })
+
+      } catch (dexieError) {
+        console.warn('⚠️ SYNC: Dexie read failed, falling back to localStorage:', dexieError.message)
+        // Fallback to localStorage (will only have metadata, but better than nothing)
+        try {
+          meetings = JSON.parse(localStorage.getItem('meetingflow_meetings') || '[]')
+          stakeholders = JSON.parse(localStorage.getItem('meetingflow_stakeholders') || '[]')
+          stakeholderCategories = JSON.parse(localStorage.getItem('meetingflow_stakeholder_categories') || '[]')
+          deletedItems = JSON.parse(localStorage.getItem('meetingflow_deleted_items') || '[]')
+        } catch (lsError) {
+          console.error('❌ SYNC: Both Dexie and localStorage failed:', lsError)
+          meetings = []
+          stakeholders = []
+          stakeholderCategories = []
+          deletedItems = []
+        }
+      }
 
       const metadata = {
         deviceId: this.deviceId,

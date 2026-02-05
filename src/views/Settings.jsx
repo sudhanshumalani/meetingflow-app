@@ -1633,6 +1633,236 @@ function StorageDiagnostic() {
           Upload Backup File to Restore
         </button>
       </div>
+
+      {/* Recover Deleted Items - 60 Day Trash */}
+      <RecoverDeletedItemsSection loadData={loadData} />
+    </div>
+  )
+}
+
+/**
+ * Recovery section for items deleted within the last 60 days
+ */
+function RecoverDeletedItemsSection({ loadData }) {
+  const [isLoading, setIsLoading] = useState(false)
+  const [deletedItems, setDeletedItems] = useState(null)
+  const [restoringId, setRestoringId] = useState(null)
+
+  const loadDeletedItems = async () => {
+    setIsLoading(true)
+    try {
+      const { getRecoverableDeletedItems } = await import('../db/dexieService')
+      const items = await getRecoverableDeletedItems()
+      setDeletedItems(items)
+    } catch (error) {
+      console.error('Failed to load deleted items:', error)
+      alert('Failed to load deleted items: ' + error.message)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleRestore = async (type, id, name) => {
+    if (!confirm(`Restore "${name}"?`)) return
+
+    setRestoringId(id)
+    try {
+      const dexieService = await import('../db/dexieService')
+
+      if (type === 'meeting') {
+        await dexieService.restoreMeeting(id)
+      } else if (type === 'stakeholder') {
+        await dexieService.restoreStakeholder(id)
+      } else if (type === 'category') {
+        await dexieService.restoreCategory(id)
+      }
+
+      alert(`"${name}" has been restored!`)
+
+      // Reload deleted items list
+      await loadDeletedItems()
+
+      // Trigger app data reload
+      if (loadData) {
+        await loadData()
+      }
+    } catch (error) {
+      console.error('Restore failed:', error)
+      alert('Restore failed: ' + error.message)
+    } finally {
+      setRestoringId(null)
+    }
+  }
+
+  const handlePurgeExpired = async () => {
+    if (!confirm('Permanently delete all items that have been in trash for more than 60 days?\n\nThis cannot be undone.')) return
+
+    setIsLoading(true)
+    try {
+      const { purgeExpiredDeletedItems } = await import('../db/dexieService')
+      const result = await purgeExpiredDeletedItems()
+
+      if (result.total > 0) {
+        alert(`Purged ${result.total} expired items:\n- ${result.purgedMeetings} meetings\n- ${result.purgedStakeholders} stakeholders\n- ${result.purgedCategories} categories`)
+      } else {
+        alert('No expired items to purge.')
+      }
+
+      await loadDeletedItems()
+    } catch (error) {
+      console.error('Purge failed:', error)
+      alert('Purge failed: ' + error.message)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const totalDeleted = deletedItems
+    ? deletedItems.meetings.length + deletedItems.stakeholders.length + deletedItems.categories.length
+    : 0
+
+  return (
+    <div className="mt-6 pt-6 border-t">
+      <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+        <RefreshCw className="w-5 h-5" />
+        Recover Deleted Items (60-Day Trash)
+      </h4>
+      <p className="text-sm text-gray-600 mb-3">
+        Items you delete are kept for 60 days before being permanently removed. You can restore them here.
+      </p>
+
+      {!deletedItems ? (
+        <button
+          onClick={loadDeletedItems}
+          disabled={isLoading}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium disabled:opacity-50"
+        >
+          {isLoading ? (
+            <>
+              <RefreshCw className="w-5 h-5 animate-spin" />
+              Loading...
+            </>
+          ) : (
+            <>
+              <Eye className="w-5 h-5" />
+              View Deleted Items
+            </>
+          )}
+        </button>
+      ) : (
+        <div className="space-y-4">
+          {/* Summary */}
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <p className="text-sm text-gray-700">
+              <strong>{totalDeleted}</strong> items in trash
+              ({deletedItems.meetings.length} meetings,
+              {deletedItems.stakeholders.length} stakeholders,
+              {deletedItems.categories.length} categories)
+            </p>
+          </div>
+
+          {/* Deleted Meetings */}
+          {deletedItems.meetings.length > 0 && (
+            <div>
+              <h5 className="text-sm font-medium text-gray-700 mb-2">Deleted Meetings</h5>
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {deletedItems.meetings.map(meeting => (
+                  <div key={meeting.id} className="flex items-center justify-between p-2 bg-red-50 rounded border border-red-100">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{meeting.title || 'Untitled Meeting'}</p>
+                      <p className="text-xs text-gray-500">
+                        {meeting.date} • {meeting.daysRemaining} days left
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleRestore('meeting', meeting.id, meeting.title || 'Meeting')}
+                      disabled={restoringId === meeting.id}
+                      className="ml-2 px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {restoringId === meeting.id ? 'Restoring...' : 'Restore'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Deleted Stakeholders */}
+          {deletedItems.stakeholders.length > 0 && (
+            <div>
+              <h5 className="text-sm font-medium text-gray-700 mb-2">Deleted Stakeholders</h5>
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {deletedItems.stakeholders.map(stakeholder => (
+                  <div key={stakeholder.id} className="flex items-center justify-between p-2 bg-red-50 rounded border border-red-100">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{stakeholder.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {stakeholder.company || 'No company'} • {stakeholder.daysRemaining} days left
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleRestore('stakeholder', stakeholder.id, stakeholder.name)}
+                      disabled={restoringId === stakeholder.id}
+                      className="ml-2 px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {restoringId === stakeholder.id ? 'Restoring...' : 'Restore'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Deleted Categories */}
+          {deletedItems.categories.length > 0 && (
+            <div>
+              <h5 className="text-sm font-medium text-gray-700 mb-2">Deleted Categories</h5>
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {deletedItems.categories.map(category => (
+                  <div key={category.id} className="flex items-center justify-between p-2 bg-red-50 rounded border border-red-100">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{category.name}</p>
+                      <p className="text-xs text-gray-500">{category.daysRemaining} days left</p>
+                    </div>
+                    <button
+                      onClick={() => handleRestore('category', category.id, category.name)}
+                      disabled={restoringId === category.id}
+                      className="ml-2 px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {restoringId === category.id ? 'Restoring...' : 'Restore'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* No deleted items */}
+          {totalDeleted === 0 && (
+            <p className="text-sm text-gray-500 text-center py-4">No deleted items in trash.</p>
+          )}
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-2">
+            <button
+              onClick={loadDeletedItems}
+              disabled={isLoading}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+            <button
+              onClick={handlePurgeExpired}
+              disabled={isLoading}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm disabled:opacity-50"
+            >
+              <AlertTriangle className="w-4 h-4" />
+              Purge Expired
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

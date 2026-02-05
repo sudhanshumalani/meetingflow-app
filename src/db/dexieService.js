@@ -133,7 +133,8 @@ export async function hasMeetingBlobs(meetingId) {
  * Save a meeting (creates or updates)
  * Automatically splits into metadata and blobs
  *
- * SYNC FIX: Implements delete-wins logic to prevent resurrection of deleted meetings
+ * ARCHITECTURE FIX: Uses LAST-WRITE-WINS logic based on timestamps
+ * Delete is just another change - newer timestamp always wins
  */
 export async function saveMeeting(meeting, options = {}) {
   const {
@@ -149,24 +150,26 @@ export async function saveMeeting(meeting, options = {}) {
   const metadata = extractMeetingMetadata(meeting)
   const blobs = extractMeetingBlobs(meeting)
 
-  // Check existing meeting for delete-wins logic
+  // Check existing meeting for last-write-wins logic
   const existingMeta = await db.meetings.get(meeting.id)
 
-  // SYNC FIX: DELETE-WINS LOGIC
-  // If existing meeting is deleted, don't overwrite with non-deleted version
-  if (existingMeta?.deleted && !meeting.deleted) {
-    console.log(`🛡️ DELETE-WINS: Rejecting non-deleted save for deleted meeting ${meeting.id.slice(0, 8)}...`)
-    console.log(`   Existing: deleted=${existingMeta.deleted}, deletedAt=${existingMeta.deletedAt}`)
-    console.log(`   Incoming: deleted=${meeting.deleted}, updatedAt=${meeting.updatedAt}`)
-    // Skip saving - keep the deleted state
-    return existingMeta
+  // LAST-WRITE-WINS: Compare timestamps to decide if we should overwrite
+  if (existingMeta) {
+    const existingTime = new Date(existingMeta.updatedAt || existingMeta.createdAt || 0).getTime()
+    const incomingTime = new Date(meeting.updatedAt || meeting.createdAt || 0).getTime()
+
+    // If existing is newer, skip this save (unless it's a new local change with no timestamp)
+    if (existingTime > incomingTime && incomingTime > 0) {
+      console.log(`⏱️ SAVE: Skipping older save for meeting ${meeting.id.slice(0, 8)}... (existing: ${new Date(existingTime).toISOString()}, incoming: ${new Date(incomingTime).toISOString()})`)
+      return existingMeta
+    }
   }
 
-  // If incoming is deleted, always accept it (delete wins)
+  // Preserve deleted status if incoming has it
   if (meeting.deleted) {
     metadata.deleted = true
     metadata.deletedAt = meeting.deletedAt || new Date().toISOString()
-    console.log(`🗑️ SAVE: Accepting deleted meeting ${meeting.id.slice(0, 8)}... (delete-wins)`)
+    console.log(`💾 SAVE: Saving meeting ${meeting.id.slice(0, 8)}... with deleted=${metadata.deleted}`)
   }
 
   // Update version
@@ -712,6 +715,199 @@ export async function getDatabaseStats() {
   }
 }
 
+// ============================================
+// RECOVERY FUNCTIONS (60-day trash)
+// ============================================
+
+const TRASH_RETENTION_DAYS = 60
+
+/**
+ * Get all deleted items within the retention period (60 days)
+ * Returns meetings, stakeholders, and categories that can be recovered
+ */
+export async function getRecoverableDeletedItems() {
+  const cutoffDate = new Date()
+  cutoffDate.setDate(cutoffDate.getDate() - TRASH_RETENTION_DAYS)
+  const cutoffTime = cutoffDate.getTime()
+
+  // Get deleted meetings
+  const allMeetings = await db.meetings.toArray()
+  const deletedMeetings = allMeetings.filter(m => {
+    if (!m.deleted) return false
+    const deletedAt = new Date(m.deletedAt || 0).getTime()
+    return deletedAt > cutoffTime
+  })
+
+  // Get deleted stakeholders
+  const allStakeholders = await db.stakeholders.toArray()
+  const deletedStakeholders = allStakeholders.filter(s => {
+    if (!s.deleted) return false
+    const deletedAt = new Date(s.deletedAt || 0).getTime()
+    return deletedAt > cutoffTime
+  })
+
+  // Get deleted categories
+  const allCategories = await db.stakeholderCategories.toArray()
+  const deletedCategories = allCategories.filter(c => {
+    if (!c.deleted) return false
+    const deletedAt = new Date(c.deletedAt || 0).getTime()
+    return deletedAt > cutoffTime
+  })
+
+  return {
+    meetings: deletedMeetings.map(m => ({
+      id: m.id,
+      title: m.title,
+      date: m.date,
+      deletedAt: m.deletedAt,
+      daysRemaining: Math.ceil((new Date(m.deletedAt).getTime() + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000 - Date.now()) / (24 * 60 * 60 * 1000))
+    })),
+    stakeholders: deletedStakeholders.map(s => ({
+      id: s.id,
+      name: s.name,
+      company: s.company,
+      deletedAt: s.deletedAt,
+      daysRemaining: Math.ceil((new Date(s.deletedAt).getTime() + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000 - Date.now()) / (24 * 60 * 60 * 1000))
+    })),
+    categories: deletedCategories.map(c => ({
+      id: c.id,
+      name: c.name,
+      key: c.key,
+      deletedAt: c.deletedAt,
+      daysRemaining: Math.ceil((new Date(c.deletedAt).getTime() + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000 - Date.now()) / (24 * 60 * 60 * 1000))
+    })),
+    retentionDays: TRASH_RETENTION_DAYS
+  }
+}
+
+/**
+ * Restore a deleted meeting
+ */
+export async function restoreMeeting(meetingId) {
+  const meeting = await db.meetings.get(meetingId)
+  if (!meeting) {
+    throw new Error(`Meeting ${meetingId} not found`)
+  }
+  if (!meeting.deleted) {
+    throw new Error(`Meeting ${meetingId} is not deleted`)
+  }
+
+  await db.meetings.update(meetingId, {
+    deleted: false,
+    deletedAt: null,
+    updatedAt: new Date().toISOString()
+  })
+
+  console.log(`✅ Restored meeting: ${meetingId}`)
+  return await db.meetings.get(meetingId)
+}
+
+/**
+ * Restore a deleted stakeholder
+ */
+export async function restoreStakeholder(stakeholderId) {
+  const stakeholder = await db.stakeholders.get(stakeholderId)
+  if (!stakeholder) {
+    throw new Error(`Stakeholder ${stakeholderId} not found`)
+  }
+  if (!stakeholder.deleted) {
+    throw new Error(`Stakeholder ${stakeholderId} is not deleted`)
+  }
+
+  await db.stakeholders.update(stakeholderId, {
+    deleted: false,
+    deletedAt: null,
+    updatedAt: new Date().toISOString()
+  })
+
+  console.log(`✅ Restored stakeholder: ${stakeholderId}`)
+  return await db.stakeholders.get(stakeholderId)
+}
+
+/**
+ * Restore a deleted category
+ */
+export async function restoreCategory(categoryId) {
+  const category = await db.stakeholderCategories.get(categoryId)
+  if (!category) {
+    throw new Error(`Category ${categoryId} not found`)
+  }
+  if (!category.deleted) {
+    throw new Error(`Category ${categoryId} is not deleted`)
+  }
+
+  await db.stakeholderCategories.update(categoryId, {
+    deleted: false,
+    deletedAt: null,
+    updatedAt: new Date().toISOString()
+  })
+
+  console.log(`✅ Restored category: ${categoryId}`)
+  return await db.stakeholderCategories.get(categoryId)
+}
+
+/**
+ * Permanently purge items deleted more than 60 days ago
+ * This frees up storage space
+ */
+export async function purgeExpiredDeletedItems() {
+  const cutoffDate = new Date()
+  cutoffDate.setDate(cutoffDate.getDate() - TRASH_RETENTION_DAYS)
+  const cutoffTime = cutoffDate.getTime()
+
+  let purgedMeetings = 0
+  let purgedStakeholders = 0
+  let purgedCategories = 0
+
+  // Purge expired meetings
+  const allMeetings = await db.meetings.toArray()
+  for (const meeting of allMeetings) {
+    if (meeting.deleted) {
+      const deletedAt = new Date(meeting.deletedAt || 0).getTime()
+      if (deletedAt < cutoffTime) {
+        // Hard delete - remove from database
+        await db.meetings.delete(meeting.id)
+        await db.meetingBlobs.where('meetingId').equals(meeting.id).delete()
+        await db.analysisIndex.where('meetingId').equals(meeting.id).delete()
+        purgedMeetings++
+      }
+    }
+  }
+
+  // Purge expired stakeholders
+  const allStakeholders = await db.stakeholders.toArray()
+  for (const stakeholder of allStakeholders) {
+    if (stakeholder.deleted) {
+      const deletedAt = new Date(stakeholder.deletedAt || 0).getTime()
+      if (deletedAt < cutoffTime) {
+        await db.stakeholders.delete(stakeholder.id)
+        purgedStakeholders++
+      }
+    }
+  }
+
+  // Purge expired categories
+  const allCategories = await db.stakeholderCategories.toArray()
+  for (const category of allCategories) {
+    if (category.deleted) {
+      const deletedAt = new Date(category.deletedAt || 0).getTime()
+      if (deletedAt < cutoffTime) {
+        await db.stakeholderCategories.delete(category.id)
+        purgedCategories++
+      }
+    }
+  }
+
+  console.log(`🗑️ Purged expired items: ${purgedMeetings} meetings, ${purgedStakeholders} stakeholders, ${purgedCategories} categories`)
+
+  return {
+    purgedMeetings,
+    purgedStakeholders,
+    purgedCategories,
+    total: purgedMeetings + purgedStakeholders + purgedCategories
+  }
+}
+
 export default {
   initializeDexieService,
   // Meetings
@@ -746,5 +942,11 @@ export default {
   bulkSaveStakeholders,
   bulkSaveCategories,
   // Stats
-  getDatabaseStats
+  getDatabaseStats,
+  // Recovery (60-day trash)
+  getRecoverableDeletedItems,
+  restoreMeeting,
+  restoreStakeholder,
+  restoreCategory,
+  purgeExpiredDeletedItems
 }

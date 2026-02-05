@@ -1635,7 +1635,7 @@ function StorageDiagnostic() {
       </div>
 
       {/* Recover Deleted Items - 60 Day Trash */}
-      <RecoverDeletedItemsSection loadData={loadData} />
+      <RecoverDeletedItemsSection />
     </div>
   )
 }
@@ -1643,7 +1643,7 @@ function StorageDiagnostic() {
 /**
  * Recovery section for items deleted within the last 60 days
  */
-function RecoverDeletedItemsSection({ loadData }) {
+function RecoverDeletedItemsSection({ loadData = null }) {
   const [isLoading, setIsLoading] = useState(false)
   const [deletedItems, setDeletedItems] = useState(null)
   const [restoringId, setRestoringId] = useState(null)
@@ -1685,6 +1685,9 @@ function RecoverDeletedItemsSection({ loadData }) {
       // Trigger app data reload
       if (loadData) {
         await loadData()
+      } else {
+        // Refresh page to reload data if no loadData function provided
+        window.location.reload()
       }
     } catch (error) {
       console.error('Restore failed:', error)

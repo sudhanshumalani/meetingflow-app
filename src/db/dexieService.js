@@ -345,10 +345,12 @@ export async function saveStakeholder(stakeholder, options = {}) {
 
   const existing = await db.stakeholders.get(stakeholder.id)
 
-  // SYNC FIX: DELETE-WINS LOGIC
+  // DELETE-WINS LOGIC: DISABLED FOR SAFETY
+  // This was preventing restoration of accidentally deleted stakeholders
+  // Now allowing overwrites to restore data
   if (existing?.deleted && !stakeholder.deleted) {
-    console.log(`🛡️ DELETE-WINS: Rejecting non-deleted save for deleted stakeholder ${stakeholder.id.slice(0, 8)}...`)
-    return existing
+    console.log(`🔄 RESTORING previously deleted stakeholder ${stakeholder.id.slice(0, 8)}...`)
+    // Continue with save instead of rejecting
   }
 
   const updatedStakeholder = {

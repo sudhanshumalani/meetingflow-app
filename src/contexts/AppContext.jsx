@@ -1178,41 +1178,13 @@ export function AppProvider({ children }) {
               localStakeholders = currentStakeholdersRef.current || []
             }
 
-            // ORPHAN CLEANUP: Mark local stakeholders that don't exist in Firestore as deleted
-            // SAFETY GUARD: Skip orphan cleanup if Firestore returned empty/suspicious data
-            // This prevents mass deletion when Firestore has connection issues
-            const activeLocalStakeholders = localStakeholders.filter(s => !s.deleted)
-            const potentialOrphans = activeLocalStakeholders.filter(s => !firestoreIds.has(s.id))
+            // ORPHAN CLEANUP: DISABLED FOR SAFETY
+            // This was causing data loss by marking local stakeholders as deleted
+            // when they didn't exist in Firestore. Keeping local data intact.
+            console.log('🛡️ ORPHAN CLEANUP DISABLED: Preserving all local stakeholders')
 
-            let cleanedLocalStakeholders = localStakeholders
-
-            if (firestoreStakeholders.length === 0 && activeLocalStakeholders.length > 0) {
-              // Firestore returned empty but we have local data - DON'T delete anything
-              console.warn('⚠️ SAFETY: Firestore returned 0 stakeholders but local has', activeLocalStakeholders.length, '- skipping orphan cleanup')
-            } else if (potentialOrphans.length > activeLocalStakeholders.length * 0.5 && potentialOrphans.length > 2) {
-              // Would delete more than 50% of local items - that's suspicious
-              console.warn('⚠️ SAFETY: Orphan cleanup would delete', potentialOrphans.length, 'of', activeLocalStakeholders.length, 'stakeholders (>50%) - skipping')
-            } else {
-              // Safe to run orphan cleanup
-              cleanedLocalStakeholders = localStakeholders.map(localStk => {
-                if (!firestoreIds.has(localStk.id) && !localStk.deleted) {
-                  console.log('🧹 Marking orphaned stakeholder as deleted:', localStk.id, localStk.name || localStk.company)
-                  return { ...localStk, deleted: true, deletedAt: new Date().toISOString() }
-                }
-                return localStk
-              })
-
-              // Save the orphan deletions back to Dexie
-              const orphansToDelete = cleanedLocalStakeholders.filter(s =>
-                s.deleted && !localStakeholders.find(ls => ls.id === s.id)?.deleted
-              )
-              if (orphansToDelete.length > 0) {
-                console.log('🧹 Saving', orphansToDelete.length, 'orphan deletions to Dexie')
-                await bulkSaveStakeholders(orphansToDelete, { queueSync: false })
-              }
-            }
-
-            const mergedStakeholders = mergeByIdKeepNewer(cleanedLocalStakeholders, firestoreStakeholders)
+            // Just merge without any deletion logic
+            const mergedStakeholders = mergeByIdKeepNewer(localStakeholders, firestoreStakeholders)
 
             // Filter for UI - only show active stakeholders
             const activeStakeholders = mergedStakeholders.filter(s => !s.deleted)
@@ -1256,41 +1228,13 @@ export function AppProvider({ children }) {
               localCategories = currentCategoriesRef.current || []
             }
 
-            // ORPHAN CLEANUP: Mark local categories that don't exist in Firestore as deleted
-            // SAFETY GUARD: Skip orphan cleanup if Firestore returned empty/suspicious data
-            // This prevents mass deletion when Firestore has connection issues
-            const activeLocalCategories = localCategories.filter(c => !c.deleted)
-            const potentialOrphanCats = activeLocalCategories.filter(c => !firestoreIds.has(c.id))
+            // ORPHAN CLEANUP: DISABLED FOR SAFETY
+            // This was causing data loss by marking local categories as deleted
+            // when they didn't exist in Firestore. Keeping local data intact.
+            console.log('🛡️ ORPHAN CLEANUP DISABLED: Preserving all local categories')
 
-            let cleanedLocalCategories = localCategories
-
-            if (firestoreCategories.length === 0 && activeLocalCategories.length > 0) {
-              // Firestore returned empty but we have local data - DON'T delete anything
-              console.warn('⚠️ SAFETY: Firestore returned 0 categories but local has', activeLocalCategories.length, '- skipping orphan cleanup')
-            } else if (potentialOrphanCats.length > activeLocalCategories.length * 0.5 && potentialOrphanCats.length > 2) {
-              // Would delete more than 50% of local items - that's suspicious
-              console.warn('⚠️ SAFETY: Orphan cleanup would delete', potentialOrphanCats.length, 'of', activeLocalCategories.length, 'categories (>50%) - skipping')
-            } else {
-              // Safe to run orphan cleanup
-              cleanedLocalCategories = localCategories.map(localCat => {
-                if (!firestoreIds.has(localCat.id) && !localCat.deleted) {
-                  console.log('🧹 Marking orphaned category as deleted:', localCat.id, localCat.label || localCat.key)
-                  return { ...localCat, deleted: true, deletedAt: new Date().toISOString() }
-                }
-                return localCat
-              })
-
-              // Save the orphan deletions back to Dexie
-              const orphansToDelete = cleanedLocalCategories.filter(c =>
-                c.deleted && !localCategories.find(lc => lc.id === c.id)?.deleted
-              )
-              if (orphansToDelete.length > 0) {
-                console.log('🧹 Saving', orphansToDelete.length, 'orphan deletions to Dexie')
-                await bulkSaveCategories(orphansToDelete, { queueSync: false })
-              }
-            }
-
-            const mergedCategories = mergeByIdKeepNewer(cleanedLocalCategories, firestoreCategories)
+            // Just merge without any deletion logic
+            const mergedCategories = mergeByIdKeepNewer(localCategories, firestoreCategories)
 
             // Filter for UI - only show active categories
             const activeCategories = mergedCategories.filter(c => !c.deleted)
